@@ -1,0 +1,50 @@
+name: Déployer Fnac Pulse sur GitHub Pages
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Vérifier la configuration publique
+        env:
+          WORKER_URL: ${{ vars.PULSE_WORKER_URL }}
+          VAPID_KEY: ${{ vars.FIREBASE_VAPID_PUBLIC_KEY }}
+        run: |
+          test -n "$WORKER_URL" || { echo 'Configurer la variable PULSE_WORKER_URL dans le dépôt.'; exit 1; }
+          test -n "$VAPID_KEY" || { echo 'Configurer la variable FIREBASE_VAPID_PUBLIC_KEY dans le dépôt.'; exit 1; }
+          node -e 'try { const u = new URL(process.env.WORKER_URL); if (u.protocol !== "https:" || u.pathname !== "/" || u.search || u.hash) throw 0; } catch { console.error("PULSE_WORKER_URL doit être une origine HTTPS, sans /api."); process.exit(1); } if (!/^[A-Za-z0-9_-]{80,120}={0,2}$/.test(process.env.VAPID_KEY)) { console.error("La clé VAPID publique semble invalide."); process.exit(1); }'
+      - run: npm ci
+      - run: npm test
+      - name: Compiler pour GitHub Pages
+        run: npm run build:pages
+        env:
+          VITE_WORKER_URL: ${{ vars.PULSE_WORKER_URL }}
+          VITE_FIREBASE_VAPID_KEY: ${{ vars.FIREBASE_VAPID_PUBLIC_KEY }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

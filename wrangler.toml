@@ -1,0 +1,29 @@
+name = "fnac-pulse-api"
+main = "worker/index.js"
+compatibility_date = "2025-09-19"
+workers_dev = true
+
+[vars]
+FIREBASE_PROJECT_ID = "fnac-pulse"
+APP_URL = "https://hypernovax31.github.io/FNAC-Pulse/"
+ALLOWED_ORIGIN = "https://hypernovax31.github.io"
+
+# Renseigner GOOGLE_SERVICE_ACCOUNT, PIN_PEPPER et ADMIN_UID comme secrets
+# Cloudflare, jamais dans ce fichier ni dans Git.
+[[ratelimits]]
+name = "LOGIN_LIMITER"
+namespace_id = "318701"
+simple = { limit = 8, period = 60 }
+
+[[queues.producers]]
+binding = "PULSE_QUEUE"
+queue = "fnac-pulse-notifications"
+
+[[queues.consumers]]
+queue = "fnac-pulse-notifications"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 8
+
+[triggers]
+crons = ["*/2 * * * *"]

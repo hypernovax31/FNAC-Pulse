@@ -4,3 +4,13 @@ data/*.sqlite*
 data/ADMIN-INITIAL.txt
 .env
 *.log
+# Configuration locale et éventuels identifiants de service Google : jamais dans Git.
+.env.*
+!.env.example
+*.pem
+*-firebase-adminsdk-*.json
+*-service-account.json
+
+# Wrangler et sorties temporaires locales
+.wrangler/
+cloud-worker-check/

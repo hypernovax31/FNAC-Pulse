@@ -420,3 +420,10 @@ p,h1,h2,h3 { margin:0; }
   .modal-overlay { padding:10px; }
   .modal { max-height:calc(100vh - 20px); }
 }
+/* Authentification individuelle pour le déploiement Firebase. */
+.pin-field { min-width:108px; flex:0 0 112px; }
+.pin-input { height:40px; width:100%; font-size:14px; }
+.session-error { margin-top:10px; }
+.session-form-modal .pin-field { grid-column:1/-1; }
+@media(max-width:650px) { .session-fields .pin-field { grid-column:1/-1; } }
+.pin-actions { display:flex; flex-wrap:wrap; gap:10px; }

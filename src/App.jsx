@@ -7,7 +7,10 @@ import {
 } from 'lucide-react';
 import Admin, { Modal } from './Admin';
 import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
+import { CLOUD, observeVendor, sellerLogin, sellerLogout, listenStore, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
+import { parisToday } from './cloud-stats';
 
+const APP_BASE = import.meta.env.BASE_URL;
 const SESSION_KEY = 'fnac-pulse-session-v1';
 const CACHE_KEY = 'fnac-pulse-last-view-v1';
 const icons = { play:Play, phone:Smartphone, devices:MonitorSmartphone, shield:ShieldCheck, package:PackageCheck, badge:BadgePlus, repeat:Repeat2, refresh:RefreshCw, tv:Tv, wifi:Wifi, other:MoreHorizontal };
@@ -17,7 +20,7 @@ function getSession() { try { const a=JSON.parse(localStorage.getItem(SESSION_KE
 function getCached() { try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch {return null;} }
 function initial(name) {return (name || '?').trim().slice(0,1).toUpperCase();}
 function Avatar({name,id,size='normal'}) {return <span className={`avatar avatar-${size}`} style={{backgroundColor:avatarColors[(Number(id)||0)%avatarColors.length]}}>{initial(name)}</span>}
-function Brand({compact=false}) {return <div className={`brand ${compact?'brand-compact':''}`}><img src="/fnac.svg" alt="Fnac"/><div className="brand-word"><strong>pulse<span className="brand-period">.</span></strong>{!compact&&<span>ESPACE ÉQUIPE</span>}</div></div>}
+function Brand({compact=false}) {return <div className={`brand ${compact?'brand-compact':''}`}><img src={`${APP_BASE}fnac.svg`} alt="Fnac"/><div className="brand-word"><strong>pulse<span className="brand-period">.</span></strong>{!compact&&<span>ESPACE ÉQUIPE</span>}</div></div>}
 function Dot() {return <span className="live-dot" aria-hidden="true"/>}
 
 function SessionForm({data,initialSession,onSubmit,modal=false,onNotify}) {
@@ -25,6 +28,9 @@ function SessionForm({data,initialSession,onSubmit,modal=false,onNotify}) {
   const [seller,setSeller]=useState(String(initialSession?.sellerId||''));
   const [geoText,setGeoText]=useState('');
   const [geoBusy,setGeoBusy]=useState(false);
+  const [pin,setPin]=useState('');
+  const [formBusy,setFormBusy]=useState(false);
+  const [formError,setFormError]=useState('');
   const locate=()=>{
     if(!navigator.geolocation){setGeoText('La géolocalisation n’est pas disponible sur cet appareil.');return;}
     setGeoBusy(true);setGeoText('Recherche du magasin le plus proche…');
@@ -37,13 +43,15 @@ function SessionForm({data,initialSession,onSubmit,modal=false,onNotify}) {
     },err=>{setGeoBusy(false);setGeoText(err.code===1?'Géolocalisation refusée. Vous pouvez choisir votre magasin dans la liste.':'Position indisponible. Choisissez votre magasin dans la liste.');},
     {enableHighAccuracy:false,timeout:12000,maximumAge:300000});
   };
-  return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={e=>{e.preventDefault();if(store&&seller)onSubmit({storeId:store,sellerId:Number(seller)});}}>
+  return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={async e=>{e.preventDefault();if(!store||!seller)return;setFormBusy(true);setFormError('');try{await onSubmit({storeId:store,sellerId:Number(seller)},pin);setPin('');}catch(error){setFormError(error.message);}finally{setFormBusy(false);}}}>
     <div className="session-fields">
       <label className="session-field store-field"><span>VOTRE MAGASIN</span><div className="select-wrap"><MapPin size={16}/><select aria-label="Votre magasin Fnac" value={store} onChange={e=>{setStore(e.target.value);setGeoText('');}} required><option value="">Choisir un magasin</option>{data.stores.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
       <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver le magasin le plus proche" title="Trouver le magasin le plus proche" disabled={geoBusy}><Crosshair size={17}/></button>
       <label className="session-field seller-field"><span>VOTRE PROFIL</span><div className="select-wrap"><UserRound size={16}/><select aria-label="Votre profil vendeur" value={seller} onChange={e=>setSeller(e.target.value)} required><option value="">Choisir un vendeur</option>{data.sellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
-      <button className="primary-button session-submit" type="submit" disabled={!store||!seller}>{modal?'Enregistrer':'C’est parti'} <ArrowRight size={16}/></button>
+      {CLOUD&&<label className="session-field pin-field"><span>CODE PIN</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} placeholder="8 chiffres" required/></label>}
+      <button className="primary-button session-submit" type="submit" disabled={!store||!seller||formBusy||(CLOUD&&pin.length!==8)}>{formBusy?'Connexion…':modal?'Enregistrer':'C’est parti'} <ArrowRight size={16}/></button>
     </div>
+    {formError&&<div className="form-error session-error" role="alert">{formError}</div>}
     {geoText&&<div className="geo-message" role="status"><MapPin size={13}/>{geoText}</div>}
   </form>;
 }
@@ -116,9 +124,12 @@ function MobileNav({onNavigate,onSession,active}) {
 function urlBase64ToUint8Array(base64) {const padding='='.repeat((4-base64.length%4)%4);const raw=atob((base64+padding).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
 
 export default function App() {
-  const [session,setSession]=useState(getSession);
-  const [data,setData]=useState(()=>{const cached=getCached();return cached&&JSON.stringify(cached.session)===JSON.stringify(getSession())?cached.data:null;});
+  const [session,setSession]=useState(()=>CLOUD?null:getSession());
+  const [data,setData]=useState(()=>{if(CLOUD)return null;const cached=getCached();return cached&&JSON.stringify(cached.session)===JSON.stringify(getSession())?cached.data:null;});
+  const [authReady,setAuthReady]=useState(!CLOUD);
+  const [cloudDay,setCloudDay]=useState(parisToday);
   const [loadFailed,setLoadFailed]=useState(false);
+  const [loadMessage,setLoadMessage]=useState('');
   const [connection,setConnection]=useState('waiting');
   const [activeNav,setActiveNav]=useState('overview');
   const [sessionModal,setSessionModal]=useState(false);
@@ -135,25 +146,47 @@ export default function App() {
 
   const flash=useCallback((message,options={})=>{clearTimeout(toastTimer.current);setToast({message,...options});toastTimer.current=setTimeout(()=>setToast(null),options.duration||5500);},[]);
   const refresh=useCallback(async()=>{
+    if(CLOUD&&!authReady)return;
     const n=++requestNumber.current;
-    const query=session?`?storeId=${encodeURIComponent(session.storeId)}&sellerId=${session.sellerId}`:'';
+    const query=!CLOUD&&session?`?storeId=${encodeURIComponent(session.storeId)}&sellerId=${session.sellerId}`:'';
     try {
       const result=await api('/api/bootstrap'+query);
       if(n!==requestNumber.current)return;
-      setData(result);setLoadFailed(false);
-      try{localStorage.setItem(CACHE_KEY,JSON.stringify({data:result,session}));}catch{}
+      if(CLOUD&&session)setData(old=>old?{...result,stats:old.stats,today:cloudDay}:result);
+      else setData(result);
+      setLoadFailed(false);setLoadMessage('');
+      if(!CLOUD)try{localStorage.setItem(CACHE_KEY,JSON.stringify({data:result,session}));}catch{}
       if(session&&(!result.stores.some(s=>s.id===session.storeId)||!result.sellers.some(s=>s.id===session.sellerId))){
-        localStorage.removeItem(SESSION_KEY);setSession(null);flash('Votre profil ou votre magasin a été modifié. Sélectionnez à nouveau votre espace.');
+        localStorage.removeItem(SESSION_KEY);setSession(null);
+        if(CLOUD)await sellerLogout();
+        flash('Votre profil ou votre magasin a été modifié. Sélectionnez à nouveau votre espace.');
       }
     } catch(e) {
       if(n!==requestNumber.current)return;
-      setConnection('offline');setLoadFailed(true);
+      setConnection('offline');setLoadFailed(true);setLoadMessage(e.message);
       const saved=getCached();
       if(saved && JSON.stringify(saved.session)===JSON.stringify(session))setData(saved.data);
     }
-  },[session,flash]);
+  },[session,flash,authReady,cloudDay]);
+  useEffect(()=>{if(!CLOUD)return;return observeVendor(next=>{setSession(next);setAuthReady(true);if(!next)localStorage.removeItem(SESSION_KEY);});},[]);
   useEffect(()=>{refresh();},[refresh]);
   useEffect(()=>{
+    if(!CLOUD||!session||!authReady)return;
+    return listenStore(session,cloudDay,clientId.current,(next,live)=>{
+      setData(next);setLoadFailed(false);setConnection(live?'live':'offline');
+      try{localStorage.setItem(CACHE_KEY,JSON.stringify({data:next,session}));}catch{}
+    },sale=>{
+      const who=data?.sellers?.find(x=>x.id===sale.sellerId)?.name||'Un vendeur';
+      const what=data?.services?.find(x=>x.id===sale.serviceId)?.name||'un service';
+      flash(`${who} vient de vendre ${what} !`,{tone:'celebrate'});
+    },error=>{
+      setConnection('offline');
+      if(error?.code==='permission-denied'){sellerLogout().catch(()=>{});setSession(null);setData(d=>d?{...d,stats:null}:d);localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);flash('Votre accès a changé. Reconnectez-vous avec votre code PIN.',{tone:'warning'});}
+      else flash('Connexion interrompue. Les données seront actualisées au retour du réseau.',{tone:'warning'});
+    });
+  },[session,authReady,cloudDay,flash]);
+  useEffect(()=>{
+    if(CLOUD)return;
     if(!session){setConnection('waiting');return;}
     const source=new EventSource(`/api/events?storeId=${encodeURIComponent(session.storeId)}`);
     source.addEventListener('ready',()=>{setConnection('live');refresh();});
@@ -166,31 +199,43 @@ export default function App() {
   },[session,refresh,flash]);
   useEffect(()=>{
     const onOnline=()=>refresh();window.addEventListener('online',onOnline);
-    const timer=setInterval(()=>{if(document.visibilityState==='visible')refresh();},60000);
+    const timer=setInterval(()=>{if(CLOUD)setCloudDay(parisToday());else if(document.visibilityState==='visible')refresh();},60000);
     return ()=>{window.removeEventListener('online',onOnline);clearInterval(timer);};
   },[refresh]);
   useEffect(()=>{
-    if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+    if('serviceWorker' in navigator) navigator.serviceWorker.register(`${APP_BASE}sw.js`, {scope:APP_BASE}).catch(()=>{});
     const handler=e=>{e.preventDefault();setInstallPrompt(e)};
     window.addEventListener('beforeinstallprompt',handler);return ()=>window.removeEventListener('beforeinstallprompt',handler);
   },[]);
   useEffect(()=>{
     if(!session||!('serviceWorker' in navigator)||!('PushManager' in window)||!('Notification' in window)||Notification.permission!=='granted'){setNotificationsEnabled(false);return;}
     let cancelled=false;
-    navigator.serviceWorker.ready.then(reg=>reg.pushManager.getSubscription()).then(async sub=>{
-      if(!sub){if(!cancelled)setNotificationsEnabled(false);return;}
-      await api('/api/push/subscribe',{method:'POST',body:{storeId:session.storeId,sellerId:session.sellerId,subscription:sub.toJSON()}});
-      if(!cancelled)setNotificationsEnabled(true);
-    }).catch(()=>{if(!cancelled)setNotificationsEnabled(false)});
+    if(CLOUD){
+      if(!notificationsWanted()){setNotificationsEnabled(false);return;}
+      subscribeFcm(api).then(()=>{if(!cancelled)setNotificationsEnabled(true);}).catch(()=>{if(!cancelled)setNotificationsEnabled(false);});
+    } else {
+      navigator.serviceWorker.ready.then(reg=>reg.pushManager.getSubscription()).then(async sub=>{
+        if(!sub){if(!cancelled)setNotificationsEnabled(false);return;}
+        await api('/api/push/subscribe',{method:'POST',body:{storeId:session.storeId,sellerId:session.sellerId,subscription:sub.toJSON()}});
+        if(!cancelled)setNotificationsEnabled(true);
+      }).catch(()=>{if(!cancelled)setNotificationsEnabled(false)});
+    }
     return ()=>{cancelled=true};
   },[session]);
   useEffect(()=>()=>clearTimeout(toastTimer.current),[]);
 
-  function selectSession(next){
-    localStorage.setItem(SESSION_KEY,JSON.stringify(next));
-    setData(d=>d?{...d,stats:null}:d);setSession(next);setSessionModal(false);setActiveNav('overview');
+  async function selectSession(next,pin){
+    const authenticated=CLOUD?await sellerLogin(api,next,pin):next;
+    localStorage.setItem(SESSION_KEY,JSON.stringify(authenticated));
+    setData(d=>d?{...d,stats:null}:d);setSession(authenticated);setSessionModal(false);setActiveNav('overview');
     window.scrollTo({top:0,behavior:'smooth'});
     const person=data?.sellers.find(s=>s.id===next.sellerId);flash(`Bienvenue${person?`, ${person.name}`:''} ! Votre espace est prêt.`);
+  }
+  async function logoutSeller(){
+    let warning=false;
+    if(CLOUD&&notificationsWanted())try{await unsubscribeFcm(api);}catch{warning=true;}
+    if(CLOUD)await sellerLogout();localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);setSession(null);setData(d=>d?{...d,stats:null}:null);setSessionModal(false);
+    flash(warning?'Déconnecté. Vérifiez les notifications de cet appareil lorsque la connexion revient.':'Vous êtes déconnecté.',warning?{tone:'warning'}:{});
   }
   function changeSession(){if(session)setSessionModal(true);else {document.getElementById('selection')?.scrollIntoView({behavior:'smooth',block:'center'});document.querySelector('[aria-label="Votre magasin Fnac"]')?.focus();}}
   function navigate(id){setActiveNav(id);document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});}
@@ -222,22 +267,23 @@ export default function App() {
     try {
       const permission=await Notification.requestPermission();
       if(permission!=='granted')throw new Error(permission==='denied'?'Notifications bloquées. Autorisez-les dans les réglages du navigateur.':'Autorisation de notification non accordée.');
-      const registration=await navigator.serviceWorker.ready;
-      let subscription=await registration.pushManager.getSubscription();
-      if(!subscription)subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(data.pushPublicKey)});
-      await api('/api/push/subscribe',{method:'POST',body:{storeId:session.storeId,sellerId:session.sellerId,subscription:subscription.toJSON()}});
+      if(CLOUD)await subscribeFcm(api);
+      else {const registration=await navigator.serviceWorker.ready;
+        let subscription=await registration.pushManager.getSubscription();
+        if(!subscription)subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(data.pushPublicKey)});
+        await api('/api/push/subscribe',{method:'POST',body:{storeId:session.storeId,sellerId:session.sellerId,subscription:subscription.toJSON()}});}
       setNotificationsEnabled(true);setNotificationsModal(false);flash('Notifications activées sur cet appareil.',{tone:'success'});
     } catch(e){flash(e.message||'Impossible d’activer les notifications sur cet appareil.',{tone:'warning',duration:8000});}
     finally{setNotificationBusy(false);}
   }
   async function disableNotifications(){
     setNotificationBusy(true);
-    try {const registration=await navigator.serviceWorker.ready;const sub=await registration.pushManager.getSubscription();if(sub){await api('/api/push/subscribe',{method:'DELETE',body:{endpoint:sub.endpoint}});await sub.unsubscribe();}setNotificationsEnabled(false);setNotificationsModal(false);flash('Notifications désactivées sur cet appareil.');}
+    try {if(CLOUD)await unsubscribeFcm(api);else {const registration=await navigator.serviceWorker.ready;const sub=await registration.pushManager.getSubscription();if(sub){await api('/api/push/subscribe',{method:'DELETE',body:{endpoint:sub.endpoint}});await sub.unsubscribe();}}setNotificationsEnabled(false);setNotificationsModal(false);flash('Notifications désactivées sur cet appareil.');}
     catch(e){flash('Impossible de désactiver les notifications.',{tone:'warning'});}finally{setNotificationBusy(false);}
   }
   async function installApp(){if(installPrompt){installPrompt.prompt();await installPrompt.userChoice;setInstallPrompt(null);setInstallModal(false);}else setInstallModal(true);}
 
-  if(!data)return <div className="app-loading"><Brand/>{loadFailed?<><p>Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>;
+  if(!data)return <div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>;
   const stats=data.stats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
   return <div className="app-shell">
     <Sidebar onNavigate={navigate} onAdmin={()=>setAdminModal(true)} onSession={changeSession} onInstall={installApp} activeNav={activeNav}/>
@@ -255,7 +301,7 @@ export default function App() {
       </main>
     </div>
     <MobileNav onNavigate={navigate} onSession={changeSession} active={activeNav}/>
-    {sessionModal&&<Modal title="Changer d’espace" subtitle="Sélectionnez votre magasin et votre profil vendeur." onClose={()=>setSessionModal(false)}><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/><p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></Modal>}
+    {sessionModal&&<Modal title="Changer d’espace" subtitle="Sélectionnez votre magasin et votre profil vendeur." onClose={()=>setSessionModal(false)}><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/>{CLOUD&&<button className="logout-button" onClick={logoutSeller}>Se déconnecter</button>}<p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></Modal>}
     {adminModal&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>}
     {notificationsModal&&<Modal title="Notifications d’équipe" subtitle="Ne manquez aucune nouvelle vente de votre magasin." onClose={()=>setNotificationsModal(false)}><div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{notificationsEnabled?'Notifications activées':'Un petit signal, une belle dynamique.'}</strong><p>Chaque nouvelle vente peut vous être signalée sur cet appareil, même lorsque l’application est fermée.</p></div></div><div className="notification-details"><div><Check size={16}/> Une notification pour chaque nouvelle vente</div><div><Check size={16}/> Uniquement pour le magasin sélectionné</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div><div className="notification-device-note"><Info size={15}/><span>Sur iPhone et iPad, installez d’abord l’application sur l’écran d’accueil (iOS/iPadOS 16.4 ou plus). Une connexion HTTPS et un navigateur compatible sont nécessaires.</span></div><button className={notificationsEnabled?'outline-button full-button':'primary-button full-button'} disabled={notificationBusy} onClick={notificationsEnabled?disableNotifications:enableNotifications}>{notificationBusy?'Un instant…':notificationsEnabled?'Désactiver sur cet appareil':'Activer les notifications'} {notificationsEnabled?<BellOff size={16}/>:<Bell size={16}/>}</button></Modal>}
     {installModal&&<Modal title="Installer Fnac Pulse" subtitle="Votre espace d’équipe toujours à portée de main." onClose={()=>setInstallModal(false)}><div className="install-steps"><div><span>1</span><p><strong>Sur iPhone ou iPad</strong><br/>Dans Safari, touchez Partager, puis « Sur l’écran d’accueil ».</p></div><div><span>2</span><p><strong>Sur Android ou ordinateur</strong><br/>Ouvrez le menu du navigateur, puis choisissez « Installer l’application » ou « Ajouter à l’écran d’accueil ».</p></div></div><p className="modal-hint"><Info size={14}/> L’installation et les notifications nécessitent une adresse HTTPS et un navigateur compatible.</p><button className="primary-button full-button" onClick={()=>setInstallModal(false)}>J’ai compris <Check size={16}/></button></Modal>}

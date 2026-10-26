@@ -1,65 +1,55 @@
 # Fnac Pulse
 
-Projet initialement nommé **Services-FNAC-Live**.
+**Chaque service compte.** Une PWA adaptée au mobile et à la tablette pour déclarer les services vendus, suivre les résultats d'une équipe et recevoir des notifications.
 
-**Chaque service compte.** Un tableau de bord PWA pour déclarer les services vendus par une équipe, suivre son activité et recevoir les nouvelles ventes en temps réel.
+## Version GitHub Pages + Firebase + Cloudflare
 
-## Utiliser l’application
+La version cloud est préparée pour fonctionner **sans serveur Node.js permanent et sans Firebase Blaze** :
 
-1. Sélectionner un magasin puis un vendeur. Le bouton de géolocalisation propose le magasin référencé le plus proche ; la position est traitée **dans le navigateur** et n’est pas enregistrée par le serveur. La liste initiale est issue d’OpenStreetMap, peut être incomplète et doit être vérifiée. Un administrateur peut ajouter un magasin.
-2. Appuyer sur **+** à côté d’un service. La vente est attribuée au vendeur et au magasin sélectionnés. Le bouton **−** retire la dernière vente du jour pour ce vendeur et ce service. Juste après l’ajout, le message de confirmation propose aussi **Annuler**.
-3. Le classement du jour, les totaux et l’activité se mettent à jour automatiquement sur les appareils connectés au même magasin. Les récapitulatifs portent sur le jour, la semaine (depuis lundi) et le mois en cours, selon le fuseau `Europe/Paris`.
-4. Chaque personne active les notifications **sur chacun de ses appareils** à l’aide de la cloche ou du bouton « Activer ». Une notification Web Push est envoyée pour chaque nouvelle vente du magasin sélectionné, y compris si la page n’est plus ouverte, tant que le navigateur et son service de notifications la prennent en charge. Une correction ou un ajustement administrateur n’envoie pas de nouvelle notification.
-5. Sur iPhone/iPad, ouvrir le site dans Safari, l’ajouter à l’écran d’accueil, puis autoriser les notifications depuis l’application installée (iOS/iPadOS 16.4 ou ultérieur). Sur Android et ordinateur, utiliser un navigateur compatible. HTTPS est nécessaire, sauf pour le développement sur `localhost`. Si les autorisations sont bloquées dans un aperçu intégré, ouvrir le site directement dans un onglet du navigateur.
+- **GitHub Pages** héberge l'interface statique.
+- **Firebase Authentication** et **Firestore** fournissent les sessions vendeurs et la synchronisation en temps réel.
+- Un **Cloudflare Worker** gratuit contrôle les PIN et les écritures ; **Cloudflare Queues** et **Firebase Cloud Messaging** acheminent les notifications.
+- Les vendeurs se connectent en choisissant magasin et nom, puis avec un **PIN personnel à 8 chiffres**. Aucun PIN par défaut n'est créé.
 
-L’application peut afficher la dernière vue déjà chargée hors ligne. **La saisie est suspendue hors connexion** : aucune vente n’est mise en attente ni prétendument enregistrée. Les animations propres aux vendeurs et aux services ne sont pas encore réalisées.
+La configuration Firebase Web publique du projet `fnac-pulse` est incluse. **Le Worker, Firebase et Pages doivent encore être configurés et vérifiés sur les comptes réels avant toute utilisation en équipe.** Aucun secret n'est dans le dépôt. Les tests locaux et les émulateurs ne remplacent pas un test de bout en bout avec FCM, ni un audit de sécurité.
 
-## Administration
+➡️ [Guide de déploiement pas à pas](GUIDE_DEPLOIEMENT.md)
 
-La rubrique **Administration** est protégée par mot de passe. Elle permet de :
+## Utilisation
 
-- corriger les totaux du jour pour un vendeur et un service, magasin par magasin ;
-- ajouter, renommer, archiver ou restaurer des vendeurs et des services ;
-- ajouter un magasin, avec coordonnées GPS facultatives ;
-- changer le mot de passe administrateur.
+1. Sélectionner un magasin et son profil, puis saisir son PIN. La géolocalisation, facultative, propose un magasin proche et reste dans le navigateur. La liste initiale, issue d'OpenStreetMap, est indicative et peut être incomplète.
+2. Appuyer sur **+** pour ajouter un service. **−** retire sa dernière vente du jour pour ce service ; le message de confirmation permet aussi d'annuler.
+3. Les totaux, l'activité et le top 3 se mettent à jour pour les vendeurs du même magasin. Les bilans couvrent le jour, la semaine depuis lundi et le mois, au fuseau `Europe/Paris`.
+4. Chaque personne active les notifications sur chaque appareil. Sur iPhone/iPad, il faut d'abord ajouter l'application à l'écran d'accueil depuis Safari, puis autoriser les notifications (iOS/iPadOS 16.4+). HTTPS et un navigateur compatible sont nécessaires.
+5. L'administration permet de gérer vendeurs, services, magasins, PIN et ventes du jour. Les corrections ne créent pas de notification de vente.
 
-L’archivage conserve l’historique. Les noms et la liste de services sont partagés par l’installation ; les ventes, classements et notifications sont séparés par magasin. Le classement journalier départage les égalités par ordre alphabétique. Les compteurs initiaux sont vides : aucune vente d’exemple n’est injectée.
+La dernière vue chargée peut rester disponible hors ligne, mais **aucune vente n'est mise en attente hors connexion**. Si une réponse est perdue, vérifier le bilan avant de ressaisir. Les animations propres à chaque vendeur et à chaque service restent à concevoir.
 
-Au premier démarrage, si la variable `ADMIN_PASSWORD` n’a pas été définie, un mot de passe aléatoire est généré dans `data/ADMIN-INITIAL.txt` (ou dans `DATA_DIR`). Le lire pour se connecter, puis le changer dans **Administration → Sécurité**. Le fichier initial est supprimé lors du changement. Le mot de passe n’est pas exposé par l’API.
+## Sécurité et limites
 
-## Installation et exécution
+- Le Worker vérifie chaque vente et limite les tentatives de PIN ; les règles Firestore isolent les magasins et interdisent les écritures directes des vendeurs. Un changement de PIN invalide les anciennes sessions. Il s'agit d'une première version non auditée : éviter toute donnée sensible et prévoir un audit avant une utilisation importante.
+- Une notification est **tentée**, sans garantie de délai ni de réception ; des doublons restent possibles après une panne. Le canal est soumis à la connexion, aux permissions, à FCM et aux quotas. Les notifications trop anciennes sont abandonnées.
+- Spark inclut notamment **50 000 lectures, 20 000 écritures/jour et 1 Gio** Firestore Standard ; Workers Free inclut **100 000 requêtes/jour**, Queues Free **10 000 opérations/jour**. Chaque appareil et notification consomment plusieurs opérations : surveiller la consommation réelle. Les limites peuvent changer ; un dépassement peut interrompre le service.
+- Les corrections portent sur le jour courant. L'administration fixe un total de 0 à 100 par vendeur/service ; au-delà de 2 000 opérations enregistrées dans un magasin sur un jour, la correction est bloquée plutôt que de travailler sur une liste tronquée. Aucun nettoyage automatique ni sauvegarde n'est prévu : définir une politique de conservation et de sauvegarde avant usage réel.
 
-Préconditions : Node.js 20 ou plus, npm, système capable d’installer `better-sqlite3`.
+## Développement et vérifications
+
+Node.js 20+ est nécessaire pour compiler et tester, mais **pas pour héberger l'application Pages**.
 
 ```bash
 npm ci
-npm run build
-# La valeur ADMIN_PASSWORD n'est utilisée que pour initialiser une base vierge.
-ADMIN_PASSWORD='un-mot-de-passe-long-et-unique' \
-VAPID_SUBJECT='mailto:adresse-technique@example.com' \
-PORT=4173 npm start
+npm test             # tests isolés ; l'intégration émulateur est ignorée si absent
+npm run build:pages  # build cloud sous /FNAC-Pulse/
 ```
 
-Ouvrir `http://localhost:4173`. Pour une utilisation sur d’autres appareils et pour les notifications, placer le serveur derrière une adresse **HTTPS** accessible par l’équipe. Le serveur écoute sur `0.0.0.0` et fournit l’interface et l’API sur la même origine. Installer la PWA à la racine du domaine, pas dans un sous-répertoire.
+Les tests Firebase Emulator utilisent uniquement un projet fictif `demo-fnac` ; voir le guide. Le Worker peut être vérifié sans déploiement avec `npx --yes wrangler@4.45.0 deploy --dry-run`.
 
-La base SQLite et les clés VAPID sont créées dans `data/`, ou dans le répertoire précisé par `DATA_DIR`. Ce répertoire doit être **persistant**, protégé et sauvegardé avec un outil de sauvegarde SQLite compatible avec le journal WAL. Conserver les clés VAPID avec la base : les changer invalide les abonnements push existants.
+### Ancien mode de développement local
 
-```bash
-npm test            # tests API et persistance, base de test isolée
-```
-
-## Fonctionnement technique
-
-- React et Vite pour l’interface adaptative ; manifest et service worker pour l’installation et les notifications.
-- Express, SQLite et Server-Sent Events pour les données et la synchronisation ; Web Push/VAPID pour les notifications hors page.
-- Écritures enregistrées côté serveur, identifiants de requête évitant les doublons sur une même requête, suppressions logiques pour les corrections.
-- Un seul processus applicatif assure le direct. Pour plusieurs instances, remplacer la diffusion SSE en mémoire par un système de diffusion partagé et employer un stockage adapté. Ne pas mettre les flux SSE en tampon dans le proxy inverse.
-
-## À prévoir avant un déploiement réel
-
-Il s’agit d’une **première version fonctionnelle**, pas d’un service de production durci. La sélection d’un vendeur est déclarative : elle ne constitue pas une authentification personnelle et ne protège pas contre l’usurpation d’un nom. Avant utilisation avec de vraies données, mettre en place une authentification individuelle, une gestion des rôles et des accès par magasin, HTTPS, des sauvegardes, une supervision, une limitation des requêtes au niveau du proxy, ainsi qu’une politique de conservation et d’accès aux données adaptée. L’aperçu temporaire n’est pas un hébergement de production.
+`npm run build && npm start` démarre l'ancien serveur Express/SQLite à des fins de développement. **Ce mode local n'utilise pas les PIN cloud et ne convient pas à GitHub Pages ni à une production ouverte.** Les données SQLite sont placées dans `data/` ; au premier démarrage, le mot de passe administrateur local initial est généré dans `data/ADMIN-INITIAL.txt` si `ADMIN_PASSWORD` n'est pas défini.
 
 ## Sources et marques
 
-- Liste initiale des magasins : données © les contributeurs d’[OpenStreetMap](https://www.openstreetmap.org/copyright), sous licence ODbL, via la BAse Nationale des Commerces Ouverte. La liste est indicative et n’est pas synchronisée en temps réel avec l’annuaire officiel de la Fnac.
-- Identité visuelle inspirée de la Fnac. Le logo provient de [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Fnac_Logo.svg). Les marques et logos appartiennent à leurs propriétaires ; vérifier les autorisations nécessaires avant une diffusion publique.
+- Magasins : © les contributeurs d'[OpenStreetMap](https://www.openstreetmap.org/copyright), données ODbL via la BAse Nationale des Commerces Ouverte ; liste non officielle et non synchronisée.
+- Identité visuelle inspirée de la Fnac ; logo issu de [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Fnac_Logo.svg). Marques et logos appartiennent à leurs propriétaires : vérifier les autorisations avant diffusion.
+- Dépôt : <https://github.com/hypernovax31/FNAC-Pulse>. Site prévu : <https://hypernovax31.github.io/FNAC-Pulse/>.

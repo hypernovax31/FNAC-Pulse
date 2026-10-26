@@ -1,0 +1,133 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createWorker} from '../worker/index.js';
+import {digestBase64} from '../worker/firebase.js';
+import {pinProof} from '../src/pin.js';
+import {summarize,periodStarts,earliestDate,parisToday} from '../src/cloud-stats.js';
+
+class MemoryDb {
+  docs=new Map();n=0;
+  async get(path){const d=this.docs.get(path);return d?structuredClone(d):null;}
+  write(path,data,currentDocument){return {path,data:structuredClone(data),currentDocument};}
+  delete(path,currentDocument){return {path,del:true,currentDocument};}
+  async commit(writes){
+    for(const w of writes){const old=this.docs.get(w.path),c=w.currentDocument;
+      if((c?.exists===false&&old)||(c?.exists===true&&!old)||(c?.updateTime&&old?.updateTime!==c.updateTime)) {const e=new Error('conflict');e.status=409;throw e;}}
+    for(const w of writes){if(w.del)this.docs.delete(w.path);else this.docs.set(w.path,{id:w.path.split('/').pop(),name:w.path,data:structuredClone(w.data),updateTime:String(++this.n)});}
+  }
+  async query(path,field,op,value,limit=1000){return [...this.docs].filter(([k])=>k.startsWith(path+'/')&&!k.slice(path.length+1).includes('/')).map(([,v])=>structuredClone(v)).filter(x=>!field||(op==='EQUAL'?x.data[field]===value:x.data[field]>=value)).slice(0,limit);}
+}
+function makeMessage(body){return {body,acked:false,retried:false,ack(){this.acked=true},retry(){this.retried=true}};}
+
+test('Cloud : PIN, isolation, corrections, administration et notifications en file',async()=>{
+  const db=new MemoryDb(), sent=[], queued=[], identities=new Map(), waits=[];
+  const worker=createWorker({
+    createDb:()=>db,
+    verifyIdToken:async(_env,token)=>{const x=identities.get(token);if(!x)throw Error('invalid');return x;},
+    makeCustomToken:async(_env,sub,claims)=>{identities.set('seller-token',{sub,...claims});return 'custom-test-token';},
+    sendFcm:async(_env,token,sale)=>sent.push({token,sale}),
+  });
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'admin-uid',ALLOWED_ORIGIN:'https://example.test',APP_URL:'https://example.test/FNAC-Pulse/',
+    PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}},
+    PULSE_QUEUE:{async sendBatch(messages){queued.push(...messages.map(x=>x.body));}}};
+  identities.set('admin-token',{sub:'admin-uid'});
+  const ctx={waitUntil(p){waits.push(p)}};
+  async function req(path,method='GET',body,token,origin) {
+    const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{}) ,...(origin?{origin}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:r.status,body:await r.json()};
+  }
+  assert.equal((await req('/api/bootstrap','GET',undefined,undefined,'https://evil.test')).status,403);
+  const base=(await req('/api/bootstrap')).body;
+  assert.equal(base.sellers.length,12);assert.equal(base.services.length,11);
+  const store=base.stores.find(s=>s.name==='Fnac Bordeaux').id,other=base.stores.find(s=>s.name==='Fnac Bordeaux-Lac').id;
+  const proof=await pinProof('demo-fnac',store,1,'73628519');
+  assert.equal((await req('/api/admin/pin','POST',{storeId:store,sellerId:1,proof})).status,401);
+  assert.equal((await req('/api/admin/pin','POST',{storeId:store,sellerId:1,proof},'admin-token')).status,200);
+  assert.equal((await req('/api/auth/login','POST',{storeId:other,sellerId:1,proof})).status,401);
+  assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:1,proof})).body.customToken,'custom-test-token');
+  const claims=identities.get('seller-token');assert.equal(claims.storeId,store);
+  const token='a-very-long-firebase-registration-token-01';
+  assert.equal((await req('/api/push/subscribe','POST',{token},'seller-token')).status,200);
+  const requestId='test-sale-00000001';
+  let r=await req('/api/sales','POST',{storeId:other,sellerId:12,serviceId:1,requestId,clientId:'one'},'seller-token');
+  assert.equal(r.status,200);assert.equal(r.body.id,requestId);
+  await Promise.all(waits.splice(0));assert.equal(queued.length,1);
+  const created=await db.get(`pulseStores/${store}/sales/${requestId}`);assert.equal(created.data.storeId,store);assert.equal(created.data.sellerId,1);
+  assert.equal(await db.get(`pulseStores/${other}/sales/${requestId}`),null);
+  r=await req('/api/sales','POST',{serviceId:1,requestId},'seller-token');assert.equal(r.body.duplicate,true);await Promise.all(waits.splice(0));assert.equal(queued.length,1);
+  const message=makeMessage(queued[0]);await worker.queue({messages:[message]},env);assert.equal(message.acked,true);assert.equal(sent.length,1);
+  const same=makeMessage(queued[0]);await worker.queue({messages:[same]},env);assert.equal(same.acked,true);assert.equal(sent.length,1);
+  assert.equal((await req('/api/sales/test-sale-00000001','DELETE',{},'seller-token')).status,200);
+  assert.equal((await req('/api/sales/test-sale-00000001','DELETE',{},'seller-token')).status,409);
+  assert.equal((await req('/api/admin/adjust','POST',{storeId:store,sellerId:1,serviceId:1,count:3},'admin-token')).status,200);
+  const counts=(await req(`/api/admin/counts?storeId=${store}&sellerId=1`,'GET',undefined,'admin-token')).body;
+  assert.equal(counts.counts[0].count,3);
+  assert.equal((await req('/api/sales/remove','POST',{serviceId:1},'seller-token')).status,200);
+  assert.equal((await req('/api/admin/adjust','POST',{storeId:store,sellerId:1,serviceId:1,count:0},'admin-token')).status,200);
+  assert.equal((await req(`/api/admin/counts?storeId=${store}&sellerId=1`,'GET',undefined,'admin-token')).body.counts.length,0);
+  const newProof=await pinProof('demo-fnac',store,1,'59386271');
+  assert.equal((await req('/api/admin/pin','POST',{storeId:store,sellerId:1,proof:newProof},'admin-token')).status,200);
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'test-sale-00000002'},'seller-token')).status,403);
+  assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:1,proof})).status,401);
+  assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:1,proof:newProof})).status,200);
+  assert.equal((await req('/api/admin/entities/sellers/1','PATCH',{active:false},'admin-token')).status,200);
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'test-sale-00000003'},'seller-token')).status,403);
+});
+
+test('Cloud : verrouillage durable après cinq PIN erronés',async()=>{
+  const db=new MemoryDb(),identities=new Map([['admin',{sub:'administrator'}]]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!identities.has(t))throw Error();return identities.get(t)},makeCustomToken:async()=> 'ok'});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PIN_PEPPER:Buffer.alloc(32,11).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}};
+  const ctx={waitUntil(){}};
+  async function req(path,body,token) {const r=await worker.fetch(new Request(`https://worker.test${path}`,{method:'POST',headers:{'content-type':'application/json',...(token?{authorization:`Bearer ${token}`}:{})},body:JSON.stringify(body)}),env,ctx);return r.status;}
+  await worker.fetch(new Request('https://worker.test/api/bootstrap'),env,ctx);
+  const store=(await db.get('pulse/catalog')).data.stores[0].id;
+  const good=await pinProof('demo-fnac',store,2,'90473512');
+  assert.equal(await req('/api/admin/pin',{storeId:store,sellerId:2,proof:good},'admin'),200);
+  const bad=await pinProof('demo-fnac',store,2,'00000000');
+  for(let n=0;n<5;n++)assert.equal(await req('/api/auth/login',{storeId:store,sellerId:2,proof:bad}),401);
+  assert.equal(await req('/api/auth/login',{storeId:store,sellerId:2,proof:good}),429);
+  const uid=`seller-${(await digestBase64(`${store}:2`)).slice(0,28)}`;
+  assert((await db.get(`pulseAttempts/${uid}`)).data.lockUntil>Date.now());
+});
+
+test('Bilans : semaine sur deux mois, vendeur et suppressions',()=>{
+  const catalog={sellers:[{id:1,name:'Morgan',active:true},{id:2,name:'Alice',active:true}],services:[{id:1,name:'DMax',icon:'play',active:true}]};
+  const sale=(id,date,seller,deleted=false)=>({id,businessDate:date,createdAt:`${date}T12:00:00.000Z`,sellerId:seller,serviceId:1,source:'sale',deletedAt:deleted?'x':null});
+  const sales=[sale('a','2026-10-31',1),sale('b','2026-11-01',1),sale('c','2026-11-01',2),sale('d','2026-11-01',2,true)];
+  const out=summarize(catalog,sales,1,'2026-11-01');
+  assert.deepEqual(periodStarts('2026-11-01'),{day:'2026-11-01',week:'2026-10-26',month:'2026-11-01'});
+  assert.equal(earliestDate('2026-11-01'),'2026-10-26');
+  assert.equal(out.day.total,2);assert.equal(out.week.total,3);assert.equal(out.month.total,2);assert.equal(out.mineTotal,1);assert.equal(out.leaderboard[0].name,'Alice');
+});
+
+test('Cloud : reprise FCM, limitation des doublons et profil archivé',async()=>{
+  const db=new MemoryDb(), sent=[];
+  let failures=1;
+  const worker=createWorker({createDb:()=>db,sendFcm:async(_env,token,sale)=>{if(failures-- >0)throw Error('FCM temporairement indisponible');sent.push({token,sale});}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac'};
+  await worker.fetch(new Request('https://worker.test/api/bootstrap'),env,{waitUntil(){}});
+  const catalog=(await db.get('pulse/catalog')).data,store=catalog.stores[0].id;
+  const uid='seller-test',token='a-valid-firebase-device-token-123456',tokenId=await digestBase64(token);
+  await db.commit([
+    db.write(`pulseAccess/${uid}`,{active:true,storeId:store,sellerId:1,version:'v1'}),
+    db.write(`pulseTokens/${tokenId}`,{token,uid,storeId:store,accessVersion:'v1'}),
+    db.write('pulseOutbox/sale-test-0001',{saleId:'sale-test-0001',storeId:store,status:'queued',createdAt:Date.now()})
+  ]);
+  const first=makeMessage({saleId:'sale-test-0001',storeId:store,tokenId});
+  await worker.queue({messages:[first]},env);assert.equal(first.retried,true);assert.equal(first.acked,false);
+  const second=makeMessage(first.body);await worker.queue({messages:[second]},env);assert.equal(second.acked,true);assert.equal(sent.length,1);
+  const again=makeMessage(first.body);await worker.queue({messages:[again]},env);assert.equal(again.acked,true);assert.equal(sent.length,1);
+  catalog.sellers.find(x=>x.id===1).active=false;catalog.sellerFlags.s1=false;
+  await db.commit([db.write('pulse/catalog',catalog),db.write('pulseOutbox/sale-test-0002',{saleId:'sale-test-0002',storeId:store,status:'queued',createdAt:Date.now()})]);
+  const archived=makeMessage({saleId:'sale-test-0002',storeId:store,tokenId});
+  await worker.queue({messages:[archived]},env);assert.equal(archived.acked,true);assert.equal(sent.length,1);
+});
+
+test('Fuseau Paris : minuit et changement d’heure',()=>{
+  assert.equal(parisDate('2026-03-28T22:59:59.000Z'),'2026-03-28');
+  assert.equal(parisDate('2026-03-28T23:00:00.000Z'),'2026-03-29');
+  assert.equal(parisDate('2026-06-30T21:59:59.000Z'),'2026-06-30');
+  assert.equal(parisDate('2026-06-30T22:00:00.000Z'),'2026-07-01');
+});
+function parisDate(iso) {return parisToday(new Date(iso));}

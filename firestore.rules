@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function validSeller() {
+      let a = get(/databases/$(database)/documents/pulseAccess/$(request.auth.uid));
+      let c = get(/databases/$(database)/documents/pulse/catalog);
+      return request.auth != null
+        && request.auth.token.role == 'seller'
+        && a.data.active == true
+        && a.data.version == request.auth.token.accessVersion
+        && a.data.storeId == request.auth.token.storeId
+        && a.data.sellerKey == request.auth.token.sellerKey
+        && c.data.sellerFlags[request.auth.token.sellerKey] == true
+        && c.data.storeFlags[request.auth.token.storeId] == true;
+    }
+    match /pulse/catalog { allow get: if request.auth != null && validSeller(); allow list, write: if false; }
+    // Seul le vendeur concerné peut observer sa version d’accès ; aucun PIN n’est stocké ici.
+    match /pulseStatus/{uid} { allow get: if request.auth != null && request.auth.uid == uid; allow list, write: if false; }
+    match /pulseStores/{storeId}/sales/{saleId} {
+      allow read: if request.auth != null && validSeller() && request.auth.token.storeId == storeId;
+      allow write: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
