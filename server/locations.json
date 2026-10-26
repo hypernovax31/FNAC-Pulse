@@ -1,0 +1,1442 @@
+[
+  {
+    "id": "osm-node-6521214174",
+    "city": "Abbeville",
+    "address": "",
+    "lat": 50.116519,
+    "lon": 1.824865,
+    "name": "Fnac Abbeville"
+  },
+  {
+    "id": "osm-node-12539025850",
+    "city": "Aix-en-Provence",
+    "address": "",
+    "lat": 43.526286,
+    "lon": 5.442842,
+    "name": "Fnac Aix-en-Provence"
+  },
+  {
+    "id": "osm-node-4409245040",
+    "city": "Ajaccio",
+    "address": "",
+    "lat": 41.934639,
+    "lon": 8.746519,
+    "name": "Fnac Ajaccio"
+  },
+  {
+    "id": "osm-node-11153189794",
+    "city": "Albi",
+    "address": "9 Rue Timbal",
+    "lat": 43.927694,
+    "lon": 2.147067,
+    "name": "Fnac Albi"
+  },
+  {
+    "id": "osm-node-8104959046",
+    "city": "Alès",
+    "address": "1639 Chemin des Sports",
+    "lat": 44.10757,
+    "lon": 4.093921,
+    "name": "Fnac Alès"
+  },
+  {
+    "id": "osm-node-3901896334",
+    "city": "Amiens",
+    "address": "12 Rue des Trois Cailloux",
+    "lat": 49.892638,
+    "lon": 2.298572,
+    "name": "Fnac Amiens"
+  },
+  {
+    "id": "osm-node-1405652413",
+    "city": "Angers",
+    "address": "",
+    "lat": 47.472014,
+    "lon": -0.551278,
+    "name": "Fnac Angers"
+  },
+  {
+    "id": "osm-way-889285932",
+    "city": "Annecy",
+    "address": "65 Rue Carnot",
+    "lat": 45.903455,
+    "lon": 6.123426,
+    "name": "Fnac Annecy"
+  },
+  {
+    "id": "osm-node-1888725580",
+    "city": "Annemasse",
+    "address": "14 Rue de la Résistance",
+    "lat": 46.196257,
+    "lon": 6.253693,
+    "name": "Fnac Annemasse"
+  },
+  {
+    "id": "osm-node-11032099799",
+    "city": "Annonay",
+    "address": "49 Avenue de l'Europe",
+    "lat": 45.244123,
+    "lon": 4.668199,
+    "name": "Fnac Annonay"
+  },
+  {
+    "id": "osm-node-3289623011",
+    "city": "Aouste-sur-Sye",
+    "address": "",
+    "lat": 44.723094,
+    "lon": 5.038372,
+    "name": "Fnac Aouste-sur-Sye"
+  },
+  {
+    "id": "osm-node-6863454143",
+    "city": "Arles",
+    "address": "",
+    "lat": 43.703647,
+    "lon": 4.644357,
+    "name": "Fnac Arles"
+  },
+  {
+    "id": "osm-way-67933326",
+    "city": "Aubenas",
+    "address": "",
+    "lat": 44.615852,
+    "lon": 4.40599,
+    "name": "Fnac Aubenas"
+  },
+  {
+    "id": "osm-node-5796496573",
+    "city": "Aulnay-sous-Bois",
+    "address": "",
+    "lat": 48.954844,
+    "lon": 2.474887,
+    "name": "Fnac Aulnay-sous-Bois"
+  },
+  {
+    "id": "osm-node-10135617478",
+    "city": "Aurillac",
+    "address": "5 bis Rue des Frères Charmes",
+    "lat": 44.928238,
+    "lon": 2.446733,
+    "name": "Fnac Aurillac"
+  },
+  {
+    "id": "osm-node-10748161134",
+    "city": "Avignon",
+    "address": "",
+    "lat": 43.947415,
+    "lon": 4.805939,
+    "name": "Fnac Avignon"
+  },
+  {
+    "id": "osm-node-2135468478",
+    "city": "Bayonne",
+    "address": "42 Avenue Maréchal Soult",
+    "lat": 43.486382,
+    "lon": -1.491414,
+    "name": "Fnac Bayonne"
+  },
+  {
+    "id": "osm-node-9439086655",
+    "city": "Beaune",
+    "address": "",
+    "lat": 47.018321,
+    "lon": 4.855678,
+    "name": "Fnac Beaune"
+  },
+  {
+    "id": "osm-node-10893218029",
+    "city": "Beauvais",
+    "address": "16 Rue Pierre Jacoby",
+    "lat": 49.429997,
+    "lon": 2.083789,
+    "name": "Fnac Beauvais"
+  },
+  {
+    "id": "osm-node-5231028758",
+    "city": "Belfort",
+    "address": "",
+    "lat": 47.636622,
+    "lon": 6.85696,
+    "name": "Fnac Belfort"
+  },
+  {
+    "id": "osm-way-140597446",
+    "city": "Belleville-en-Beaujolais",
+    "address": "",
+    "lat": 46.104675,
+    "lon": 4.749867,
+    "name": "Fnac Belleville-en-Beaujolais"
+  },
+  {
+    "id": "osm-node-12171326655",
+    "city": "Bergerac",
+    "address": "9 Rue de la Résistance",
+    "lat": 44.853083,
+    "lon": 0.483963,
+    "name": "Fnac Bergerac"
+  },
+  {
+    "id": "osm-way-973602012",
+    "city": "Besançon",
+    "address": "",
+    "lat": 47.21495,
+    "lon": 5.94729,
+    "name": "Fnac Besançon"
+  },
+  {
+    "id": "osm-node-10096464422",
+    "city": "Biganos",
+    "address": "",
+    "lat": 44.635158,
+    "lon": -0.958656,
+    "name": "Fnac Biganos"
+  },
+  {
+    "id": "osm-node-3269635761",
+    "city": "Bordeaux",
+    "address": "50 Rue Sainte-Catherine",
+    "lat": 44.839952,
+    "lon": -0.57403,
+    "name": "Fnac Bordeaux"
+  },
+  {
+    "id": "osm-way-1049251411",
+    "city": "Bordeaux",
+    "address": "",
+    "lat": 44.879151,
+    "lon": -0.566789,
+    "name": "Fnac Bordeaux-Lac"
+  },
+  {
+    "id": "osm-node-3239199371",
+    "city": "Boulogne-Billancourt",
+    "address": "5 Rue Tony Garnier",
+    "lat": 48.836728,
+    "lon": 2.238278,
+    "name": "Fnac Boulogne-Billancourt"
+  },
+  {
+    "id": "osm-way-96177750",
+    "city": "Boulogne-sur-Mer",
+    "address": "67 Rue Faidherbe",
+    "lat": 50.725602,
+    "lon": 1.605301,
+    "name": "Fnac Boulogne-sur-Mer"
+  },
+  {
+    "id": "osm-node-288926229",
+    "city": "Bourges",
+    "address": "",
+    "lat": 47.093047,
+    "lon": 2.420543,
+    "name": "Fnac Bourges"
+  },
+  {
+    "id": "osm-node-10937232207",
+    "city": "Brest",
+    "address": "65 Rue Jean Jaurès",
+    "lat": 48.393346,
+    "lon": -4.47947,
+    "name": "Fnac Brest"
+  },
+  {
+    "id": "osm-node-1635280506",
+    "city": "Caen",
+    "address": "",
+    "lat": 49.18196,
+    "lon": -0.365481,
+    "name": "Fnac Caen"
+  },
+  {
+    "id": "osm-node-6109533243",
+    "city": "Cagnes-sur-Mer",
+    "address": "",
+    "lat": 43.665641,
+    "lon": 7.126847,
+    "name": "Fnac Cagnes-sur-Mer"
+  },
+  {
+    "id": "osm-node-7515755392",
+    "city": "Cannes",
+    "address": "83 Rue d'Antibes",
+    "lat": 43.552479,
+    "lon": 7.023663,
+    "name": "Fnac Cannes"
+  },
+  {
+    "id": "osm-way-688096173",
+    "city": "Capvern",
+    "address": "",
+    "lat": 43.111744,
+    "lon": 0.354501,
+    "name": "Fnac Capvern"
+  },
+  {
+    "id": "osm-node-14120220574",
+    "city": "Cergy",
+    "address": "",
+    "lat": 49.037869,
+    "lon": 2.08077,
+    "name": "Fnac Cergy – magasin 1"
+  },
+  {
+    "id": "osm-node-2402591807",
+    "city": "Cergy",
+    "address": "",
+    "lat": 49.03996,
+    "lon": 2.080809,
+    "name": "Fnac Cergy – magasin 2"
+  },
+  {
+    "id": "osm-node-11091105505",
+    "city": "Chalon-sur-Saône",
+    "address": "11 Rue du Général Leclerc",
+    "lat": 46.781655,
+    "lon": 4.853744,
+    "name": "Fnac Chalon-sur-Saône"
+  },
+  {
+    "id": "osm-way-165525164",
+    "city": "Chambourcy",
+    "address": "80 Route de Mantes",
+    "lat": 48.91208,
+    "lon": 2.03408,
+    "name": "Fnac Chambourcy"
+  },
+  {
+    "id": "osm-node-1522513537",
+    "city": "Chambéry",
+    "address": "",
+    "lat": 45.56644,
+    "lon": 5.919167,
+    "name": "Fnac Chambéry"
+  },
+  {
+    "id": "osm-node-12271576520",
+    "city": "Champniers",
+    "address": "",
+    "lat": 45.693014,
+    "lon": 0.184374,
+    "name": "Fnac Champniers"
+  },
+  {
+    "id": "osm-node-13165491588",
+    "city": "Chartres",
+    "address": "",
+    "lat": 48.445382,
+    "lon": 1.485911,
+    "name": "Fnac Chartres"
+  },
+  {
+    "id": "osm-node-10167025994",
+    "city": "Cherbourg-en-Cotentin",
+    "address": "",
+    "lat": 49.635082,
+    "lon": -1.619053,
+    "name": "Fnac Cherbourg-en-Cotentin"
+  },
+  {
+    "id": "osm-node-7097955254",
+    "city": "Châteauroux",
+    "address": "",
+    "lat": 46.810782,
+    "lon": 1.692545,
+    "name": "Fnac Châteauroux"
+  },
+  {
+    "id": "osm-node-10949233559",
+    "city": "Claye-Souilly",
+    "address": "",
+    "lat": 48.944389,
+    "lon": 2.654685,
+    "name": "Fnac Claye-Souilly"
+  },
+  {
+    "id": "osm-way-455394647",
+    "city": "Clermont-Ferrand",
+    "address": "",
+    "lat": 45.774363,
+    "lon": 3.082569,
+    "name": "Fnac Clermont-Ferrand"
+  },
+  {
+    "id": "osm-node-5775254834",
+    "city": "Colombier-Saugnieu",
+    "address": "",
+    "lat": 45.716488,
+    "lon": 5.078113,
+    "name": "Fnac Colombier-Saugnieu"
+  },
+  {
+    "id": "osm-node-13816742490",
+    "city": "Compiègne",
+    "address": "",
+    "lat": 49.417378,
+    "lon": 2.826824,
+    "name": "Fnac Compiègne"
+  },
+  {
+    "id": "osm-node-5849900586",
+    "city": "Condé-sur-Sarthe",
+    "address": "61 Rue de Bretagne",
+    "lat": 48.432131,
+    "lon": 0.062278,
+    "name": "Fnac Condé-sur-Sarthe"
+  },
+  {
+    "id": "osm-node-7398227861",
+    "city": "Boisseuil",
+    "address": "",
+    "lat": 45.777892,
+    "lon": 1.307974,
+    "name": "Fnac Connect Boisseuil"
+  },
+  {
+    "id": "osm-node-10898749213",
+    "city": "Narbonne",
+    "address": "",
+    "lat": 43.183915,
+    "lon": 3.004591,
+    "name": "Fnac Connect Narbonne"
+  },
+  {
+    "id": "osm-way-1010279594",
+    "city": "Dax",
+    "address": "",
+    "lat": 43.708052,
+    "lon": -1.053886,
+    "name": "Fnac Dax"
+  },
+  {
+    "id": "osm-node-13194660156",
+    "city": "Dijon",
+    "address": "2 Rue Dauphine",
+    "lat": 47.321356,
+    "lon": 5.038597,
+    "name": "Fnac Dijon"
+  },
+  {
+    "id": "osm-node-4754965581",
+    "city": "Dole",
+    "address": "9 Rue Léon Bel",
+    "lat": 47.109752,
+    "lon": 5.510368,
+    "name": "Fnac Dole"
+  },
+  {
+    "id": "osm-way-37719887",
+    "city": "Doubs",
+    "address": "19 Rue Pomone",
+    "lat": 46.921897,
+    "lon": 6.344267,
+    "name": "Fnac Doubs"
+  },
+  {
+    "id": "osm-node-6985246076",
+    "city": "Farébersviller",
+    "address": "",
+    "lat": 49.11353,
+    "lon": 6.851775,
+    "name": "Fnac Farébersviller"
+  },
+  {
+    "id": "osm-way-223689813",
+    "city": "Furiani",
+    "address": "",
+    "lat": 42.655086,
+    "lon": 9.440644,
+    "name": "Fnac Furiani"
+  },
+  {
+    "id": "osm-node-3751665168",
+    "city": "Gennevilliers",
+    "address": "112 Avenue du Général de Gaulle",
+    "lat": 48.932762,
+    "lon": 2.316955,
+    "name": "Fnac Gennevilliers"
+  },
+  {
+    "id": "osm-node-6405836988",
+    "city": "Genève",
+    "address": "16 Rue de Rive",
+    "lat": 46.201943,
+    "lon": 6.151414,
+    "name": "Fnac Genève"
+  },
+  {
+    "id": "osm-node-10055608698",
+    "city": "Givet",
+    "address": "",
+    "lat": 50.13585,
+    "lon": 4.849688,
+    "name": "Fnac Givet"
+  },
+  {
+    "id": "osm-node-401364026",
+    "city": "Grenoble",
+    "address": "4 Rue Félix Poulat",
+    "lat": 45.190394,
+    "lon": 5.726303,
+    "name": "Fnac Grenoble Victor Hugo"
+  },
+  {
+    "id": "osm-way-512915173",
+    "city": "Grenoble",
+    "address": "90 Avenue du Vercors",
+    "lat": 45.157945,
+    "lon": 5.732222,
+    "name": "Fnac Grenoble – 90 Avenue du Vercors"
+  },
+  {
+    "id": "osm-node-963484290",
+    "city": "Herblay-sur-Seine",
+    "address": "",
+    "lat": 48.999578,
+    "lon": 2.189247,
+    "name": "Fnac Herblay-sur-Seine"
+  },
+  {
+    "id": "osm-node-13363707509",
+    "city": "Issoire",
+    "address": "",
+    "lat": 45.54649,
+    "lon": 3.248598,
+    "name": "Fnac Issoire"
+  },
+  {
+    "id": "osm-way-753053687",
+    "city": "Jeuxey",
+    "address": "",
+    "lat": 48.198486,
+    "lon": 6.482009,
+    "name": "Fnac Jeuxey"
+  },
+  {
+    "id": "osm-node-2286934649",
+    "city": "L'Isle-d'Abeau",
+    "address": "",
+    "lat": 45.612712,
+    "lon": 5.23391,
+    "name": "Fnac L'Isle-d'Abeau"
+  },
+  {
+    "id": "osm-way-377860496",
+    "city": "La Roche-sur-Yon",
+    "address": "",
+    "lat": 46.700089,
+    "lon": -1.432281,
+    "name": "Fnac La Roche-sur-Yon"
+  },
+  {
+    "id": "osm-way-386504727",
+    "city": "Labège",
+    "address": "",
+    "lat": 43.551969,
+    "lon": 1.506877,
+    "name": "Fnac Labège"
+  },
+  {
+    "id": "osm-node-3782323705",
+    "city": "Laval",
+    "address": "5 Rue du Général de Gaulle",
+    "lat": 48.070549,
+    "lon": -0.77434,
+    "name": "Fnac Laval"
+  },
+  {
+    "id": "osm-node-1859474832",
+    "city": "Le Chesnay-Rocquencourt",
+    "address": "52 Avenue Dutartre",
+    "lat": 48.825831,
+    "lon": 2.118104,
+    "name": "Fnac Le Chesnay-Rocquencourt"
+  },
+  {
+    "id": "osm-node-2013920092",
+    "city": "Le Havre",
+    "address": "22 Rue Casimir Périer",
+    "lat": 49.495862,
+    "lon": 0.111593,
+    "name": "Fnac Le Havre"
+  },
+  {
+    "id": "osm-node-9306621881",
+    "city": "Le Mans",
+    "address": "Centre Commercial les Jacobins",
+    "lat": 48.006246,
+    "lon": 0.199378,
+    "name": "Fnac Le Mans"
+  },
+  {
+    "id": "osm-node-5081573924",
+    "city": "Le Mesnil-Amelot",
+    "address": "",
+    "lat": 49.002018,
+    "lon": 2.576189,
+    "name": "Fnac Le Mesnil-Amelot – magasin 1"
+  },
+  {
+    "id": "osm-node-6528392571",
+    "city": "Le Mesnil-Amelot",
+    "address": "",
+    "lat": 49.004628,
+    "lon": 2.589982,
+    "name": "Fnac Le Mesnil-Amelot – magasin 2"
+  },
+  {
+    "id": "osm-node-4563764590",
+    "city": "Le Mesnil-Amelot",
+    "address": "",
+    "lat": 49.005447,
+    "lon": 2.579334,
+    "name": "Fnac Le Mesnil-Amelot – magasin 3"
+  },
+  {
+    "id": "osm-way-124905526",
+    "city": "Le Pontet",
+    "address": "",
+    "lat": 43.981157,
+    "lon": 4.879303,
+    "name": "Fnac Le Pontet"
+  },
+  {
+    "id": "osm-node-10210366385",
+    "city": "Le Port",
+    "address": "",
+    "lat": -20.956122,
+    "lon": 55.30763,
+    "name": "Fnac Le Port"
+  },
+  {
+    "id": "osm-node-8554797676",
+    "city": "Le Puy-en-Velay",
+    "address": "23 Boulevard du Maréchal Fayolle",
+    "lat": 45.042238,
+    "lon": 3.886586,
+    "name": "Fnac Le Puy-en-Velay"
+  },
+  {
+    "id": "osm-node-9482162375",
+    "city": "Les Abymes",
+    "address": "",
+    "lat": 16.265535,
+    "lon": -61.512221,
+    "name": "Fnac Les Abymes"
+  },
+  {
+    "id": "osm-way-475631806",
+    "city": "Les Fins",
+    "address": "",
+    "lat": 47.057696,
+    "lon": 6.616557,
+    "name": "Fnac Les Fins"
+  },
+  {
+    "id": "osm-node-9870154630",
+    "city": "Libourne",
+    "address": "37-41 Rue Gambetta",
+    "lat": 44.915727,
+    "lon": -0.24247,
+    "name": "Fnac Libourne"
+  },
+  {
+    "id": "osm-node-10169546127",
+    "city": "Lille",
+    "address": "20 Rue Saint-Nicolas",
+    "lat": 50.635796,
+    "lon": 3.065061,
+    "name": "Fnac Lille – 20 Rue Saint-Nicolas"
+  },
+  {
+    "id": "osm-way-1166230739",
+    "city": "Lille",
+    "address": "",
+    "lat": 50.636354,
+    "lon": 3.069887,
+    "name": "Fnac Lille – magasin 1"
+  },
+  {
+    "id": "osm-node-843127948",
+    "city": "Limoges",
+    "address": "",
+    "lat": 45.832266,
+    "lon": 1.258038,
+    "name": "Fnac Limoges"
+  },
+  {
+    "id": "osm-node-5336519598",
+    "city": "Lisieux",
+    "address": "Avenue Georges Pompidou",
+    "lat": 49.131891,
+    "lon": 0.224377,
+    "name": "Fnac Lisieux"
+  },
+  {
+    "id": "osm-relation-13963398",
+    "city": "Lorient",
+    "address": "9 Place Aristide Briand",
+    "lat": 47.748541,
+    "lon": -3.363811,
+    "name": "Fnac Lorient"
+  },
+  {
+    "id": "osm-node-1425488607",
+    "city": "Lyon",
+    "address": "",
+    "lat": 45.758317,
+    "lon": 4.834662,
+    "name": "Fnac Lyon – magasin 1"
+  },
+  {
+    "id": "osm-way-1069650108",
+    "city": "Lyon",
+    "address": "",
+    "lat": 45.760112,
+    "lon": 4.855505,
+    "name": "Fnac Lyon – magasin 2"
+  },
+  {
+    "id": "osm-way-1165439509",
+    "city": "Lyon",
+    "address": "",
+    "lat": 45.760264,
+    "lon": 4.861119,
+    "name": "Fnac Lyon – magasin 3"
+  },
+  {
+    "id": "osm-node-3234042328",
+    "city": "Marseille",
+    "address": "",
+    "lat": 43.291721,
+    "lon": 5.477902,
+    "name": "Fnac Marseille – magasin 1"
+  },
+  {
+    "id": "osm-node-2608547504",
+    "city": "Marseille",
+    "address": "",
+    "lat": 43.298208,
+    "lon": 5.375497,
+    "name": "Fnac Marseille – magasin 2"
+  },
+  {
+    "id": "osm-way-403640134",
+    "city": "Marseille",
+    "address": "",
+    "lat": 43.303623,
+    "lon": 5.379297,
+    "name": "Fnac Marseille – magasin 3"
+  },
+  {
+    "id": "osm-node-7982649764",
+    "city": "Maulette",
+    "address": "",
+    "lat": 48.790912,
+    "lon": 1.626249,
+    "name": "Fnac Maulette"
+  },
+  {
+    "id": "osm-way-112360300",
+    "city": "Melun",
+    "address": "22 Rue Paul Doumer",
+    "lat": 48.539785,
+    "lon": 2.660132,
+    "name": "Fnac Melun"
+  },
+  {
+    "id": "osm-way-1162431772",
+    "city": "Metz",
+    "address": "13 Place Général de Gaulle",
+    "lat": 49.109614,
+    "lon": 6.176838,
+    "name": "Fnac Metz – 13 Place Général de Gaulle"
+  },
+  {
+    "id": "osm-node-2108122927",
+    "city": "Metz",
+    "address": "25 Rue des Clercs",
+    "lat": 49.116505,
+    "lon": 6.172824,
+    "name": "Fnac Metz – 25 Rue des Clercs"
+  },
+  {
+    "id": "osm-node-268113334",
+    "city": "Monaco",
+    "address": "",
+    "lat": 43.741244,
+    "lon": 7.428224,
+    "name": "Fnac Monaco"
+  },
+  {
+    "id": "osm-node-10132828659",
+    "city": "Montceau-les-Mines",
+    "address": "",
+    "lat": 46.677484,
+    "lon": 4.373457,
+    "name": "Fnac Montceau-les-Mines"
+  },
+  {
+    "id": "osm-node-11545548729",
+    "city": "Montluçon",
+    "address": "18 Boulevard de Courtais",
+    "lat": 46.340143,
+    "lon": 2.601428,
+    "name": "Fnac Montluçon"
+  },
+  {
+    "id": "osm-node-11681439007",
+    "city": "Montpellier",
+    "address": "",
+    "lat": 43.608526,
+    "lon": 3.885118,
+    "name": "Fnac Montpellier"
+  },
+  {
+    "id": "osm-node-9549061168",
+    "city": "Montpon-Ménestérol",
+    "address": "",
+    "lat": 45.006301,
+    "lon": 0.14584,
+    "name": "Fnac Montpon-Ménestérol"
+  },
+  {
+    "id": "osm-node-6269342182",
+    "city": "Montélimar",
+    "address": "Avenue de Gournier",
+    "lat": 44.531866,
+    "lon": 4.738863,
+    "name": "Fnac Montélimar"
+  },
+  {
+    "id": "osm-node-2292061993",
+    "city": "Mulhouse",
+    "address": "",
+    "lat": 47.748611,
+    "lon": 7.339564,
+    "name": "Fnac Mulhouse"
+  },
+  {
+    "id": "osm-node-8999608735",
+    "city": "Mâcon",
+    "address": "",
+    "lat": 46.305538,
+    "lon": 4.834135,
+    "name": "Fnac Mâcon"
+  },
+  {
+    "id": "osm-way-1016847461",
+    "city": "Ménétrol",
+    "address": "",
+    "lat": 45.876157,
+    "lon": 3.118481,
+    "name": "Fnac Ménétrol"
+  },
+  {
+    "id": "osm-node-611643885",
+    "city": "Nancy",
+    "address": "2 Avenue Foch",
+    "lat": 48.689618,
+    "lon": 6.176748,
+    "name": "Fnac Nancy"
+  },
+  {
+    "id": "osm-node-7619822721",
+    "city": "Nantes",
+    "address": "",
+    "lat": 47.212958,
+    "lon": -1.558399,
+    "name": "Fnac Nantes"
+  },
+  {
+    "id": "osm-node-3811815974",
+    "city": "Nevers",
+    "address": "6 Esplanade Walter Benjamin",
+    "lat": 46.993559,
+    "lon": 3.160453,
+    "name": "Fnac Nevers"
+  },
+  {
+    "id": "osm-node-11171967418",
+    "city": "Nice",
+    "address": "",
+    "lat": 43.703284,
+    "lon": 7.266595,
+    "name": "Fnac Nice"
+  },
+  {
+    "id": "osm-node-14041936238",
+    "city": "Nogent-le-Rotrou",
+    "address": "",
+    "lat": 48.331334,
+    "lon": 0.805008,
+    "name": "Fnac Nogent-le-Rotrou"
+  },
+  {
+    "id": "osm-node-1446124302",
+    "city": "Noisy-le-Grand",
+    "address": "270 Clos du Mont d'Est",
+    "lat": 48.840273,
+    "lon": 2.54932,
+    "name": "Fnac Noisy-le-Grand"
+  },
+  {
+    "id": "osm-node-5272935523",
+    "city": "Nouméa",
+    "address": "34 Rue de l'Alma-André Ballande",
+    "lat": -22.269797,
+    "lon": 166.441375,
+    "name": "Fnac Nouméa"
+  },
+  {
+    "id": "osm-node-8218744825",
+    "city": "Nîmes",
+    "address": "22 Boulevard Gambetta",
+    "lat": 43.840177,
+    "lon": 4.358616,
+    "name": "Fnac Nîmes"
+  },
+  {
+    "id": "osm-node-1792003111",
+    "city": "Orléans",
+    "address": "16 Rue de la République",
+    "lat": 47.904455,
+    "lon": 1.904576,
+    "name": "Fnac Orléans"
+  },
+  {
+    "id": "osm-node-7724004942",
+    "city": "Pamiers",
+    "address": "",
+    "lat": 43.105892,
+    "lon": 1.631525,
+    "name": "Fnac Pamiers"
+  },
+  {
+    "id": "osm-way-510279920",
+    "city": "Paray-Vieille-Poste",
+    "address": "",
+    "lat": 48.728514,
+    "lon": 2.358991,
+    "name": "Fnac Paray-Vieille-Poste"
+  },
+  {
+    "id": "osm-node-3477372668",
+    "city": "Paris",
+    "address": "5 Rue Linois",
+    "lat": 48.848462,
+    "lon": 2.282393,
+    "name": "Fnac Paris – Beaugrenelle"
+  },
+  {
+    "id": "osm-node-2912780878",
+    "city": "Paris",
+    "address": "49-53 Cour Saint-Émilion",
+    "lat": 48.833686,
+    "lon": 2.386869,
+    "name": "Fnac Paris – Bercy Village"
+  },
+  {
+    "id": "osm-node-1345636994",
+    "city": "Paris",
+    "address": "1-7 Rue Pierre Lescot",
+    "lat": 48.861505,
+    "lon": 2.347046,
+    "name": "Fnac Paris – Forum des Halles"
+  },
+  {
+    "id": "osm-way-366390614",
+    "city": "Paris",
+    "address": "1 Place Louis Armand",
+    "lat": 48.844638,
+    "lon": 2.374964,
+    "name": "Fnac Paris – Gare de Lyon"
+  },
+  {
+    "id": "osm-way-401999671",
+    "city": "Paris",
+    "address": "Place du 11 Novembre 1918",
+    "lat": 48.876654,
+    "lon": 2.358921,
+    "name": "Fnac Paris – Gare du Nord"
+  },
+  {
+    "id": "osm-relation-14133168",
+    "city": "Paris",
+    "address": "1B Place Raoul Dautry",
+    "lat": 48.840951,
+    "lon": 2.320991,
+    "name": "Fnac Paris – Gare Montparnasse"
+  },
+  {
+    "id": "osm-node-727779858",
+    "city": "Paris",
+    "address": "136 Rue de Rennes",
+    "lat": 48.84586,
+    "lon": 2.325508,
+    "name": "Fnac Paris – Montparnasse"
+  },
+  {
+    "id": "osm-way-346655276",
+    "city": "Paris",
+    "address": "109 Rue Saint-Lazare",
+    "lat": 48.875349,
+    "lon": 2.327012,
+    "name": "Fnac Paris – Saint-Lazare"
+  },
+  {
+    "id": "osm-way-84319508",
+    "city": "Paris",
+    "address": "26-30 Avenue des Ternes",
+    "lat": 48.879013,
+    "lon": 2.294852,
+    "name": "Fnac Paris – Ternes"
+  },
+  {
+    "id": "osm-node-2282854354",
+    "city": "Pau",
+    "address": "Avenue du Maréchal de Lattre de Tassigny",
+    "lat": 43.294717,
+    "lon": -0.368425,
+    "name": "Fnac Pau"
+  },
+  {
+    "id": "osm-node-7060207063",
+    "city": "Perpignan",
+    "address": "",
+    "lat": 42.700671,
+    "lon": 2.892996,
+    "name": "Fnac Perpignan"
+  },
+  {
+    "id": "osm-way-589964278",
+    "city": "Petit-Bourg",
+    "address": "",
+    "lat": 16.203854,
+    "lon": -61.605717,
+    "name": "Fnac Petit-Bourg"
+  },
+  {
+    "id": "osm-way-474681860",
+    "city": "Pleurtuit",
+    "address": "",
+    "lat": 48.610368,
+    "lon": -2.064065,
+    "name": "Fnac Pleurtuit"
+  },
+  {
+    "id": "osm-node-8900136560",
+    "city": "Plourin-lès-Morlaix",
+    "address": "",
+    "lat": 48.561491,
+    "lon": -3.823009,
+    "name": "Fnac Plourin-lès-Morlaix"
+  },
+  {
+    "id": "osm-node-10106582018",
+    "city": "Plouzané",
+    "address": "",
+    "lat": 48.372436,
+    "lon": -4.586178,
+    "name": "Fnac Plouzané"
+  },
+  {
+    "id": "osm-node-1730512714",
+    "city": "Poitiers",
+    "address": "",
+    "lat": 46.581845,
+    "lon": 0.342483,
+    "name": "Fnac Poitiers"
+  },
+  {
+    "id": "osm-node-11360363222",
+    "city": "Pont-Audemer",
+    "address": "",
+    "lat": 49.34788,
+    "lon": 0.523613,
+    "name": "Fnac Pont-Audemer"
+  },
+  {
+    "id": "osm-node-11010561483",
+    "city": "Pont-à-Mousson",
+    "address": "",
+    "lat": 48.909336,
+    "lon": 6.041801,
+    "name": "Fnac Pont-à-Mousson"
+  },
+  {
+    "id": "osm-node-1722014291",
+    "city": "Pontault-Combault",
+    "address": "Avenue de la République",
+    "lat": 48.799495,
+    "lon": 2.607584,
+    "name": "Fnac Pontault-Combault"
+  },
+  {
+    "id": "osm-node-11235443373",
+    "city": "Pontivy",
+    "address": "",
+    "lat": 48.052514,
+    "lon": -2.957671,
+    "name": "Fnac Pontivy"
+  },
+  {
+    "id": "osm-node-6505508177",
+    "city": "Puilboreau",
+    "address": "16;18 Rue du 18 Juin",
+    "lat": 46.174925,
+    "lon": -1.112479,
+    "name": "Fnac Puilboreau"
+  },
+  {
+    "id": "osm-node-12186972143",
+    "city": "Puteaux",
+    "address": "2 Place de la Défense",
+    "lat": 48.892177,
+    "lon": 2.239901,
+    "name": "Fnac Puteaux"
+  },
+  {
+    "id": "osm-node-2146533948",
+    "city": "Quimper",
+    "address": "163 Route de Bénodet",
+    "lat": 47.975241,
+    "lon": -4.095836,
+    "name": "Fnac Quimper"
+  },
+  {
+    "id": "osm-node-12364993504",
+    "city": "Redon",
+    "address": "6 Rue Louis Guilloux",
+    "lat": 47.672888,
+    "lon": -2.063058,
+    "name": "Fnac Redon"
+  },
+  {
+    "id": "osm-way-365067609",
+    "city": "Reims",
+    "address": "",
+    "lat": 49.255005,
+    "lon": 4.02582,
+    "name": "Fnac Reims"
+  },
+  {
+    "id": "osm-node-4329611865",
+    "city": "Rennes",
+    "address": "",
+    "lat": 48.104973,
+    "lon": -1.681214,
+    "name": "Fnac Rennes"
+  },
+  {
+    "id": "osm-node-9824611437",
+    "city": "Roanne",
+    "address": "",
+    "lat": 46.036273,
+    "lon": 4.07055,
+    "name": "Fnac Roanne"
+  },
+  {
+    "id": "osm-node-11015227655",
+    "city": "Rochefort",
+    "address": "",
+    "lat": 45.955019,
+    "lon": -0.976682,
+    "name": "Fnac Rochefort"
+  },
+  {
+    "id": "osm-node-760473008",
+    "city": "Rosny-sous-Bois",
+    "address": "",
+    "lat": 48.881397,
+    "lon": 2.478982,
+    "name": "Fnac Rosny-sous-Bois"
+  },
+  {
+    "id": "osm-way-1556444865",
+    "city": "Rouen",
+    "address": "",
+    "lat": 49.443072,
+    "lon": 1.093043,
+    "name": "Fnac Rouen"
+  },
+  {
+    "id": "osm-node-3289935727",
+    "city": "Saint-Brieuc",
+    "address": "1 Rue Sainte-Barbe",
+    "lat": 48.511681,
+    "lon": -2.759641,
+    "name": "Fnac Saint-Brieuc"
+  },
+  {
+    "id": "osm-node-4741430844",
+    "city": "Saint-Lô",
+    "address": "4 Rue Maréchal Leclerc",
+    "lat": 49.114798,
+    "lon": -1.090094,
+    "name": "Fnac Saint-Lô"
+  },
+  {
+    "id": "osm-node-1593395171",
+    "city": "Saint-Marcel",
+    "address": "",
+    "lat": 49.101658,
+    "lon": 1.453977,
+    "name": "Fnac Saint-Marcel"
+  },
+  {
+    "id": "osm-node-2364730482",
+    "city": "Saint-Maximin",
+    "address": "335 Rue de l'Égalité",
+    "lat": 49.240076,
+    "lon": 2.46821,
+    "name": "Fnac Saint-Maximin"
+  },
+  {
+    "id": "osm-node-4754009039",
+    "city": "Saint-Nazaire",
+    "address": "",
+    "lat": 47.25839,
+    "lon": -2.264624,
+    "name": "Fnac Saint-Nazaire"
+  },
+  {
+    "id": "osm-node-2451942481",
+    "city": "Saint-Parres-aux-Tertres",
+    "address": "",
+    "lat": 48.293016,
+    "lon": 4.12869,
+    "name": "Fnac Saint-Parres-aux-Tertres"
+  },
+  {
+    "id": "osm-node-4083482887",
+    "city": "Saint-Pierre",
+    "address": "",
+    "lat": -21.334604,
+    "lon": 55.455148,
+    "name": "Fnac Saint-Pierre"
+  },
+  {
+    "id": "osm-node-5462923821",
+    "city": "Saint-Quay-Perros",
+    "address": "",
+    "lat": 48.766034,
+    "lon": -3.450627,
+    "name": "Fnac Saint-Quay-Perros"
+  },
+  {
+    "id": "osm-node-4896838677",
+    "city": "Saint-Yrieix-la-Perche",
+    "address": "",
+    "lat": 45.495638,
+    "lon": 1.21428,
+    "name": "Fnac Saint-Yrieix-la-Perche"
+  },
+  {
+    "id": "osm-way-1007838222",
+    "city": "Saint-Étienne",
+    "address": "",
+    "lat": 45.440542,
+    "lon": 4.421588,
+    "name": "Fnac Saint-Étienne"
+  },
+  {
+    "id": "osm-way-135598547",
+    "city": "Sainte-Geneviève-des-Bois",
+    "address": "",
+    "lat": 48.621984,
+    "lon": 2.345441,
+    "name": "Fnac Sainte-Geneviève-des-Bois"
+  },
+  {
+    "id": "osm-node-7890632634",
+    "city": "Sallanches",
+    "address": "474 Clos de l'Île Roche",
+    "lat": 45.954267,
+    "lon": 6.627898,
+    "name": "Fnac Sallanches"
+  },
+  {
+    "id": "osm-node-5961729401",
+    "city": "Salon-de-Provence",
+    "address": "",
+    "lat": 43.638318,
+    "lon": 5.094291,
+    "name": "Fnac Salon-de-Provence"
+  },
+  {
+    "id": "osm-node-11500331295",
+    "city": "Sarrola-Carcopino",
+    "address": "",
+    "lat": 41.952886,
+    "lon": 8.791444,
+    "name": "Fnac Sarrola-Carcopino"
+  },
+  {
+    "id": "osm-way-587529948",
+    "city": "Saumur",
+    "address": "",
+    "lat": 47.280309,
+    "lon": -0.063766,
+    "name": "Fnac Saumur"
+  },
+  {
+    "id": "osm-way-654318909",
+    "city": "Serris",
+    "address": "",
+    "lat": 48.855685,
+    "lon": 2.783416,
+    "name": "Fnac Serris"
+  },
+  {
+    "id": "osm-node-8980325566",
+    "city": "Somain",
+    "address": "",
+    "lat": 50.34765,
+    "lon": 3.285675,
+    "name": "Fnac Somain"
+  },
+  {
+    "id": "osm-node-473208690",
+    "city": "Strasbourg",
+    "address": "22 Place Kléber",
+    "lat": 48.583291,
+    "lon": 7.744883,
+    "name": "Fnac Strasbourg"
+  },
+  {
+    "id": "osm-way-200140761",
+    "city": "Thiais",
+    "address": "39 Rue de la Résistance",
+    "lat": 48.758248,
+    "lon": 2.386864,
+    "name": "Fnac Thiais"
+  },
+  {
+    "id": "osm-node-6284809067",
+    "city": "Thillois",
+    "address": "Rue des Acacias",
+    "lat": 49.25917,
+    "lon": 3.96373,
+    "name": "Fnac Thillois"
+  },
+  {
+    "id": "osm-node-7006201261",
+    "city": "Thonon-les-Bains",
+    "address": "7 Rue Amédée de Foras",
+    "lat": 46.379371,
+    "lon": 6.497053,
+    "name": "Fnac Thonon-les-Bains"
+  },
+  {
+    "id": "osm-node-13381076202",
+    "city": "Toulon",
+    "address": "",
+    "lat": 43.120561,
+    "lon": 5.938478,
+    "name": "Fnac Toulon"
+  },
+  {
+    "id": "osm-node-2445153699",
+    "city": "Toulouse",
+    "address": "77 Rue d'Alsace-Lorraine",
+    "lat": 43.607949,
+    "lon": 1.4455,
+    "name": "Fnac Toulouse – 77 Rue d'Alsace-Lorraine"
+  },
+  {
+    "id": "osm-node-14257395379",
+    "city": "Toulouse",
+    "address": "9 Allées du Président Franklin Roosevelt",
+    "lat": 43.605594,
+    "lon": 1.448026,
+    "name": "Fnac Toulouse – 9 Allées du Président Franklin Roosevelt"
+  },
+  {
+    "id": "osm-node-14091773537",
+    "city": "Touques",
+    "address": "Galerie Marchande Carrefour Route de Paris",
+    "lat": 49.345602,
+    "lon": 0.096769,
+    "name": "Fnac Touques"
+  },
+  {
+    "id": "osm-way-1556812404",
+    "city": "Tours",
+    "address": "72 Rue Nationale",
+    "lat": 47.392509,
+    "lon": 0.688557,
+    "name": "Fnac Tours"
+  },
+  {
+    "id": "osm-node-12112956201",
+    "city": "Tremblay-en-France",
+    "address": "",
+    "lat": 49.004307,
+    "lon": 2.564385,
+    "name": "Fnac Tremblay-en-France"
+  },
+  {
+    "id": "osm-node-3906350255",
+    "city": "Valence",
+    "address": "17 Avenue Victor Hugo",
+    "lat": 44.929432,
+    "lon": 4.891946,
+    "name": "Fnac Valence"
+  },
+  {
+    "id": "osm-node-3838383453",
+    "city": "Vannes",
+    "address": "46 Rue Théophraste Renaudot",
+    "lat": 47.66216,
+    "lon": -2.788473,
+    "name": "Fnac Vannes"
+  },
+  {
+    "id": "osm-node-5316836060",
+    "city": "Verneuil d'Avre et d'Iton",
+    "address": "Route de Mortagne",
+    "lat": 48.732085,
+    "lon": 0.919482,
+    "name": "Fnac Verneuil d'Avre et d'Iton"
+  },
+  {
+    "id": "osm-node-11793816210",
+    "city": "Vernier",
+    "address": "",
+    "lat": 46.219356,
+    "lon": 6.113882,
+    "name": "Fnac Vernier"
+  },
+  {
+    "id": "osm-node-1510043626",
+    "city": "Vichy",
+    "address": "35 Rue Lucas",
+    "lat": 46.126371,
+    "lon": 3.422171,
+    "name": "Fnac Vichy"
+  },
+  {
+    "id": "osm-node-2303943750",
+    "city": "Villebon-sur-Yvette",
+    "address": "Avenue de la Plesse, Centre Commercial Villebon 2",
+    "lat": 48.703146,
+    "lon": 2.251555,
+    "name": "Fnac Villebon-sur-Yvette"
+  },
+  {
+    "id": "osm-node-7087215893",
+    "city": "Viriat",
+    "address": "",
+    "lat": 46.2169,
+    "lon": 5.211885,
+    "name": "Fnac Viriat"
+  },
+  {
+    "id": "osm-node-2388593100",
+    "city": "Vélizy-Villacoublay",
+    "address": "",
+    "lat": 48.782731,
+    "lon": 2.221687,
+    "name": "Fnac Vélizy-Villacoublay"
+  }
+]
