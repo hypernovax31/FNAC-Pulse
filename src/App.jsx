@@ -3,12 +3,14 @@ import {
   LayoutDashboard, Zap, Trophy, ChartNoAxesCombined, Settings2, MapPin, ChevronDown, ChevronRight, ArrowRight,
   Activity, Bell, BellRing, BellOff, Plus, Minus, UserRound, UsersRound, Sparkles, Crosshair, CalendarDays,
   Check, MoreHorizontal, Play, Smartphone, MonitorSmartphone, ShieldCheck, PackageCheck, BadgePlus,
-  Repeat2, RefreshCw, Tv, Wifi, Clock3, X, Download, Store, WifiOff, Info, CircleCheck, ArrowUpRight
+  Repeat2, RefreshCw, Tv, Wifi, Clock3, X, Download, Store, WifiOff, Info, CircleCheck, ArrowUpRight, SunMoon, Sun, Moon, Monitor
 } from 'lucide-react';
 import Admin, { Modal } from './Admin';
 import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
 import { CLOUD, observeVendor, sellerLogin, sellerLogout, listenStore, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
 import { parisToday } from './cloud-stats';
+import { sellersForStore, sellerStoreId } from './catalog';
+import { THEME_KEY, readTheme, applyTheme } from './theme';
 
 const APP_BASE = import.meta.env.BASE_URL;
 const SESSION_KEY = 'fnac-pulse-session-v1';
@@ -31,6 +33,8 @@ function SessionForm({data,initialSession,onSubmit,modal=false,onNotify}) {
   const [pin,setPin]=useState('');
   const [formBusy,setFormBusy]=useState(false);
   const [formError,setFormError]=useState('');
+  const storeSellers=sellersForStore(data.sellers,store);
+  const changeStore=value=>{if(value!==store){setSeller('');setPin('');setFormError('');}setStore(value);};
   const locate=()=>{
     if(!navigator.geolocation){setGeoText('La géolocalisation n’est pas disponible sur cet appareil.');return;}
     setGeoBusy(true);setGeoText('Recherche du magasin le plus proche…');
@@ -38,19 +42,20 @@ function SessionForm({data,initialSession,onSubmit,modal=false,onNotify}) {
       const located=data.stores.filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon)).map(s=>({ ...s, distance:kmBetween(coords.latitude,coords.longitude,s.lat,s.lon) })).sort((a,b)=>a.distance-b.distance);
       setGeoBusy(false);
       if(!located.length){setGeoText('Aucun magasin géolocalisé dans la liste.');return;}
-      const nearest=located[0];setStore(nearest.id);
+      const nearest=located[0];changeStore(nearest.id);
       setGeoText(`${nearest.name} proposé · à environ ${nearest.distance<1?`${Math.round(nearest.distance*1000)} m`:`${nearest.distance.toFixed(1).replace('.',',')} km`} (liste OpenStreetMap).`);
     },err=>{setGeoBusy(false);setGeoText(err.code===1?'Géolocalisation refusée. Vous pouvez choisir votre magasin dans la liste.':'Position indisponible. Choisissez votre magasin dans la liste.');},
     {enableHighAccuracy:false,timeout:12000,maximumAge:300000});
   };
   return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={async e=>{e.preventDefault();if(!store||!seller)return;setFormBusy(true);setFormError('');try{await onSubmit({storeId:store,sellerId:Number(seller)},pin);setPin('');}catch(error){setFormError(error.message);}finally{setFormBusy(false);}}}>
     <div className="session-fields">
-      <label className="session-field store-field"><span>VOTRE MAGASIN</span><div className="select-wrap"><MapPin size={16}/><select aria-label="Votre magasin Fnac" value={store} onChange={e=>{setStore(e.target.value);setGeoText('');}} required><option value="">Choisir un magasin</option>{data.stores.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+      <label className="session-field store-field"><span>VOTRE MAGASIN</span><div className="select-wrap"><MapPin size={16}/><select aria-label="Votre magasin Fnac" value={store} onChange={e=>{changeStore(e.target.value);setGeoText('');}} required><option value="">Choisir un magasin</option>{data.stores.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
       <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver le magasin le plus proche" title="Trouver le magasin le plus proche" disabled={geoBusy}><Crosshair size={17}/></button>
-      <label className="session-field seller-field"><span>VOTRE PROFIL</span><div className="select-wrap"><UserRound size={16}/><select aria-label="Votre profil vendeur" value={seller} onChange={e=>setSeller(e.target.value)} required><option value="">Choisir un vendeur</option>{data.sellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+      <label className="session-field seller-field"><span>VOTRE PROFIL</span><div className="select-wrap"><UserRound size={16}/><select aria-label="Votre profil vendeur" value={seller} onChange={e=>setSeller(e.target.value)} disabled={!store||!storeSellers.length} required><option value="">{store&&!storeSellers.length?'Aucun vendeur pour ce magasin':'Choisir un vendeur'}</option>{storeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
       {CLOUD&&<label className="session-field pin-field"><span>CODE PIN</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} placeholder="8 chiffres" required/></label>}
       <button className="primary-button session-submit" type="submit" disabled={!store||!seller||formBusy||(CLOUD&&pin.length!==8)}>{formBusy?'Connexion…':modal?'Enregistrer':'C’est parti'} <ArrowRight size={16}/></button>
     </div>
+    {store&&!storeSellers.length&&<p className="no-store-sellers">Aucun vendeur dans ce magasin. Un administrateur peut en ajouter.</p>}
     {formError&&<div className="form-error session-error" role="alert">{formError}</div>}
     {geoText&&<div className="geo-message" role="status"><MapPin size={13}/>{geoText}</div>}
   </form>;
@@ -73,13 +78,14 @@ function Sidebar({onNavigate,onAdmin,onSession,onInstall,activeNav}) {
     <div className="sidebar-bottom"><div className="sidebar-tip"><div className="sidebar-tip-icon"><Zap size={16} fill="currentColor"/></div><strong>Chaque service compte.</strong><p>Ensemble, faisons la différence au quotidien.</p><span>À VOUS DE JOUER <ArrowUpRight size={12}/></span></div><button className="install-link" onClick={onInstall}><Download size={16}/> Installer l’application <ChevronRight size={14}/></button><div className="sidebar-copyright">FNAC PULSE <span>•</span> ESPACE ÉQUIPE</div></div>
   </aside>;
 }
-function Header({session,seller,store,connected,onBell,onSession,onAdmin}) {
+function Header({session,seller,store,connected,onBell,onSession,onAdmin,onTheme}) {
   return <header className="topbar">
     <div className="mobile-brand"><Brand compact/></div>
     <div className="breadcrumbs"><span>Espace équipe</span><ChevronRight size={14}/><strong>Vue d’ensemble</strong></div>
     <div className="topbar-actions">
       <div className={`connection ${connected==='live'?'':'is-muted'}`} title={connected==='live'?'Mises à jour en direct':connected==='offline'?'Connexion interrompue':'En attente de votre sélection'}><Dot/><span>{connected==='live'?'En direct':connected==='offline'?'Hors connexion':'Votre espace'}</span></div>
       <span className="topbar-divider"/>
+      <button className="icon-button theme-trigger" title="Apparence" aria-label="Apparence" onClick={onTheme}><SunMoon size={19}/></button>
       <button className="icon-button top-bell" title="Notifications" aria-label="Notifications" onClick={onBell}><Bell size={19}/><span className="bell-marker"/></button>
       <button className="profile-trigger" onClick={onSession} aria-label={session?`Changer de profil, ${seller?.name||''}`:'Choisir mon profil'}>
         {seller?<Avatar name={seller.name} id={seller.id}/>:<span className="avatar avatar-blank"><UserRound size={17}/></span>}
@@ -99,7 +105,7 @@ function ServiceCard({service,index,count,session,pending,onAdd,onRemove}) {
 function Ranking({leaders,hasSession}) {
   return <section className="panel ranking-panel" id="ranking"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> LES PERFORMANCES</div><h2>Top de l’équipe</h2><p>Les vendeurs à l’honneur aujourd’hui.</p></div><span className="panel-icon gold"><Trophy size={18}/></span></div>
     {leaders?.length>0 ? <div className="ranking-list">{leaders.map((leader,i)=><div className="ranking-row" key={leader.id}><span className={`rank-number rank-${i+1}`}>{String(i+1).padStart(2,'0')}</span><Avatar name={leader.name} id={leader.id}/><div className="rank-name"><strong>{leader.name}</strong><span>{i===0?'En tête du classement':i===1?'Sur la deuxième marche':'Sur le podium'}</span></div><div className="rank-total"><strong>{leader.count}</strong><span>{leader.count>1?'ventes':'vente'}</span></div></div>)}</div> : <div className="ranking-empty"><div className="empty-podium"><div className="podium-circle">1</div><div className="podium-circle">2</div><div className="podium-circle">3</div></div><strong>{hasSession?'À vous de jouer !':'Le podium vous attend'}</strong><p>{hasSession?'Les premières ventes feront apparaître le classement.':'Sélectionnez votre espace pour voir le classement.'}</p></div>}
-    <div className="ranking-footer"><Dot/> {hasSession?'Classement mis à jour en direct':'Classement disponible après sélection'}</div>
+    <div className="ranking-footer"><Dot/> {hasSession?'En direct · Égalités : DMax, puis FVD':'Classement disponible après sélection'}</div>
   </section>;
 }
 function ActivityCard({activity,hasSession}) {
@@ -136,6 +142,8 @@ export default function App() {
   const [adminModal,setAdminModal]=useState(false);
   const [notificationsModal,setNotificationsModal]=useState(false);
   const [installModal,setInstallModal]=useState(false);
+  const [themeModal,setThemeModal]=useState(false);
+  const [theme,setTheme]=useState(readTheme);
   const [installPrompt,setInstallPrompt]=useState(null);
   const [notificationsEnabled,setNotificationsEnabled]=useState(false);
   const [notificationBusy,setNotificationBusy]=useState(false);
@@ -144,11 +152,21 @@ export default function App() {
   const requestNumber=useRef(0), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null);
   const store=data?.stores?.find(s=>s.id===session?.storeId), seller=data?.sellers?.find(s=>s.id===session?.sellerId);
 
+  useEffect(()=>{
+    applyTheme(theme);
+    try {localStorage.setItem(THEME_KEY,theme);} catch {}
+    const media=window.matchMedia?.('(prefers-color-scheme: dark)');
+    const update=()=>{if(theme==='system')applyTheme(theme);};
+    media?.addEventListener?.('change',update);
+    return ()=>media?.removeEventListener?.('change',update);
+  },[theme]);
+  useEffect(()=>{const sync=e=>{if(e.key===THEME_KEY)setTheme(readTheme());};window.addEventListener('storage',sync);return ()=>window.removeEventListener('storage',sync);},[]);
+
   const flash=useCallback((message,options={})=>{clearTimeout(toastTimer.current);setToast({message,...options});toastTimer.current=setTimeout(()=>setToast(null),options.duration||5500);},[]);
   const refresh=useCallback(async()=>{
     if(CLOUD&&!authReady)return;
     const n=++requestNumber.current;
-    const query=!CLOUD&&session?`?storeId=${encodeURIComponent(session.storeId)}&sellerId=${session.sellerId}`:'';
+    const query=session?`?storeId=${encodeURIComponent(session.storeId)}${!CLOUD?`&sellerId=${session.sellerId}`:''}`:'';
     try {
       const result=await api('/api/bootstrap'+query);
       if(n!==requestNumber.current)return;
@@ -156,7 +174,7 @@ export default function App() {
       else setData(result);
       setLoadFailed(false);setLoadMessage('');
       if(!CLOUD)try{localStorage.setItem(CACHE_KEY,JSON.stringify({data:result,session}));}catch{}
-      if(session&&(!result.stores.some(s=>s.id===session.storeId)||!result.sellers.some(s=>s.id===session.sellerId))){
+      if(session&&(!result.stores.some(s=>s.id===session.storeId)||!result.sellers.some(s=>s.id===session.sellerId&&sellerStoreId(s)===session.storeId))){
         localStorage.removeItem(SESSION_KEY);setSession(null);
         if(CLOUD)await sellerLogout();
         flash('Votre profil ou votre magasin a été modifié. Sélectionnez à nouveau votre espace.');
@@ -176,9 +194,7 @@ export default function App() {
       setData(next);setLoadFailed(false);setConnection(live?'live':'offline');
       try{localStorage.setItem(CACHE_KEY,JSON.stringify({data:next,session}));}catch{}
     },sale=>{
-      const who=data?.sellers?.find(x=>x.id===sale.sellerId)?.name||'Un vendeur';
-      const what=data?.services?.find(x=>x.id===sale.serviceId)?.name||'un service';
-      flash(`${who} vient de vendre ${what} !`,{tone:'celebrate'});
+      flash(`${sale.sellerName} vient de vendre ${sale.serviceName} !`,{tone:'celebrate'});
     },error=>{
       setConnection('offline');
       if(error?.code==='permission-denied'){sellerLogout().catch(()=>{});setSession(null);setData(d=>d?{...d,stats:null}:d);localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);flash('Votre accès a changé. Reconnectez-vous avec votre code PIN.',{tone:'warning'});}
@@ -247,7 +263,7 @@ export default function App() {
     try {
       const result=await api('/api/sales',{method:'POST',body:{...session,serviceId:service.id,requestId:uid(),clientId:clientId.current}});
       await refresh();
-      flash(`${service.name} ajouté à votre journée.`,{tone:'success',actionLabel:'Annuler',action:async()=>{
+      flash(seller?.name?`${seller.name} vient de vendre ${service.name} !`:`Vous venez de vendre ${service.name} !`,{tone:'success',actionLabel:'Annuler',action:async()=>{
         try {await api(`/api/sales/${result.id}`,{method:'DELETE',body:session});await refresh();flash('Vente annulée.');}
         catch(e){flash(e.message,{tone:'warning'});}
       },duration:8000});
@@ -287,7 +303,7 @@ export default function App() {
   const stats=data.stats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
   return <div className="app-shell">
     <Sidebar onNavigate={navigate} onAdmin={()=>setAdminModal(true)} onSession={changeSession} onInstall={installApp} activeNav={activeNav}/>
-    <div className="main-shell"><Header session={session} seller={seller} store={store} connected={connection} onBell={()=>setNotificationsModal(true)} onSession={changeSession} onAdmin={()=>setAdminModal(true)}/>
+    <div className="main-shell"><Header session={session} seller={seller} store={store} connected={connection} onBell={()=>setNotificationsModal(true)} onSession={changeSession} onAdmin={()=>setAdminModal(true)} onTheme={()=>setThemeModal(true)}/>
       <main className="content" id="overview">
         {connection==='offline'&&session&&<div className="offline-banner"><WifiOff size={16}/><div><strong>Connexion interrompue.</strong> Les dernières données restent visibles, mais la saisie est suspendue jusqu’au retour de la connexion.</div><button onClick={refresh}>Réessayer</button></div>}
         <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><div className="date-chip"><span className="date-icon"><CalendarDays size={17}/></span><div><span>AUJOURD’HUI</span><strong>{dateLabel(data.today)}</strong></div></div></div>
@@ -304,6 +320,13 @@ export default function App() {
     {sessionModal&&<Modal title="Changer d’espace" subtitle="Sélectionnez votre magasin et votre profil vendeur." onClose={()=>setSessionModal(false)}><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/>{CLOUD&&<button className="logout-button" onClick={logoutSeller}>Se déconnecter</button>}<p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></Modal>}
     {adminModal&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>}
     {notificationsModal&&<Modal title="Notifications d’équipe" subtitle="Ne manquez aucune nouvelle vente de votre magasin." onClose={()=>setNotificationsModal(false)}><div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{notificationsEnabled?'Notifications activées':'Un petit signal, une belle dynamique.'}</strong><p>Chaque nouvelle vente peut vous être signalée sur cet appareil, même lorsque l’application est fermée.</p></div></div><div className="notification-details"><div><Check size={16}/> Une notification pour chaque nouvelle vente</div><div><Check size={16}/> Uniquement pour le magasin sélectionné</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div><div className="notification-device-note"><Info size={15}/><span>Sur iPhone et iPad, installez d’abord l’application sur l’écran d’accueil (iOS/iPadOS 16.4 ou plus). Une connexion HTTPS et un navigateur compatible sont nécessaires.</span></div><button className={notificationsEnabled?'outline-button full-button':'primary-button full-button'} disabled={notificationBusy} onClick={notificationsEnabled?disableNotifications:enableNotifications}>{notificationBusy?'Un instant…':notificationsEnabled?'Désactiver sur cet appareil':'Activer les notifications'} {notificationsEnabled?<BellOff size={16}/>:<Bell size={16}/>}</button></Modal>}
+    {themeModal&&<Modal title="Apparence" subtitle="Choisissez l’apparence de cet appareil." onClose={()=>setThemeModal(false)}>
+      <div className="theme-options" role="radiogroup" aria-label="Thème de l’application">
+        {[['system',Monitor,'Automatique','Suivre les réglages de l’appareil'],['light',Sun,'Clair','Toujours utiliser le thème clair'],['dark',Moon,'Sombre','Toujours utiliser le thème sombre']].map(([value,Icon,label,description])=><label key={value} className={`theme-option ${theme===value?'is-selected':''}`}>
+          <input type="radio" name="theme" value={value} checked={theme===value} onChange={()=>setTheme(value)}/><Icon size={19}/><span><strong>{label}</strong><small>{description}</small></span><Check className="theme-check" size={17}/>
+        </label>)}
+      </div>
+    </Modal>}
     {installModal&&<Modal title="Installer Fnac Pulse" subtitle="Votre espace d’équipe toujours à portée de main." onClose={()=>setInstallModal(false)}><div className="install-steps"><div><span>1</span><p><strong>Sur iPhone ou iPad</strong><br/>Dans Safari, touchez Partager, puis « Sur l’écran d’accueil ».</p></div><div><span>2</span><p><strong>Sur Android ou ordinateur</strong><br/>Ouvrez le menu du navigateur, puis choisissez « Installer l’application » ou « Ajouter à l’écran d’accueil ».</p></div></div><p className="modal-hint"><Info size={14}/> L’installation et les notifications nécessitent une adresse HTTPS et un navigateur compatible.</p><button className="primary-button full-button" onClick={()=>setInstallModal(false)}>J’ai compris <Check size={16}/></button></Modal>}
     {toast&&<div className={`toast toast-${toast.tone||'default'}`} role="status"><span className="toast-icon">{toast.tone==='warning'?<Info size={17}/>:<CircleCheck size={17}/>}</span><span>{toast.message}</span>{toast.action&&<button onClick={()=>{const action=toast.action;setToast(null);action();}}>{toast.actionLabel}</button>}<button className="toast-close" aria-label="Fermer" onClick={()=>setToast(null)}><X size={16}/></button></div>}
   </div>;

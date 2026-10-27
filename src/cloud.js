@@ -5,6 +5,8 @@ import { getMessaging, getToken, deleteToken, isSupported } from 'firebase/messa
 import { firebaseConfig } from './firebase-config';
 import { pinProof } from './pin';
 import { earliestDate, parisToday, summarize } from './cloud-stats';
+import { comparePeople, orderServices, sellerStoreId } from './catalog';
+import { createSaleAnnouncer } from './live-sales';
 
 export const CLOUD=import.meta.env.VITE_BACKEND==='cloud';
 export const WORKER_URL=(import.meta.env.VITE_WORKER_URL||'').replace(/\/$/,'');
@@ -51,12 +53,17 @@ export async function setPin(api,token,storeId,sellerId,pin) {
   const proof=await pinProof(firebaseConfig.projectId,storeId,sellerId,pin);
   return api('/api/admin/pin',{method:'POST',token,body:{storeId,sellerId:Number(sellerId),proof}});
 }
-function presentation(catalog) {
-  return {stores:catalog.stores.filter(x=>x.active).map(({active,...x})=>x),sellers:catalog.sellers.filter(x=>x.active).map(({id,name})=>({id,name})),services:catalog.services.filter(x=>x.active).map(({id,name,icon})=>({id,name,icon}))};
+function presentation(catalog,storeId) {
+  return {
+    stores:catalog.stores.filter(x=>x.active).map(({active,...x})=>x),
+    sellers:catalog.sellers.filter(x=>x.active).sort(comparePeople).map(x=>({id:x.id,name:x.name,storeId:sellerStoreId(x)})),
+    services:orderServices(catalog.services.filter(x=>x.active),catalog.serviceOrders,storeId).map(({id,name,icon})=>({id,name,icon})),
+  };
 }
 export function listenStore(session,day,clientId,onChange,onSale,onError) {
   let catalog=null,sales=[],catalogReady=false,salesReady=false,catalogCache=true,salesCache=true,initial=true;
-  const emit=()=>{if(catalogReady&&salesReady)onChange({...presentation(catalog),today:day,stats:summarize(catalog,sales,session.sellerId,day)},!(catalogCache||salesCache));};
+  const announcer=createSaleAnnouncer(onSale);
+  const emit=()=>{if(catalogReady&&salesReady){const scoped={...catalog,services:orderServices(catalog.services,catalog.serviceOrders,session.storeId)};onChange({...presentation(scoped,session.storeId),today:day,stats:summarize(scoped,sales,session.sellerId,day)},!(catalogCache||salesCache));}};
   const stopAccess=onSnapshot(doc(db,'pulseStatus',session.uid),snap=>{
     if(snap.metadata.fromCache)return;
     const access=snap.data();
@@ -64,12 +71,12 @@ export function listenStore(session,day,clientId,onChange,onSale,onError) {
   },onError);
   const stopCatalog=onSnapshot(doc(db,'pulse','catalog'),{includeMetadataChanges:true},snap=>{
     if(!snap.exists()){onError(new Error('Catalogue indisponible.'));return;}
-    catalog=snap.data();catalogCache=snap.metadata.fromCache;catalogReady=true;emit();
+    catalog=snap.data();catalogCache=snap.metadata.fromCache;catalogReady=true;announcer.setCatalog(catalog);emit();
   },onError);
   const q=query(collection(db,'pulseStores',session.storeId,'sales'),where('businessDate','>=',earliestDate(day)));
   const stopSales=onSnapshot(q,{includeMetadataChanges:true},snap=>{
     if(!initial)for(const change of snap.docChanges())if(change.type==='added') {
-      const sale=change.doc.data();if(sale.source==='sale'&&sale.clientId!==clientId)onSale(sale);
+      const sale=change.doc.data();if(sale.source==='sale'&&!sale.deletedAt&&sale.clientId!==clientId)announcer.add(sale);
     }
     initial=false;sales=snap.docs.map(x=>x.data());salesCache=snap.metadata.fromCache;salesReady=true;emit();
   },onError);

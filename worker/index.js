@@ -1,5 +1,6 @@
 import locations from '../server/locations.json' with {type:'json'};
 import { FirestoreRest, FirebaseError, googleAccessToken, verifyIdToken, makeCustomToken, digestBase64, pinMac, verifyPin } from './firebase.js';
+import { LEGACY_STORE_ID, comparePeople, orderServices, sellerStoreId } from '../src/catalog.js';
 
 const SELLERS=['Morgan','Anthony','Cedric','Philippe','Fabien','Florent','Eric','Tamera','Ikram','Selenia','Johan','Alice'];
 const SERVICES=[['DMax','play'],['Assu Téléph','phone'],['Assu Multim','devices'],['Garantie','shield'],['FVD','package'],['FNAC +','badge'],['TRC','repeat'],['Reprise','refresh'],['Canal +','tv'],['Free','wifi'],['Autre','other']];
@@ -22,22 +23,31 @@ const today=()=>parisDate.format(new Date());
 const authHeader=req=>req.headers.get('Authorization')?.match(/^Bearer\s+(.+)$/i)?.[1]||'';
 const docPath=(store,id)=>`pulseStores/${store}/sales/${id}`;
 const guardPath=store=>`pulseStores/${store}/private/revision`;
+function withFlags(data) {
+  return {...data,
+    sellerFlags:Object.fromEntries(data.sellers.map(s=>[`s${s.id}`,!!s.active])),
+    sellerStores:Object.fromEntries(data.sellers.map(s=>[`s${s.id}`,sellerStoreId(s)])),
+    storeFlags:Object.fromEntries(data.stores.map(s=>[s.id,!!s.active]))};
+}
+function scopedCatalog(data) {
+  return withFlags({...data,catalogVersion:2,
+    sellers:data.sellers.map(s=>({...s,storeId:sellerStoreId(s)})),
+    services:data.services.map(s=>({...s,...(!s.priorityCode&&s.id===1?{priorityCode:'dmax'}:!s.priorityCode&&s.id===5?{priorityCode:'fvd'}:{})})),
+    serviceOrders:data.serviceOrders||{}});
+}
 function freshCatalog() {
-  const sellers=SELLERS.map((name,i)=>({id:i+1,name,active:true}));
+  const sellers=SELLERS.map((name,i)=>({id:i+1,name,active:true,storeId:LEGACY_STORE_ID}));
   const services=SERVICES.map(([name,icon],i)=>({id:i+1,name,icon,active:true}));
   const stores=locations.map(s=>({...s,active:true}));
-  return withFlags({sellers,services,stores,nextSellerId:sellers.length+1,nextServiceId:services.length+1});
+  return scopedCatalog({sellers,services,stores,nextSellerId:sellers.length+1,nextServiceId:services.length+1});
 }
-function withFlags(data) {
-  return {...data,sellerFlags:Object.fromEntries(data.sellers.map(s=>[`s${s.id}`,!!s.active])),storeFlags:Object.fromEntries(data.stores.map(s=>[s.id,!!s.active]))};
-}
-const publicCatalog=data=>({
-  sellers:data.sellers.filter(s=>s.active).map(({id,name})=>({id,name})),
-  services:data.services.filter(s=>s.active).map(({id,name,icon})=>({id,name,icon})),
+const publicCatalog=(data,storeId)=>({
+  sellers:data.sellers.filter(s=>s.active).sort(comparePeople).map(({id,name,storeId})=>({id,name,storeId})),
+  services:orderServices(data.services.filter(s=>s.active),data.serviceOrders,storeId).map(({id,name,icon})=>({id,name,icon})),
   stores:data.stores.filter(s=>s.active).map(({active,...s})=>s),today:today(),stats:null,
 });
 function validStore(data,id) {return typeof id==='string'&&STORE_ID.test(id)&&data.storeFlags[id]===true;}
-function sellerBy(data,id) {return isId(id)?data.sellers.find(s=>s.id===Number(id)&&s.active):null;}
+function sellerBy(data,id,storeId) {return isId(id)?data.sellers.find(s=>s.id===Number(id)&&s.active&&sellerStoreId(s)===storeId):null;}
 function serviceBy(data,id) {return isId(id)?data.services.find(s=>s.id===Number(id)&&s.active):null;}
 function precondition(doc) {return doc?{updateTime:doc.updateTime}:{exists:false};}
 function conflict(error) {return error?.status===409 || error?.code==='ABORTED' || error?.code==='FAILED_PRECONDITION' || error?.code==='ALREADY_EXISTS';}
@@ -56,11 +66,25 @@ async function readBody(req) {
   try {const v=JSON.parse(text||'{}');if(!v||typeof v!=='object'||Array.isArray(v))throw Error();return v;}
   catch {fail(400,'Requête invalide.');}
 }
+// Sauvegarde et migration sont atomiques : aucune vente ni aucun PIN ne sont modifiés.
+// Les préconditions évitent d'écraser une modification administrateur simultanée.
 async function catalog(db) {
-  let c=await db.get('pulse/catalog');if(c)return c;
-  try {await db.commit([db.write('pulse/catalog',freshCatalog(),{exists:false})]);}
-  catch(e){if(!conflict(e))throw e;}
-  c=await db.get('pulse/catalog');if(!c)throw new Error('Initialisation du catalogue impossible');return c;
+  for(let attempt=0;attempt<8;attempt++) {
+    const c=await db.get('pulse/catalog');
+    try {
+      if(!c) {
+        await db.commit([db.write('pulse/catalog',freshCatalog(),{exists:false})]);
+      } else if(c.data.catalogVersion!==2||!c.data.serviceOrders||c.data.sellers.some(s=>!s.storeId||c.data.sellerStores?.[`s${s.id}`]!==sellerStoreId(s))) {
+        const backupPath='pulseBackups/catalog-before-store-scoping-v1';
+        const backup=await db.get(backupPath);
+        const writes=[];
+        if(!backup)writes.push(db.write(backupPath,{catalog:c.data,savedAt:new Date().toISOString()},{exists:false}));
+        writes.push(db.write('pulse/catalog',scopedCatalog(c.data),{updateTime:c.updateTime}));
+        await db.commit(writes);
+      } else return c;
+    } catch(e) {if(!conflict(e))throw e;}
+  }
+  throw new Error('Initialisation du catalogue impossible après modifications simultanées');
 }
 async function sellerUid(storeId,sellerId) {return `seller-${(await digestBase64(`${storeId}:${sellerId}`)).slice(0,28)}`;}
 async function recordFailure(db,uid) {
@@ -117,7 +141,7 @@ export function createWorker(deps={}) {
     if(p.role!=='seller'||!p.sub||!STORE_ID.test(p.storeId||'')||!isId(p.sellerId))fail(403,'Accès refusé.');
     const [a,c]=await Promise.all([db.get(`pulseAccess/${p.sub}`),catalog(db)]);
     if(!a?.data?.active || a.data.version!==p.accessVersion || a.data.storeId!==p.storeId || a.data.sellerId!==Number(p.sellerId) ||
-       !validStore(c.data,p.storeId) || !sellerBy(c.data,p.sellerId))fail(403,'Profil désactivé ou code PIN modifié. Reconnectez-vous.');
+       !validStore(c.data,p.storeId) || !sellerBy(c.data,p.sellerId,p.storeId))fail(403,'Profil désactivé ou code PIN modifié. Reconnectez-vous.');
     return {claims:p,access:a.data,catalog:c.data};
   }
   async function login(req,env,db,body) {
@@ -129,7 +153,7 @@ export function createWorker(deps={}) {
     if(!limit.success)fail(429,'Trop de tentatives. Réessayez plus tard.');
     const [attempt,a,c]=await Promise.all([db.get(`pulseAttempts/${uid}`),db.get(`pulseAccess/${uid}`),catalog(db)]);
     if(attempt?.data?.lockUntil>Date.now())fail(429,'Trop de tentatives. Réessayez dans 15 minutes.');
-    if(!a?.data?.active||!validStore(c.data,storeId)||!sellerBy(c.data,sellerId)||!(await verifyPin(env,uid,proof,a.data.pinMac||''))) {
+    if(!a?.data?.active||!validStore(c.data,storeId)||!sellerBy(c.data,sellerId,storeId)||!(await verifyPin(env,uid,proof,a.data.pinMac||''))) {
       await recordFailure(db,uid);fail(401,'Profil ou code PIN incorrect.');
     }
     await clearFailures(db,uid);
@@ -140,7 +164,7 @@ export function createWorker(deps={}) {
     const {storeId,sellerId,proof}=body;
     if(!STORE_ID.test(storeId||'')||!isId(sellerId)||!PROOF.test(proof||''))fail(400,'Choisissez un magasin, un vendeur et un PIN valide.');
     const c=await catalog(db);
-    if(!validStore(c.data,storeId)||!sellerBy(c.data,sellerId))fail(400,'Magasin ou vendeur invalide.');
+    if(!validStore(c.data,storeId)||!sellerBy(c.data,sellerId,storeId))fail(400,'Magasin ou vendeur invalide.');
     const uid=await sellerUid(storeId,Number(sellerId));
     const data={active:true,storeId,sellerId:Number(sellerId),sellerKey:`s${Number(sellerId)}`,version:crypto.randomUUID(),pinMac:await pinMac(env,uid,proof)};
     const {pinMac:_,...status}=data;
@@ -150,21 +174,37 @@ export function createWorker(deps={}) {
   async function mutateCatalog(db,kind,id,body,method) {
     const c=await catalog(db), d=structuredClone(c.data), list=d[kind];
     if(!list || !['sellers','services'].includes(kind))fail(404,'Rubrique inconnue.');
+    const duplicate=(row,name)=>list.some(x=>x.id!==row?.id&&x.active&&
+      (kind!=='sellers'||sellerStoreId(x)===sellerStoreId(row))&&
+      x.name.localeCompare(name,'fr',{sensitivity:'base'})===0);
     if(method==='POST') {
       const name=cleanName(body.name);if(!name)fail(400,'Saisissez un nom valide.');
-      if(list.length>=200)fail(400,'Nombre maximal atteint.');
-      if(list.some(x=>x.active&&x.name.toLocaleLowerCase('fr')===name.toLocaleLowerCase('fr')))fail(409,'Ce nom existe déjà.');
+      if(list.length>=(kind==='sellers'?1000:200))fail(400,'Nombre maximal atteint.');
+      if(kind==='sellers'&&!validStore(d,body.storeId))fail(400,'Choisissez d’abord un magasin valide.');
+      const row={name,...(kind==='sellers'?{storeId:body.storeId}:{})};
+      if(duplicate(row,name))fail(409,'Ce nom existe déjà dans cette liste.');
       const next=kind==='sellers'?'nextSellerId':'nextServiceId', newId=d[next]++;
-      list.push({id:newId,name,active:true,...(kind==='services'?{icon:'other'}:{})});id=newId;
+      list.push({id:newId,name,active:true,...(kind==='services'?{icon:'other'}:{storeId:body.storeId})});id=newId;
     } else {
       const row=list.find(x=>x.id===Number(id));if(!row)fail(404,'Élément introuvable.');
+      if(kind==='sellers'&&body.storeId!==undefined&&body.storeId!==sellerStoreId(row))fail(400,'Ce vendeur appartient à un autre magasin.');
       if(typeof body.name==='string') {const name=cleanName(body.name);if(!name)fail(400,'Saisissez un nom valide.');row.name=name;}
       if(typeof body.active==='boolean')row.active=body.active;
-      if(row.active&&list.some(x=>x.id!==row.id&&x.active&&x.name.toLocaleLowerCase('fr')===row.name.toLocaleLowerCase('fr')))fail(409,'Ce nom existe déjà.');
+      if(row.active&&duplicate(row,row.name))fail(409,'Ce nom existe déjà dans cette liste.');
     }
     try{await db.commit([db.write('pulse/catalog',withFlags(d),{updateTime:c.updateTime})]);}
     catch(e){if(conflict(e))fail(409,'Une modification simultanée a eu lieu. Réessayez.');throw e;}
     return {id:Number(id),ok:true};
+  }
+  async function saveServiceOrder(db,body) {
+    const c=await catalog(db),d=structuredClone(c.data),ids=body.serviceIds;
+    if(!validStore(d,body.storeId))fail(400,'Choisissez d’abord un magasin valide.');
+    if(!Array.isArray(ids)||ids.length!==d.services.length||ids.some(id=>!isId(id))||new Set(ids.map(Number)).size!==ids.length||
+       ids.some(id=>!d.services.some(s=>s.id===Number(id))))fail(400,'La liste des services a changé. Actualisez et réessayez.');
+    d.serviceOrders={...(d.serviceOrders||{}),[body.storeId]:ids.map(Number)};
+    try{await db.commit([db.write('pulse/catalog',withFlags(d),{updateTime:c.updateTime})]);}
+    catch(e){if(conflict(e))fail(409,'Une modification simultanée a eu lieu. Réessayez.');throw e;}
+    return {ok:true};
   }
   async function addStore(db,body) {
     const c=await catalog(db),d=structuredClone(c.data),name=cleanName(body.name),lat=body.lat,lon=body.lon;
@@ -186,7 +226,7 @@ export function createWorker(deps={}) {
   async function addSale(req,env,db,ctx,body) {
     const s=await seller(req,env,db),service=serviceBy(s.catalog,body.serviceId),requestId=body.requestId;
     if(!service||!SAFE_ID.test(requestId||''))fail(400,'Service ou identifiant de vente invalide.');
-    const storeId=s.claims.storeId,sellerId=Number(s.claims.sellerId),name=sellerBy(s.catalog,sellerId).name;
+    const storeId=s.claims.storeId,sellerId=Number(s.claims.sellerId),name=sellerBy(s.catalog,sellerId,storeId).name;
     const data={id:requestId,storeId,sellerId,serviceId:service.id,createdAt:new Date().toISOString(),businessDate:today(),deletedAt:null,source:'sale',clientId:typeof body.clientId==='string'?body.clientId.slice(0,80):'',ownerUid:s.claims.sub};
     const outbox={saleId:requestId,storeId,sellerName:name,serviceName:service.name,status:'pending',createdAt:Date.now(),leaseUntil:0};
     try {await db.commit([db.write(docPath(storeId,requestId),data,{exists:false}),db.write(`pulseOutbox/${requestId}`,outbox,{exists:false}),db.write(guardPath(storeId),{revision:crypto.randomUUID()})]);}
@@ -215,7 +255,7 @@ export function createWorker(deps={}) {
   }
   async function adjust(db,body) {
     const {storeId,sellerId,serviceId,count}=body,c=await catalog(db);
-    if(!validStore(c.data,storeId)||!sellerBy(c.data,sellerId)||!serviceBy(c.data,serviceId)||!Number.isInteger(count)||count<0||count>100)fail(400,'Choisissez une quantité entre 0 et 100.');
+    if(!validStore(c.data,storeId)||!sellerBy(c.data,sellerId,storeId)||!serviceBy(c.data,serviceId)||!Number.isInteger(count)||count<0||count>100)fail(400,'Choisissez une quantité entre 0 et 100.');
     const guard=await db.get(guardPath(storeId));
     const rows=(await findToday(db,storeId)).filter(d=>d.data.sellerId===Number(sellerId)&&d.data.serviceId===Number(serviceId)&&!d.data.deletedAt)
       .sort((a,b)=>b.data.createdAt.localeCompare(a.data.createdAt)||b.id.localeCompare(a.id));
@@ -277,7 +317,7 @@ export function createWorker(deps={}) {
       if(!tokenDoc || !outbox || tokenDoc.data.storeId!==storeId || outbox.data.storeId!==storeId || Date.now()-outbox.data.createdAt>60*60*1000) {msg.ack();return;}
       stage='authorize';
       const [a,c]=await Promise.all([db.get(`pulseAccess/${tokenDoc.data.uid}`),catalog(db)]);
-      if(!a?.data.active||a.data.version!==tokenDoc.data.accessVersion||a.data.storeId!==storeId||!sellerBy(c.data,a.data.sellerId)||!validStore(c.data,storeId)){msg.ack();return;}
+      if(!a?.data.active||a.data.version!==tokenDoc.data.accessVersion||a.data.storeId!==storeId||!sellerBy(c.data,a.data.sellerId,storeId)||!validStore(c.data,storeId)){msg.ack();return;}
       stage='fcm';await send(env,tokenDoc.data.token,outbox.data);
       stage='mark';const current=await db.get(path);if(current)await db.commit([db.write(path,{status:'sent',leaseUntil:0,sentAt:Date.now()},precondition(current))]);
       msg.ack();
@@ -291,7 +331,7 @@ export function createWorker(deps={}) {
   async function routes(req,env,ctx) {
     const db=createDb(env),url=new URL(req.url),path=url.pathname,method=req.method;
     if(method==='GET'&&path==='/api/health')return {ok:true};
-    if(method==='GET'&&path==='/api/bootstrap')return publicCatalog((await catalog(db)).data);
+    if(method==='GET'&&path==='/api/bootstrap')return publicCatalog((await catalog(db)).data,url.searchParams.get('storeId'));
     if(method==='POST'&&path==='/api/auth/login')return login(req,env,db,await readBody(req));
     if(method==='POST'&&path==='/api/sales')return addSale(req,env,db,ctx,await readBody(req));
     if(method==='POST'&&path==='/api/sales/remove')return removeLatest(req,env,db,await readBody(req));
@@ -300,15 +340,16 @@ export function createWorker(deps={}) {
     if((method==='POST'||method==='DELETE')&&path==='/api/push/subscribe')return tokenSubscribe(req,env,db,await readBody(req),method);
     if(path.startsWith('/api/admin/')) {
       await admin(req,env);
-      if(method==='GET'&&path==='/api/admin/all'){const d=(await catalog(db)).data;return {sellers:d.sellers,services:d.services};}
+      if(method==='GET'&&path==='/api/admin/all'){const d=(await catalog(db)).data;return {sellers:d.sellers,services:d.services,serviceOrders:d.serviceOrders||{}};}
       if(method==='POST'&&path==='/api/admin/pin')return savePin(env,db,await readBody(req));
+      if(method==='POST'&&path==='/api/admin/services/order')return saveServiceOrder(db,await readBody(req));
       if(method==='POST'&&path==='/api/admin/stores')return addStore(db,await readBody(req));
       if(method==='POST'&&path==='/api/admin/adjust')return adjust(db,await readBody(req));
       const entity=path.match(/^\/api\/admin\/entities\/(sellers|services)(?:\/(\d+))?$/);
       if(entity&&((method==='POST'&&!entity[2])||(method==='PATCH'&&entity[2])))return mutateCatalog(db,entity[1],entity[2],await readBody(req),method);
       if(method==='GET'&&path==='/api/admin/counts') {
         const storeId=url.searchParams.get('storeId'),sellerId=Number(url.searchParams.get('sellerId')),c=(await catalog(db)).data;
-        if(!validStore(c,storeId)||!isId(sellerId))fail(400,'Sélection invalide.');
+        if(!validStore(c,storeId)||!sellerBy(c,sellerId,storeId))fail(400,'Sélection invalide.');
         const counts=new Map();for(const x of await findToday(db,storeId))if(x.data.sellerId===sellerId&&!x.data.deletedAt)counts.set(x.data.serviceId,(counts.get(x.data.serviceId)||0)+1);
         return {counts:[...counts].map(([serviceId,count])=>({serviceId,count}))};
       }

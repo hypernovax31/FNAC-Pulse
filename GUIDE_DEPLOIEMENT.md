@@ -2,9 +2,20 @@
 
 Ce guide configure **GitHub Pages + Firebase Spark + Cloudflare Workers/Queues Free**. Il ne crée aucune ressource automatiquement et ne nécessite ni domaine personnalisé, ni serveur Node.js permanent, ni Firebase Blaze. Les intitulés des consoles peuvent évoluer.
 
-> **Important** — La version cloud a été testée localement, avec des émulateurs et des services fictifs ; la configuration réelle, les limites CPU Cloudflare et la réception FCM doivent encore être vérifiées sur vos comptes et appareils. N'utilisez pas de données réelles avant la recette et les vérifications de sécurité.
+> **Important** — La configuration réelle est publiée et une notification iPhone a été reçue. La synchronisation sur deux appareils physiques distincts et les limites en charge restent à vérifier. Les tests et émulateurs ne constituent pas un audit de sécurité.
 >
 > Ne partagez jamais ici ou dans Git de mot de passe, PIN, fichier JSON de compte de service, clé privée VAPID, `PIN_PEPPER` ou jeton d'accès. La configuration Web Firebase, l'URL Worker et la **clé VAPID publique** ne sont pas des secrets. Les règles Firestore et les contrôles du Worker, et non la confidentialité de la configuration Web, protègent les données.
+
+## Mise à jour d'une installation existante : ordre à respecter
+
+Cette version rattache les vendeurs historiques à **Fnac Labège** (`osm-way-386504727`), avec les mêmes identifiants. Les autres magasins démarrent sans vendeurs ; les documents des ventes et les PIN ne sont ni supprimés ni modifiés. Un même prénom peut ensuite être ajouté dans plusieurs magasins, avec un PIN distinct.
+
+1. Déployer d'abord le **nouveau Worker** sur Cloudflare, sans modifier les trois secrets existants. Le premier accès à `/api/bootstrap` effectue la migration du catalogue avec précondition de concurrence et crée une copie de son état précédent dans `pulseBackups/catalog-before-store-scoping-v1`. La sauvegarde et la migration du catalogue sont atomiques. Cette copie ne remplace **pas** une sauvegarde complète de Firestore.
+2. Vérifier que `/api/bootstrap` répond et que les vendeurs historiques portent `storeId: osm-way-386504727`. Dans Firestore, vérifier que `pulse/catalog` contient `catalogVersion: 2` et `sellerStores` **avant** de modifier les règles : sinon les vendeurs risquent de perdre temporairement l'accès en lecture.
+3. Publier l'interface GitHub Pages via le workflow manuel, puis remplacer les règles dans **Firebase → Firestore Database → Règles** par le contenu de [`firestore.rules`](firestore.rules) et appuyer sur **Publier**. Les nouvelles règles vérifient l'appartenance du vendeur à son magasin. Les anciennes sessions restées ouvertes sur le mauvais magasin sont refusées ; celles de Labège gardent leur PIN.
+4. Fermer et rouvrir l'application sur chaque appareil pour charger la nouvelle version. Dans **Administration**, choisir le magasin avant d'y ajouter des vendeurs ou de réordonner les services. Définir un PIN pour chaque nouveau vendeur. Tester la vente, le classement, l'ordre et les notifications sur les appareils de l'équipe.
+
+Noms et activation des services sont communs à tous les magasins ; seul leur **ordre** est propre à chaque magasin. Les priorités de classement DMax et FVD correspondent aux services historiques (identifiants 1 et 5), même si leur intitulé est modifié.
 
 ## 1. Préparer le projet Firebase
 
@@ -113,7 +124,7 @@ Ouvrir ensuite <https://hypernovax31.github.io/FNAC-Pulse/> dans un onglet norma
 3. Sur deux appareils, se connecter avec deux vendeurs du même magasin. Ajouter une vente sur l'un : vérifier sa présence dans le bilan et sur l'autre appareil. Vérifier une correction et le classement. Tester un second magasin pour vérifier l'isolation.
 4. Sur chaque appareil, autoriser les notifications. Tester l'envoi avec l'application ouverte puis fermée ; sur iPhone/iPad, installer d'abord la PWA depuis Safari. Les navigateurs, les réglages système et les politiques d'économie d'énergie peuvent empêcher la réception.
 5. Vérifier le changement d'un PIN : l'ancienne session ne doit plus pouvoir lire de nouvelles données ni écrire. Vérifier également les permissions Firestore et la protection de l'accès administrateur.
-6. Consulter les tableaux de consommation et les journaux Firebase et Cloudflare. Établir une procédure de sauvegarde, une politique de conservation et un responsable d'accès. Les données s'accumulent ; le nettoyage ou la sauvegarde ne sont pas automatiques.
+6. Consulter les tableaux de consommation et les journaux Firebase et Cloudflare. Établir une procédure de sauvegarde, une politique de conservation et un responsable d'accès. Les données s'accumulent ; le nettoyage et la sauvegarde complète ne sont pas automatiques.
 
 Une Queue est utilisée pour les tentatives de notification, mais ni une Queue ni FCM ne garantissent que chaque appareil affiche chaque notification exactement une fois. Les pannes, retries, limites et quotas peuvent causer des retards, pertes ou doublons. Les requêtes et le CPU réellement consommés dépendent du nombre d'appareils et doivent être mesurés sur le compte gratuit.
 

@@ -2,10 +2,11 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator, doc, getDoc, collection, getDocs, query, where, setDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocFromServer, collection, getDocs, query, where, setDoc, onSnapshot } from 'firebase/firestore';
 import { FirestoreRest } from '../worker/firebase.js';
 import { createWorker } from '../worker/index.js';
 import { pinProof } from '../src/pin.js';
+import { LEGACY_STORE_ID } from '../src/catalog.js';
 
 const enabled=!!process.env.FIRESTORE_EMULATOR_HOST;
 const b64=x=>Buffer.from(JSON.stringify(x)).toString('base64url');
@@ -42,8 +43,21 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
   try {
     // Clear only the demo emulator; never touch the real Firebase project.
     await fetch(`http://127.0.0.1:8085/emulator/v1/projects/${project}/databases/(default)/documents`,{method:'DELETE'});
+    assert.equal((await call('/api/bootstrap')).status,200);
+    const legacy=(await storeDb.get('pulse/catalog')).data;
+    delete legacy.catalogVersion;delete legacy.sellerStores;delete legacy.serviceOrders;
+    legacy.sellers=legacy.sellers.map(({storeId,...s})=>s);
+    legacy.services=legacy.services.map(({priorityCode,...s})=>s);
+    const oldAccess={active:true,storeId:LEGACY_STORE_ID,sellerId:1,version:'existing',pinMac:'existing-pin-hash'};
+    const oldSale={id:'historic',storeId:LEGACY_STORE_ID,sellerId:1,serviceId:1,businessDate:'2000-01-01'};
+    await storeDb.commit([storeDb.write('pulse/catalog',legacy),storeDb.write('pulseAccess/legacy-record',oldAccess),storeDb.write(`pulseStores/${LEGACY_STORE_ID}/sales/historic`,oldSale)]);
     const bootstrap=await call('/api/bootstrap');assert.equal(bootstrap.status,200);
-    const store=bootstrap.json.stores.find(s=>s.name==='Fnac Bordeaux').id,other=bootstrap.json.stores.find(s=>s.name==='Fnac Bordeaux-Lac').id;
+    const backup=await storeDb.get('pulseBackups/catalog-before-store-scoping-v1');
+    assert.equal(backup.data.catalog.sellers[0].storeId,undefined);
+    assert.equal((await storeDb.get('pulse/catalog')).data.sellerStores.s1,LEGACY_STORE_ID);
+    assert.deepEqual((await storeDb.get('pulseAccess/legacy-record')).data,oldAccess);
+    assert.deepEqual((await storeDb.get(`pulseStores/${LEGACY_STORE_ID}/sales/historic`)).data,oldSale);
+    const store=LEGACY_STORE_ID,other=bootstrap.json.stores.find(s=>s.name==='Fnac Bordeaux').id;
     const proof=await pinProof(project,store,1,'73628519');
     assert.equal((await call('/api/admin/pin','POST',{storeId:store,sellerId:1,proof},adminToken)).status,200);
     const login=await call('/api/auth/login','POST',{storeId:store,sellerId:1,proof});assert.equal(login.status,200);
@@ -82,5 +96,11 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     assert.equal(deniedError.code,'permission-denied');stop();
     await assert.rejects(getDoc(doc(db,'pulse','catalog')),/permission|insufficient/i);
     assert.equal((await call('/api/sales','POST',{serviceId:1,requestId:'emulator-sale-000002'},idToken)).status,403);
+    // Ancienne session valide pour le mauvais magasin : les nouvelles règles doivent la refuser.
+    const wrongUid='wrong-store-old-session',version='old-version';
+    await storeDb.commit([storeDb.write(`pulseAccess/${wrongUid}`,{active:true,storeId:other,sellerId:1,sellerKey:'s1',version})]);
+    await signInWithCustomToken(auth,fakeCustomToken(env,wrongUid,{role:'seller',storeId:other,sellerId:1,sellerKey:'s1',accessVersion:version}));
+    await assert.rejects(getDocFromServer(doc(db,'pulse','catalog')),/permission|insufficient/i);
+    await assert.rejects(getDocs(collection(db,'pulseStores',other,'sales')),/permission|insufficient/i);
   } finally {await deleteApp(app);}
 });

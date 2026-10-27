@@ -11,6 +11,7 @@ service cloud.firestore {
         && a.data.storeId == request.auth.token.storeId
         && a.data.sellerKey == request.auth.token.sellerKey
         && c.data.sellerFlags[request.auth.token.sellerKey] == true
+        && c.data.sellerStores[request.auth.token.sellerKey] == request.auth.token.storeId
         && c.data.storeFlags[request.auth.token.storeId] == true;
     }
     match /pulse/catalog { allow get: if request.auth != null && validSeller(); allow list, write: if false; }

@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LEGACY_STORE_ID, comparePeople, orderServices } from '../src/catalog.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = path.resolve(process.env.DATA_DIR || path.join(root, 'data'));
@@ -19,7 +20,7 @@ CREATE TABLE IF NOT EXISTS stores (
   lat REAL, lon REAL, active INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS sellers (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, store_id TEXT
 );
 CREATE TABLE IF NOT EXISTS services (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, icon TEXT NOT NULL DEFAULT 'other',
@@ -31,11 +32,19 @@ CREATE TABLE IF NOT EXISTS sales (
   business_date TEXT NOT NULL, created_at TEXT NOT NULL, deleted_at TEXT, source TEXT NOT NULL DEFAULT 'sale'
 );
 CREATE INDEX IF NOT EXISTS sales_period ON sales(store_id, business_date, deleted_at);
+CREATE TABLE IF NOT EXISTS service_orders (
+  store_id TEXT NOT NULL REFERENCES stores(id), service_id INTEGER NOT NULL REFERENCES services(id),
+  position INTEGER NOT NULL, PRIMARY KEY(store_id,service_id)
+);
 CREATE TABLE IF NOT EXISTS subscriptions (
   endpoint TEXT PRIMARY KEY, store_id TEXT NOT NULL REFERENCES stores(id), seller_id INTEGER REFERENCES sellers(id),
   subscription_json TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 `);
+
+// Migration SQLite historique : conserver les identifiants, les ventes et les abonnements.
+if (!db.prepare('PRAGMA table_info(sellers)').all().some(c=>c.name==='store_id')) db.exec('ALTER TABLE sellers ADD COLUMN store_id TEXT');
+db.prepare("UPDATE sellers SET store_id=? WHERE store_id IS NULL OR store_id=''").run(LEGACY_STORE_ID);
 
 const getSetting = key => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value;
 const setSetting = (key, value) => db.prepare('INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value);
@@ -47,8 +56,8 @@ const seed = db.transaction(() => {
   }
   if (!db.prepare('SELECT 1 FROM sellers LIMIT 1').get()) {
     const names = ['Morgan', 'Anthony', 'Cedric', 'Philippe', 'Fabien', 'Florent', 'Eric', 'Tamera', 'Ikram', 'Selenia', 'Johan', 'Alice'];
-    const add = db.prepare('INSERT INTO sellers(name,sort_order) VALUES (?,?)');
-    names.forEach((name, index) => add.run(name, index));
+    const add = db.prepare('INSERT INTO sellers(name,sort_order,store_id) VALUES (?,?,?)');
+    names.forEach((name, index) => add.run(name, index, LEGACY_STORE_ID));
   }
   if (!db.prepare('SELECT 1 FROM services LIMIT 1').get()) {
     const names = [
@@ -118,7 +127,7 @@ const failure = (res, message, code=400) => res.status(code).json({ error: messa
 const isId = value => Number.isSafeInteger(Number(value)) && Number(value) > 0;
 const cleanName = value => typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, 60) : '';
 const activeStore = id => typeof id === 'string' && db.prepare('SELECT * FROM stores WHERE id=? AND active=1').get(id);
-const activeSeller = id => isId(id) && db.prepare('SELECT * FROM sellers WHERE id=? AND active=1').get(Number(id));
+const activeSeller = (id,storeId) => isId(id) && db.prepare('SELECT * FROM sellers WHERE id=? AND store_id=? AND active=1').get(Number(id),storeId);
 const activeService = id => isId(id) && db.prepare('SELECT * FROM services WHERE id=? AND active=1').get(Number(id));
 
 function parisToday(now = new Date()) {
@@ -130,15 +139,22 @@ function periodStarts(today) {
   date.setUTCDate(date.getUTCDate() - daysSinceMonday);
   return { day:today, week:date.toISOString().slice(0,10), month:`${today.slice(0,7)}-01` };
 }
+function serviceOrders() {
+  const orders={};
+  for(const row of db.prepare('SELECT store_id AS storeId,service_id AS serviceId FROM service_orders ORDER BY position').all()) (orders[row.storeId]||=[]).push(row.serviceId);
+  return orders;
+}
 function periodSummary(storeId, start, today) {
   const total = db.prepare(`SELECT COUNT(*) AS n FROM sales WHERE store_id=? AND business_date BETWEEN ? AND ? AND deleted_at IS NULL`).get(storeId,start,today).n;
   const byService = db.prepare(`SELECT v.id,v.name,v.icon,COUNT(s.id) AS count FROM services v LEFT JOIN sales s
     ON s.service_id=v.id AND s.store_id=? AND s.business_date BETWEEN ? AND ? AND s.deleted_at IS NULL
     GROUP BY v.id HAVING v.active=1 OR count>0 ORDER BY v.sort_order,v.id`).all(storeId,start,today);
-  const bySeller = db.prepare(`SELECT u.id,u.name,COUNT(s.id) AS count FROM sales s JOIN sellers u ON u.id=s.seller_id
-    WHERE s.store_id=? AND s.business_date BETWEEN ? AND ? AND s.deleted_at IS NULL
-    GROUP BY u.id ORDER BY count DESC,u.name COLLATE NOCASE ASC`).all(storeId,start,today);
-  return { total, byService, bySeller, start, end:today };
+  const bySeller = db.prepare(`SELECT u.id,u.name,COUNT(s.id) AS count,
+    SUM(CASE WHEN s.service_id=1 THEN 1 ELSE 0 END) AS dmax,SUM(CASE WHEN s.service_id=5 THEN 1 ELSE 0 END) AS fvd
+    FROM sales s JOIN sellers u ON u.id=s.seller_id
+    WHERE s.store_id=? AND s.business_date BETWEEN ? AND ? AND s.deleted_at IS NULL GROUP BY u.id`).all(storeId,start,today)
+    .sort((a,b)=>b.count-a.count||b.dmax-a.dmax||b.fvd-a.fvd||comparePeople(a,b));
+  return { total, byService:orderServices(byService,serviceOrders(),storeId), bySeller, start, end:today };
 }
 function statsFor(storeId, sellerId, today) {
   const starts = periodStarts(today);
@@ -177,8 +193,8 @@ app.get('/api/events', (req,res) => {
 app.get('/api/bootstrap', (req,res) => {
   const today = parisToday();
   const stores = db.prepare('SELECT id,name,city,address,lat,lon FROM stores WHERE active=1 ORDER BY name COLLATE NOCASE').all();
-  const sellers = db.prepare('SELECT id,name FROM sellers WHERE active=1 ORDER BY sort_order,id').all();
-  const services = db.prepare('SELECT id,name,icon FROM services WHERE active=1 ORDER BY sort_order,id').all();
+  const sellers = db.prepare('SELECT id,name,store_id AS storeId FROM sellers WHERE active=1').all().sort(comparePeople);
+  const services = orderServices(db.prepare('SELECT id,name,icon FROM services WHERE active=1 ORDER BY sort_order,id').all(),serviceOrders(),req.query.storeId);
   const store = req.query.storeId ? activeStore(req.query.storeId) : null;
   const stats = store ? statsFor(store.id,req.query.sellerId,today) : null;
   res.json({ stores, sellers, services, today, stats, pushPublicKey:vapid.publicKey });
@@ -186,7 +202,7 @@ app.get('/api/bootstrap', (req,res) => {
 
 app.post('/api/sales', (req,res) => {
   const {storeId,sellerId,serviceId,requestId,clientId} = req.body || {};
-  const store = activeStore(storeId), seller = activeSeller(sellerId), service = activeService(serviceId);
+  const store = activeStore(storeId), seller = activeSeller(sellerId,storeId), service = activeService(serviceId);
   if (!store || !seller || !service) return failure(res,'Choisissez un magasin, un vendeur et un service valides.');
   const safeRequest = typeof requestId === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(requestId) ? requestId : null;
   if (safeRequest) {
@@ -217,7 +233,7 @@ app.post('/api/sales', (req,res) => {
 
 app.post('/api/sales/remove', (req,res) => {
   const {storeId,sellerId,serviceId} = req.body || {};
-  if (!activeStore(storeId) || !activeSeller(sellerId) || !activeService(serviceId)) return failure(res,'Sélection invalide.');
+  if (!activeStore(storeId) || !activeSeller(sellerId,storeId) || !activeService(serviceId)) return failure(res,'Sélection invalide.');
   const row = db.prepare(`SELECT id FROM sales WHERE store_id=? AND seller_id=? AND service_id=? AND business_date=? AND deleted_at IS NULL
     ORDER BY created_at DESC,rowid DESC LIMIT 1`).get(storeId,Number(sellerId),Number(serviceId),parisToday());
   if (!row) return failure(res,'Aucune vente à retirer pour ce service aujourd’hui.',409);
@@ -227,7 +243,7 @@ app.post('/api/sales/remove', (req,res) => {
 });
 app.delete('/api/sales/:id', (req,res) => {
   const {storeId,sellerId} = req.body || {};
-  if (!activeStore(storeId) || !activeSeller(sellerId)) return failure(res,'Sélection invalide.');
+  if (!activeStore(storeId) || !activeSeller(sellerId,storeId)) return failure(res,'Sélection invalide.');
   const result = db.prepare(`UPDATE sales SET deleted_at=? WHERE id=? AND store_id=? AND seller_id=? AND business_date=? AND deleted_at IS NULL`)
     .run(new Date().toISOString(),req.params.id,storeId,Number(sellerId),parisToday());
   if (!result.changes) return failure(res,'Cette vente ne peut plus être annulée.',409);
@@ -254,7 +270,7 @@ function validPushKeys(keys) {
 }
 app.post('/api/push/subscribe', (req,res) => {
   const {storeId,sellerId,subscription} = req.body || {};
-  if (!activeStore(storeId) || !activeSeller(sellerId)) return failure(res,'Sélectionnez d’abord votre magasin et votre profil.');
+  if (!activeStore(storeId) || !activeSeller(sellerId,storeId)) return failure(res,'Sélectionnez d’abord votre magasin et votre profil.');
   if (!subscription || typeof subscription.endpoint!=='string' || !allowedPushEndpoint(subscription.endpoint) ||
       !validPushKeys(subscription.keys)) return failure(res,'Abonnement aux notifications invalide.');
   db.prepare(`INSERT INTO subscriptions(endpoint,store_id,seller_id,subscription_json,updated_at) VALUES (?,?,?,?,?)
@@ -286,8 +302,9 @@ app.post('/api/admin/login', (req,res) => {
 app.post('/api/admin/logout', requireAdmin, (req,res) => { sessions.delete(req.adminToken); res.json({ok:true}); });
 app.get('/api/admin/all', requireAdmin, (req,res) => {
   res.json({
-    sellers:db.prepare('SELECT id,name,active FROM sellers ORDER BY active DESC,sort_order,id').all(),
-    services:db.prepare('SELECT id,name,icon,active FROM services ORDER BY active DESC,sort_order,id').all(),
+    sellers:db.prepare('SELECT id,name,active,store_id AS storeId FROM sellers').all().sort(comparePeople),
+    services:db.prepare('SELECT id,name,icon,active FROM services ORDER BY sort_order,id').all(),
+    serviceOrders:serviceOrders(),
   });
 });
 app.post('/api/admin/password', requireAdmin, (req,res) => {
@@ -300,42 +317,54 @@ app.post('/api/admin/password', requireAdmin, (req,res) => {
   res.json({ok:true});
 });
 const entityTable = kind => kind==='sellers' ? 'sellers' : kind==='services' ? 'services' : null;
+function duplicateEntity(table,name,storeId,exceptId) {
+  return db.prepare(`SELECT id,name,${table==='sellers'?'store_id AS storeId':'NULL AS storeId'} FROM ${table} WHERE active=1`).all()
+    .some(x=>x.id!==exceptId&&(table!=='sellers'||x.storeId===storeId)&&x.name.localeCompare(name,'fr',{sensitivity:'base'})===0);
+}
 app.post('/api/admin/entities/:kind',requireAdmin,(req,res) => {
-  const table=entityTable(req.params.kind), name=cleanName(req.body?.name);
+  const table=entityTable(req.params.kind), name=cleanName(req.body?.name),storeId=req.body?.storeId;
   if (!table || !name) return failure(res,'Saisissez un nom valide.');
-  if (db.prepare(`SELECT 1 FROM ${table} WHERE lower(name)=lower(?) AND active=1`).get(name)) return failure(res,'Ce nom existe déjà.',409);
-  const order = db.prepare(`SELECT COALESCE(MAX(sort_order),-1)+1 AS n FROM ${table}`).get().n;
-  const result = db.prepare(`INSERT INTO ${table}(name,sort_order) VALUES (?,?)`).run(name,order);
+  if(table==='sellers'&&!activeStore(storeId))return failure(res,'Choisissez d’abord un magasin valide.');
+  if(duplicateEntity(table,name,storeId))return failure(res,'Ce nom existe déjà dans cette liste.',409);
+  const order=db.prepare(`SELECT COALESCE(MAX(sort_order),-1)+1 AS n FROM ${table}`).get().n;
+  const result=table==='sellers'?db.prepare('INSERT INTO sellers(name,sort_order,store_id) VALUES (?,?,?)').run(name,order,storeId):db.prepare('INSERT INTO services(name,sort_order) VALUES (?,?)').run(name,order);
   broadcast(null,{kind:'config'});
   res.status(201).json({id:Number(result.lastInsertRowid)});
 });
 app.patch('/api/admin/entities/:kind/:id',requireAdmin,(req,res) => {
-  const table=entityTable(req.params.kind), id=Number(req.params.id);
-  if (!table || !isId(id) || !db.prepare(`SELECT id FROM ${table} WHERE id=?`).get(id)) return failure(res,'Élément introuvable.',404);
-  if (typeof req.body?.name === 'string') {
-    const name=cleanName(req.body.name); if(!name) return failure(res,'Saisissez un nom valide.');
-    if (db.prepare(`SELECT 1 FROM ${table} WHERE lower(name)=lower(?) AND id<>? AND active=1`).get(name,id)) return failure(res,'Ce nom existe déjà.',409);
-    db.prepare(`UPDATE ${table} SET name=? WHERE id=?`).run(name,id);
-  }
-  if (typeof req.body?.active === 'boolean') {
-    if (req.body.active) {
-      const row = db.prepare(`SELECT name FROM ${table} WHERE id=?`).get(id);
-      if (db.prepare(`SELECT 1 FROM ${table} WHERE lower(name)=lower(?) AND id<>? AND active=1`).get(row.name,id)) return failure(res,'Un élément actif porte déjà ce nom.',409);
-    }
-    db.prepare(`UPDATE ${table} SET active=? WHERE id=?`).run(req.body.active?1:0,id);
-  }
-  broadcast(null,{kind:'config'}); res.json({ok:true});
+  const table=entityTable(req.params.kind),id=Number(req.params.id);
+  const row=table&&isId(id)?db.prepare(`SELECT *,${table==='sellers'?'store_id':'NULL'} AS storeId FROM ${table} WHERE id=?`).get(id):null;
+  if(!row)return failure(res,'Élément introuvable.',404);
+  if(table==='sellers'&&req.body?.storeId!==undefined&&req.body.storeId!==row.storeId)return failure(res,'Ce vendeur appartient à un autre magasin.');
+  const name=typeof req.body?.name==='string'?cleanName(req.body.name):row.name;
+  const active=typeof req.body?.active==='boolean'?req.body.active:!!row.active;
+  if(!name)return failure(res,'Saisissez un nom valide.');
+  if(active&&duplicateEntity(table,name,row.storeId,id))return failure(res,'Ce nom existe déjà dans cette liste.',409);
+  db.prepare(`UPDATE ${table} SET name=?,active=? WHERE id=?`).run(name,active?1:0,id);
+  broadcast(null,{kind:'config'});res.json({ok:true});
+});
+app.post('/api/admin/services/order',requireAdmin,(req,res)=>{
+  const {storeId,serviceIds}=req.body||{},services=db.prepare('SELECT id FROM services').all();
+  if(!activeStore(storeId))return failure(res,'Choisissez d’abord un magasin valide.');
+  if(!Array.isArray(serviceIds)||serviceIds.length!==services.length||serviceIds.some(id=>!isId(id))||new Set(serviceIds.map(Number)).size!==serviceIds.length||
+     serviceIds.some(id=>!services.some(s=>s.id===Number(id))))return failure(res,'La liste des services a changé. Actualisez et réessayez.');
+  db.transaction(()=>{
+    db.prepare('DELETE FROM service_orders WHERE store_id=?').run(storeId);
+    const insert=db.prepare('INSERT INTO service_orders(store_id,service_id,position) VALUES (?,?,?)');
+    serviceIds.forEach((id,index)=>insert.run(storeId,Number(id),index));
+  })();
+  broadcast(storeId,{kind:'config'});res.json({ok:true});
 });
 app.get('/api/admin/counts',requireAdmin,(req,res) => {
   const {storeId,sellerId}=req.query;
-  if(!activeStore(storeId)||!isId(sellerId)||!db.prepare('SELECT 1 FROM sellers WHERE id=?').get(Number(sellerId))) return failure(res,'Sélection invalide.');
+  if(!activeStore(storeId)||!activeSeller(sellerId,storeId)) return failure(res,'Sélection invalide.');
   const counts=db.prepare('SELECT service_id AS serviceId,COUNT(*) AS count FROM sales WHERE store_id=? AND seller_id=? AND business_date=? AND deleted_at IS NULL GROUP BY service_id')
     .all(storeId,Number(sellerId),parisToday());
   res.json({counts});
 });
 app.post('/api/admin/adjust',requireAdmin,(req,res) => {
   const {storeId,sellerId,serviceId,count}=req.body||{};
-  if(!activeStore(storeId)||!activeSeller(sellerId)||!activeService(serviceId)||!Number.isInteger(count)||count<0||count>999) return failure(res,'Choisissez une quantité entière entre 0 et 999.');
+  if(!activeStore(storeId)||!activeSeller(sellerId,storeId)||!activeService(serviceId)||!Number.isInteger(count)||count<0||count>999) return failure(res,'Choisissez une quantité entière entre 0 et 999.');
   const today=parisToday();
   db.transaction(() => {
     const rows=db.prepare(`SELECT id FROM sales WHERE store_id=? AND seller_id=? AND service_id=? AND business_date=? AND deleted_at IS NULL ORDER BY created_at DESC,rowid DESC`)
