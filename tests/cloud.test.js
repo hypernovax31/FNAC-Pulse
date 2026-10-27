@@ -215,3 +215,100 @@ test('Ordre des services indépendant par magasin, y compris les nouveaux servic
   assert.deepEqual(orderServices(services,orders,'B').map(s=>s.id),[2,3,1,4]);
   assert.deepEqual(orderServices(services,orders,'C').map(s=>s.id),[1,2,3,4]);
 });
+
+test('Objectifs cloud : confidentialité, vendeur/admin, simultanéité et changement de PIN',async()=>{
+  const db=new MemoryDb(),identities=new Map([['admin-token',{sub:'administrator'}]]);
+  const worker=createWorker({
+    createDb:()=>db,
+    verifyIdToken:async(_env,t)=>{const claims=identities.get(t);if(!claims)throw Error('invalid');return claims;},
+    makeCustomToken:async(_env,uid,claims)=>{const token=`seller-${claims.sellerId}-token`;identities.set(token,{sub:uid,...claims});return token;},
+  });
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PIN_PEPPER:Buffer.alloc(32,9).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}};
+  const ctx={waitUntil(){}};
+  async function request(path,method='GET',body,token) {
+    const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:r.status,body:await r.json()};
+  }
+  const base=(await request('/api/bootstrap')).body,store=LEGACY_STORE_ID,other=base.stores.find(s=>s.name==='Fnac Bordeaux').id;
+  const target={storeId:store,sellerId:1,serviceId:1,values:{day:2,week:10,month:40},revision:null};
+  assert.equal((await request('/api/goals')).status,401);
+  assert.equal((await request('/api/goals','POST',target)).status,401);
+  assert.equal((await request('/api/admin/goals','POST',target)).status,401);
+  assert.equal((await request('/api/admin/goals','POST',{...target,storeId:other},'admin-token')).status,400);
+  // L'admin peut préparer les objectifs avant l'activation du PIN, sans créer d'accès vendeur.
+  let saved=await request('/api/admin/goals','POST',target,'admin-token');assert.equal(saved.status,200);
+  const uid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;
+  assert.equal((await db.get(`pulseStatus/${uid}`)),null);
+  assert.equal((await db.get(`pulseAccess/${uid}`)),null);
+  assert.equal((await db.get(`pulseGoals/${uid}`)).data.goals.s1.week,10);
+  const proof1=await pinProof('demo-fnac',store,1,'73628519'),proof2=await pinProof('demo-fnac',store,2,'59386271');
+  for(const [id,proof] of [[1,proof1],[2,proof2]]) {
+    assert.equal((await request('/api/admin/pin','POST',{storeId:store,sellerId:id,proof},'admin-token')).status,200);
+    assert.equal((await request('/api/auth/login','POST',{storeId:store,sellerId:id,proof})).body.customToken,`seller-${id}-token`);
+  }
+  assert.equal((await request('/api/goals','GET',undefined,'seller-1-token')).body.goals.s1.day,2);
+  assert.deepEqual((await request('/api/goals','GET',undefined,'seller-2-token')).body.goals,{});
+  const rev=saved.body.goals.s1.revision;
+  // Une sélection devenue périmée après changement de profil est refusée ; le jeton fait foi.
+  const spoof=await request('/api/goals','POST',{...target,storeId:other,sellerId:2,revision:rev,values:{day:3,week:11,month:44}},'seller-1-token');
+  assert.equal(spoof.status,403);
+  assert.equal((await request(`/api/goals?storeId=${store}&sellerId=2`,'GET',undefined,'seller-1-token')).status,403);
+  assert.equal((await request(`/api/goals?storeId=${other}&sellerId=1`,'GET',undefined,'seller-1-token')).status,403);
+  assert.deepEqual((await request('/api/goals','GET',undefined,'seller-2-token')).body.goals,{});
+  const valid=await request('/api/goals','POST',{...target,revision:rev,values:{day:3,week:11,month:44}},'seller-1-token');
+  assert.equal(valid.status,200);assert.equal(valid.body.goals.s1.day,3);
+  const currentRev=valid.body.goals.s1.revision;
+  for(const values of [{day:0,week:1,month:2},{day:-1,week:1,month:2},{day:1.5,week:1,month:2},{day:10000,week:1,month:2},{day:'4',week:1,month:2},{day:1,week:1}]) {
+    assert.equal((await request('/api/goals','POST',{serviceId:1,values,revision:currentRev},'seller-1-token')).status,400);
+  }
+  assert.equal((await request('/api/goals','POST',{serviceId:999,values:{day:1,week:1,month:1},revision:null},'seller-1-token')).status,400);
+  assert.equal((await request('/api/goals','POST',{serviceId:1,values:{day:2,week:2,month:2},revision:rev},'seller-1-token')).status,409);
+  const statusBefore=(await db.get(`pulseStatus/${uid}`)).data;
+  const race=await Promise.all([
+    request('/api/goals','POST',{serviceId:1,values:{day:4,week:12,month:48},revision:currentRev},'seller-1-token'),
+    request('/api/admin/goals','POST',{...target,values:{day:5,week:15,month:50},revision:currentRev},'admin-token'),
+  ]);
+  assert.deepEqual(race.map(x=>x.status).sort(),[200,409]);
+  const after=(await db.get(`pulseStatus/${uid}`)).data;
+  assert.notEqual(after.goalsRevision,statusBefore.goalsRevision);
+  assert.equal(after.version,statusBefore.version);assert.equal('pinMac' in after,false);assert.equal('goals' in after,false);
+  // Deux services modifiés en même temps ne s'écrasent pas.
+  const separate=await Promise.all([
+    request('/api/goals','POST',{serviceId:5,values:{day:1,week:3,month:10},revision:null},'seller-1-token'),
+    request('/api/admin/goals','POST',{...target,serviceId:6,values:{day:null,week:6,month:20},revision:null},'admin-token'),
+  ]);
+  assert.deepEqual(separate.map(x=>x.status),[200,200]);
+  let actual=(await request('/api/goals','GET',undefined,'seller-1-token')).body.goals;
+  assert.equal(actual.s5.week,3);assert.equal(actual.s6.month,20);
+  const changed=await pinProof('demo-fnac',store,1,'82467913');
+  assert.equal((await request('/api/admin/pin','POST',{storeId:store,sellerId:1,proof:changed},'admin-token')).status,200);
+  assert.equal((await request('/api/goals','GET',undefined,'seller-1-token')).status,403);
+  assert.equal((await request('/api/auth/login','POST',{storeId:store,sellerId:1,proof:changed})).status,200);
+  actual=(await request('/api/goals','GET',undefined,'seller-1-token')).body.goals;
+  assert.equal(actual.s5.week,3);assert.equal(actual.s6.month,20);
+  assert.equal((await request('/api/admin/entities/sellers/1','PATCH',{active:false,storeId:store},'admin-token')).status,200);
+  assert.equal((await request('/api/goals','GET',undefined,'seller-1-token')).status,403);
+});
+
+test('Objectifs : activation du PIN simultanée à la première cible signale le changement',async()=>{
+  const db=new MemoryDb();
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'administrator'})});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator'},ctx={waitUntil(){}};
+  await worker.fetch(new Request('https://worker.test/api/bootstrap'),env,ctx);
+  const store=LEGACY_STORE_ID,uid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;
+  const statusPath=`pulseStatus/${uid}`,original=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path===statusPath&&w.del&&w.currentDocument?.exists===false)) {
+      raced=true;
+      await original([db.write(statusPath,{active:true,storeId:store,sellerId:1,version:'pin-created-concurrently'})]);
+    }
+    return original(writes);
+  };
+  const request=new Request('https://worker.test/api/admin/goals',{method:'POST',headers:{authorization:'Bearer admin','content-type':'application/json'},body:JSON.stringify({
+    storeId:store,sellerId:1,serviceId:1,values:{day:3,week:9,month:30},revision:null,
+  })});
+  const result=await worker.fetch(request,env,ctx);assert.equal(result.status,200);assert.equal(raced,true);
+  const status=(await db.get(statusPath)).data;
+  assert.equal(status.version,'pin-created-concurrently');assert(status.goalsRevision);
+  assert.equal((await db.get(`pulseGoals/${uid}`)).data.goals.s1.day,3);
+});

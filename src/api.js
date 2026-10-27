@@ -6,8 +6,8 @@ export async function api(path, { method = 'GET', body, token, signal } = {}) {
     if(worker.protocol!=='https:')throw new Error('Le Worker doit utiliser HTTPS.');
     destination=new URL(path,WORKER_URL+'/').href;
     if(token===ADMIN_SESSION)auth=await adminToken();
-    else if(!token && (/^\/api\/(sales|push)/.test(path)))auth=await vendorToken();
-    if((token===ADMIN_SESSION||/^\/api\/(sales|push)/.test(path))&&!auth)throw new Error('Session expirée. Reconnectez-vous.');
+    else if(!token && (/^\/api\/(sales|push|goals)/.test(path)))auth=await vendorToken();
+    if((token===ADMIN_SESSION||/^\/api\/(sales|push|goals)/.test(path))&&!auth)throw new Error('Session expirée. Reconnectez-vous.');
   }
   const options={
     method,signal,headers:{...(body!==undefined?{'Content-Type':'application/json'}:{}),...(auth?{Authorization:`Bearer ${auth}`}:{})},
@@ -21,7 +21,7 @@ export async function api(path, { method = 'GET', body, token, signal } = {}) {
     try {response=await fetch(destination,options);} catch {throw new Error('Connexion interrompue. Vérifiez le bilan avant de réessayer : la vente a peut-être été enregistrée.');}
   }
   let result;try{result=await response.json();}catch{result={};}
-  if(!response.ok)throw new Error(result.error||'Une erreur est survenue. Réessayez.');
+  if(!response.ok){const error=new Error(result.error||'Une erreur est survenue. Réessayez.');error.status=response.status;throw error;}
   return result;
 }
 export function uid() {

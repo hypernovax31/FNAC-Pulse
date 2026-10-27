@@ -58,6 +58,9 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     assert.deepEqual((await storeDb.get('pulseAccess/legacy-record')).data,oldAccess);
     assert.deepEqual((await storeDb.get(`pulseStores/${LEGACY_STORE_ID}/sales/historic`)).data,oldSale);
     const store=LEGACY_STORE_ID,other=bootstrap.json.stores.find(s=>s.name==='Fnac Bordeaux').id;
+    // Objectifs préparés avant le PIN ; aucun document de statut n'est inventé.
+    const initialGoals=await call('/api/admin/goals','POST',{storeId:store,sellerId:1,serviceId:1,values:{day:2,week:8,month:30},revision:null},adminToken);
+    assert.equal(initialGoals.status,200);
     const proof=await pinProof(project,store,1,'73628519');
     assert.equal((await call('/api/admin/pin','POST',{storeId:store,sellerId:1,proof},adminToken)).status,200);
     const login=await call('/api/auth/login','POST',{storeId:store,sellerId:1,proof});assert.equal(login.status,200);
@@ -78,6 +81,16 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     await assert.rejects(getDocs(collection(db,'pulseStores',other,'sales')),/permission|insufficient/i);
     await assert.rejects(setDoc(doc(db,'pulseStores',store,'sales','forged'),{sellerId:1}),/permission|insufficient/i);
     const myStatus=await getDoc(doc(db,'pulseStatus',seller.uid));assert.equal(myStatus.data().storeId,store);assert.equal('pinMac' in myStatus.data(),false);
+    await assert.rejects(getDoc(doc(db,'pulseGoals',seller.uid)),/permission|insufficient/i);
+    await assert.rejects(setDoc(doc(db,'pulseGoals',seller.uid),{goals:{}}),/permission|insufficient/i);
+    assert.equal((await call('/api/goals','GET',undefined,idToken)).json.goals.s1.day,2);
+    let goalEventResolve;const goalEvent=new Promise(r=>{goalEventResolve=r});
+    const stopGoal=onSnapshot(doc(db,'pulseStatus',seller.uid),snap=>{if(snap.data()?.goalsRevision)goalEventResolve(snap.data());});
+    const updated=await call('/api/goals','POST',{serviceId:1,values:{day:3,week:10,month:40},revision:initialGoals.json.goals.s1.revision},idToken);
+    assert.equal(updated.status,200);
+    const statusAfter=await Promise.race([goalEvent,new Promise((_,reject)=>setTimeout(()=>reject(Error('Notification de mise à jour des objectifs indisponible')),5000))]);
+    assert.equal('goals' in statusAfter,false);assert.equal('pinMac' in statusAfter,false);stopGoal();
+    assert.equal((await call('/api/goals','POST',{serviceId:1,values:{day:4,week:10,month:40},revision:initialGoals.json.goals.s1.revision},idToken)).status,409);
     await assert.rejects(getDoc(doc(db,'pulseStatus','some-other-seller')),/permission|insufficient/i);
     await assert.rejects(getDoc(doc(db,'pulseAccess',seller.uid)),/permission|insufficient/i);
     const counts=await call(`/api/admin/counts?storeId=${store}&sellerId=1`,'GET',undefined,adminToken);
@@ -96,6 +109,10 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     assert.equal(deniedError.code,'permission-denied');stop();
     await assert.rejects(getDoc(doc(db,'pulse','catalog')),/permission|insufficient/i);
     assert.equal((await call('/api/sales','POST',{serviceId:1,requestId:'emulator-sale-000002'},idToken)).status,403);
+    assert.equal((await call('/api/goals','GET',undefined,idToken)).status,403);
+    const reauth=await call('/api/auth/login','POST',{storeId:store,sellerId:1,proof:changed});
+    const renewed=(await signInWithCustomToken(auth,reauth.json.customToken)).user;
+    assert.equal((await call('/api/goals','GET',undefined,await renewed.getIdToken())).json.goals.s1.day,3);
     // Ancienne session valide pour le mauvais magasin : les nouvelles règles doivent la refuser.
     const wrongUid='wrong-store-old-session',version='old-version';
     await storeDb.commit([storeDb.write(`pulseAccess/${wrongUid}`,{active:true,storeId:other,sellerId:1,sellerKey:'s1',version})]);

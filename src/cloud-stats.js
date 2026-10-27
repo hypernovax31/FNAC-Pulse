@@ -15,10 +15,11 @@ export function summarize(catalog,sales,sellerId,date=parisToday()) {
   const dmaxId=priorityServiceId(catalog.services,'dmax'),fvdId=priorityServiceId(catalog.services,'fvd');
   const live=sales.filter(s=>!s.deletedAt&&s.businessDate<=date);
   function period(start) {
-    const data=live.filter(s=>s.businessDate>=start),serviceCounts=new Map(),sellerCounts=new Map();
+    const data=live.filter(s=>s.businessDate>=start),serviceCounts=new Map(),sellerCounts=new Map(),mineServiceCounts=new Map();
     for(const s of data) {
       const sid=Number(s.serviceId),uid=Number(s.sellerId);
       serviceCounts.set(sid,(serviceCounts.get(sid)||0)+1);
+      if(Number(sellerId)>0&&uid===Number(sellerId))mineServiceCounts.set(sid,(mineServiceCounts.get(sid)||0)+1);
       const counts=sellerCounts.get(uid)||{count:0,dmax:0,fvd:0};
       counts.count++;
       if(dmaxId!==null&&sid===dmaxId)counts.dmax++;
@@ -28,7 +29,8 @@ export function summarize(catalog,sales,sellerId,date=parisToday()) {
     const services=catalog.services.filter(s=>s.active||serviceCounts.has(Number(s.id))).map(s=>({id:s.id,name:s.name,icon:s.icon,count:serviceCounts.get(Number(s.id))||0}));
     const sellers=[...sellerCounts].map(([id,counts])=>({id,name:bySeller.get(id)?.name||'Vendeur',...counts}))
       .sort((a,b)=>b.count-a.count||b.dmax-a.dmax||b.fvd-a.fvd||comparePeople(a,b));
-    return {total:data.length,byService:services,bySeller:sellers,start,end:date};
+    const mineByService=[...mineServiceCounts].map(([serviceId,count])=>({serviceId,count}));
+    return {total:data.length,byService:services,bySeller:sellers,mineByService,start,end:date};
   }
   const day=period(starts.day),mineMap=new Map();
   for(const s of live)if(s.businessDate===date&&Number(s.sellerId)===Number(sellerId))mineMap.set(Number(s.serviceId),(mineMap.get(Number(s.serviceId))||0)+1);

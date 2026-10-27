@@ -60,14 +60,17 @@ function presentation(catalog,storeId) {
     services:orderServices(catalog.services.filter(x=>x.active),catalog.serviceOrders,storeId).map(({id,name,icon})=>({id,name,icon})),
   };
 }
-export function listenStore(session,day,clientId,onChange,onSale,onError) {
+export function listenStore(session,day,clientId,onChange,onSale,onError,onGoalsChanged=()=>{}) {
   let catalog=null,sales=[],catalogReady=false,salesReady=false,catalogCache=true,salesCache=true,initial=true;
   const announcer=createSaleAnnouncer(onSale);
+  let goalRevision=Symbol('premier chargement');
   const emit=()=>{if(catalogReady&&salesReady){const scoped={...catalog,services:orderServices(catalog.services,catalog.serviceOrders,session.storeId)};onChange({...presentation(scoped,session.storeId),today:day,stats:summarize(scoped,sales,session.sellerId,day)},!(catalogCache||salesCache));}};
   const stopAccess=onSnapshot(doc(db,'pulseStatus',session.uid),snap=>{
     if(snap.metadata.fromCache)return;
     const access=snap.data();
-    if(!snap.exists()||!access.active||access.version!==session.accessVersion||access.storeId!==session.storeId||access.sellerId!==session.sellerId){const error=new Error('Accès modifié. Reconnectez-vous.');error.code='permission-denied';onError(error);}
+    if(!snap.exists()||!access.active||access.version!==session.accessVersion||access.storeId!==session.storeId||access.sellerId!==session.sellerId){const error=new Error('Accès modifié. Reconnectez-vous.');error.code='permission-denied';onError(error);return;}
+    const revision=access.goalsRevision||null;
+    if(revision!==goalRevision){goalRevision=revision;onGoalsChanged();}
   },onError);
   const stopCatalog=onSnapshot(doc(db,'pulse','catalog'),{includeMetadataChanges:true},snap=>{
     if(!snap.exists()){onError(new Error('Catalogue indisponible.'));return;}

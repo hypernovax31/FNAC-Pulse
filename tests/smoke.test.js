@@ -50,6 +50,7 @@ test('API Fnac Pulse : saisie, isolation, administration, push et persistance',a
     const duplicate=await request('/api/sales','POST',body);assert.equal(duplicate.value.duplicate,true);
     let view=(await request(`/api/bootstrap?storeId=${store.id}&sellerId=${s1}`)).value;
     assert.equal(view.stats.day.total,1);assert.equal(view.stats.week.total,1);assert.equal(view.stats.month.total,1);assert.equal(view.stats.mineTotal,1);
+    for(const period of ['day','week','month'])assert.deepEqual(view.stats[period].mineByService,[{serviceId:service,count:1}]);
     assert.equal(view.stats.leaderboard[0].id,s1);
     assert.equal((await request(`/api/bootstrap?storeId=${other.id}&sellerId=${s1}`)).value.stats.day.total,0);
     assert.equal((await request(`/api/sales/${sale.value.id}`,'DELETE',{storeId:store.id,sellerId:s2})).status,409);
@@ -58,6 +59,17 @@ test('API Fnac Pulse : saisie, isolation, administration, push et persistance',a
     assert.equal((await request('/api/admin/all')).status,401);
     assert.equal((await request('/api/admin/login','POST',{password:'incorrect'})).status,401);
     const login=await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'});assert.equal(login.status,200);const token=login.value.token;
+    assert.equal((await request(`/api/admin/goals?storeId=${store.id}&sellerId=${s1}`)).status,401);
+    assert.equal((await request(`/api/goals?storeId=${other.id}&sellerId=${s1}`)).status,400);
+    const target={storeId:store.id,sellerId:s1,serviceId:service,values:{day:2,week:8,month:30},revision:null};
+    let goal=await request('/api/admin/goals','POST',target,token);assert.equal(goal.status,200);
+    const revision=goal.value.goals[`s${service}`].revision;
+    assert.equal((await request('/api/goals','POST',{...target,values:{day:0,week:8,month:30},revision})).status,400);
+    assert.equal((await request('/api/goals','POST',target)).status,409);
+    goal=await request('/api/goals','POST',{...target,values:{day:3,week:null,month:30},revision});assert.equal(goal.status,200);
+    assert.equal(goal.value.goals[`s${service}`].day,3);
+    assert.deepEqual((await request(`/api/admin/goals?storeId=${store.id}&sellerId=${s2}`, 'GET',undefined,token)).value.goals,{});
+
     const name=first.value.sellers[0].name;
     assert.equal((await request('/api/admin/entities/sellers','POST',{name,storeId:other.id},token)).status,201);
     assert.equal((await request('/api/admin/entities/sellers','POST',{name:name.toLowerCase(),storeId:other.id},token)).status,409);
@@ -68,6 +80,7 @@ test('API Fnac Pulse : saisie, isolation, administration, push et persistance',a
     assert.equal((await request('/api/admin/adjust','POST',{storeId:store.id,sellerId:s1,serviceId:service,count:3},token)).status,200);
     assert.equal((await request('/api/admin/adjust','POST',{storeId:store.id,sellerId:s1,serviceId:service,count:-1},token)).status,400);
     view=(await request(`/api/bootstrap?storeId=${store.id}&sellerId=${s1}`)).value;assert.equal(view.stats.day.total,3);
+    for(const period of ['day','week','month'])assert.deepEqual(view.stats[period].mineByService,[{serviceId:service,count:3}]);
     assert.equal((await request(`/api/admin/entities/sellers/${s1}`,'PATCH',{name:'Morgan Test'},token)).status,200);
     view=(await request(`/api/bootstrap?storeId=${store.id}&sellerId=${s1}`)).value;assert.equal(view.stats.leaderboard[0].name,'Morgan Test');
     // A valid EC public key simulates the structure of a browser PushSubscription.
@@ -81,6 +94,7 @@ test('API Fnac Pulse : saisie, isolation, administration, push et persistance',a
     await stop(server);server=await start(port);
     view=(await request(`/api/bootstrap?storeId=${store.id}&sellerId=${s1}`)).value;
     assert.equal(view.stats.day.total,3);assert.equal(view.stats.leaderboard[0].name,'Morgan Test');assert.equal(view.pushPublicKey,publicKey);
+    assert.equal((await request(`/api/goals?storeId=${store.id}&sellerId=${s1}`)).value.goals[`s${service}`].day,3);
     console.log('Ventes, isolation des magasins, administration, validation push et persistance : OK');
   } finally {await stop(server);fs.rmSync(temp,{recursive:true,force:true});}
 });

@@ -4,6 +4,7 @@ import { api } from './api';
 import { CLOUD, adminLogin, adminLogout, changeAdminPassword, setPin } from './cloud';
 import { randomPin } from './pin';
 import { sellersForStore, orderServices } from './catalog';
+import { GoalForm } from './Goals';
 
 function Modal({title,subtitle,onClose,children,wide=false}) {
   const dialog=useRef(null),close=useRef(onClose);
@@ -47,6 +48,10 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [counts,setCounts]=useState({});
   const [countsFor,setCountsFor]=useState('');
   const [countsLoading,setCountsLoading]=useState(false);
+  const [adminGoals,setAdminGoals]=useState(null);
+  const [goalsFor,setGoalsFor]=useState('');
+  const [goalsLoading,setGoalsLoading]=useState(false);
+  const goalScope=useRef('');goalScope.current=`${adminStore}:${adminSeller}:${tab}`;
   const [name,setName]=useState('');
   const [editing,setEditing]=useState(null);
   const [editName,setEditName]=useState('');
@@ -71,6 +76,27 @@ export default function Admin({onClose,data,session,onChanged}) {
     return ()=>{cancelled=true};
   },[token,adminStore,adminSeller,tab]);
 
+  useEffect(()=>{
+    if(!token||!adminStore||!adminSeller||tab!=='goals')return;
+    let cancelled=false;setGoalsFor('');setAdminGoals(null);setGoalsLoading(true);
+    api(`/api/admin/goals?storeId=${encodeURIComponent(adminStore)}&sellerId=${encodeURIComponent(adminSeller)}`,{token}).then(result=>{
+      if(!cancelled){setAdminGoals(result.goals);setGoalsFor(`${adminStore}:${adminSeller}`);}
+    }).catch(e=>{if(!cancelled)setError(e.message)}).finally(()=>{if(!cancelled)setGoalsLoading(false)});
+    return ()=>{cancelled=true};
+  },[token,adminStore,adminSeller,tab]);
+  async function saveAdminGoals(body) {
+    const scope=`${adminStore}:${adminSeller}:${tab}`;setBusy(true);setError('');setNotice('');
+    try {
+      const result=await api('/api/admin/goals',{method:'POST',token,body:{...body,storeId:adminStore,sellerId:Number(adminSeller)}});
+      if(goalScope.current===scope)setAdminGoals(result.goals);
+      onChanged();return result;
+    } catch(e) {
+      if(e.status===409&&goalScope.current===scope) {
+        try{const latest=await api(`/api/admin/goals?storeId=${encodeURIComponent(adminStore)}&sellerId=${encodeURIComponent(adminSeller)}`,{token});if(goalScope.current===scope)setAdminGoals(latest.goals);}catch{}
+      }
+      throw e;
+    } finally {setBusy(false);}
+  }
   async function login(e) {
     e.preventDefault();setBusy(true);setError('');
     try {
@@ -117,12 +143,12 @@ export default function Admin({onClose,data,session,onChanged}) {
 
   return <Modal title="Administration" subtitle="Configurez votre espace en toute simplicité." onClose={onClose} wide>
     <div className="admin-tabs" role="tablist" aria-label="Rubriques administration">
-      {[['sales','Ventes'],['sellers','Vendeurs'],['services','Services'],['stores','Magasins'],...(CLOUD?[['pins','Codes PIN']]:[]),['security','Sécurité']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} disabled={busy} onClick={()=>switchTab(key)} className={tab===key?'active':''}>{label}</button>)}
+      {[['sales','Ventes'],['goals','Objectifs'],['sellers','Vendeurs'],['services','Services'],['stores','Magasins'],...(CLOUD?[['pins','Codes PIN']]:[]),['security','Sécurité']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} disabled={busy} onClick={()=>switchTab(key)} className={tab===key?'active':''}>{label}</button>)}
     </div>
     {error&&<div className="admin-alert error" role="alert">{error}</div>}
     {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
     <div className="admin-body">
-      {['sales','sellers','services','pins'].includes(tab)&&<div className="admin-store-scope">
+      {['sales','goals','sellers','services','pins'].includes(tab)&&<div className="admin-store-scope">
         <label><span className="form-label">MAGASIN À GÉRER</span><select aria-label="Magasin à gérer" className="text-input" disabled={busy} value={adminStore} onChange={e=>changeStore(e.target.value)}><option value="">Choisir un magasin</option>{data.stores.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
         <p>Vendeurs et ordre des services propres au magasin sélectionné.</p>
       </div>}
@@ -136,6 +162,12 @@ export default function Admin({onClose,data,session,onChanged}) {
           {activeServices.map(s=><div className="admin-count-row" key={s.id}><strong>{s.name}</strong><div><input type="number" min="0" max={CLOUD?100:999} aria-label={`Nombre de ventes ${s.name}`} value={counts[s.id]??0} onChange={e=>setCounts(c=>({...c,[s.id]:e.target.value}))}/><button disabled={busy} className="small-outline-button" onClick={()=>run(async()=>{const n=Number(counts[s.id]??0);if(!Number.isInteger(n)||n<0||n>(CLOUD?100:999))throw new Error(`La quantité doit être comprise entre 0 et ${CLOUD?100:999}.`);await api('/api/admin/adjust',{method:'POST',token,body:{storeId:adminStore,sellerId:Number(adminSeller),serviceId:s.id,count:n}})},'Total mis à jour.')}>Enregistrer</button></div></div>)}
         </div>:<div className="empty-admin">{countsLoading?'Chargement des ventes…':'Ventes indisponibles. Réessayez en changeant de sélection.'}</div>:<div className="empty-admin">Sélectionnez un magasin et un vendeur pour modifier les ventes.</div>}
         <div className="admin-note"><Info size={15}/> Les corrections ne déclenchent pas de notification de vente.</div>
+      </>}
+      {tab==='goals'&&<>
+        <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Fixez des quantités pour chaque service. Le vendeur peut aussi les modifier ; les ventes remplissent ses barres automatiquement.</p></div></div>
+        <div className="admin-selects admin-selects-single"><label><span className="form-label">Vendeur</span><select aria-label="Vendeur pour les objectifs" className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>setAdminSeller(e.target.value)}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label></div>
+        {adminStore&&adminSeller ? goalsFor===`${adminStore}:${adminSeller}`&&adminGoals ? <GoalForm key={`${adminStore}:${adminSeller}`} services={activeServices} goals={adminGoals} onSave={saveAdminGoals} disabled={busy}/> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un magasin et un vendeur pour gérer ses objectifs.</div>}
+        <div className="admin-note"><Info size={15}/> Les objectifs se répètent et toute modification s’applique aux périodes suivantes.</div>
       </>}
       {(tab==='sellers'||tab==='services')&&<>
         <div className="admin-section-heading"><div><h3>{tab==='sellers'?'Votre équipe':'Vos services'}</h3><p>{tab==='sellers'?'Les vendeurs sont propres à ce magasin et affichés par ordre alphabétique.':'Utilisez les flèches pour choisir l’ordre de ce magasin. Les noms et l’activation des services sont communs à tous les magasins.'} L’historique est conservé.</p></div></div>

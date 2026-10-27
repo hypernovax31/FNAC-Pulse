@@ -12,10 +12,12 @@ import { parisToday } from './cloud-stats';
 import { sellersForStore, sellerStoreId } from './catalog';
 import { serviceIconKey } from './service-icons';
 import { THEME_KEY, readTheme, applyTheme } from './theme';
+import { GoalForm, GoalsPanel } from './Goals';
 
 const APP_BASE = import.meta.env.BASE_URL;
 const SESSION_KEY = 'fnac-pulse-session-v1';
 const CACHE_KEY = 'fnac-pulse-last-view-v1';
+const GOALS_CACHE_KEY = 'fnac-pulse-personal-goals-v1';
 // Un marteau et une clé croisés, dans le même trait que les icônes Lucide.
 function ToolsIcon({size=24,strokeWidth=2}) {
   return <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -28,6 +30,9 @@ const iconColors = ['sun','lavender','blue','mint','peach','sun','lavender','min
 const avatarColors = ['#f0c84e','#cbdacf','#d4dbed','#ead4bc','#e8cdd2','#d6d2e8','#d0e2df','#f3d7be'];
 function getSession() { try { const a=JSON.parse(localStorage.getItem(SESSION_KEY));return a?.storeId&&a?.sellerId?a:null; } catch {return null;} }
 function getCached() { try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch {return null;} }
+function goalOwnerKey(session) {return session?JSON.stringify([session.storeId,session.sellerId,session.uid||'',session.accessVersion||'']):'';}
+function getCachedGoals(owner) {try{const x=JSON.parse(localStorage.getItem(GOALS_CACHE_KEY));return x?.owner===owner?x.goals:null;}catch{return null;}}
+function cacheGoals(owner,goals) {try{localStorage.setItem(GOALS_CACHE_KEY,JSON.stringify({owner,goals}));}catch{}}
 function initial(name) {return (name || '?').trim().slice(0,1).toUpperCase();}
 function Avatar({name,id,size='normal'}) {return <span className={`avatar avatar-${size}`} style={{backgroundColor:avatarColors[(Number(id)||0)%avatarColors.length]}}>{initial(name)}</span>}
 function Brand({compact=false}) {return <div className={`brand ${compact?'brand-compact':''}`}><img src={`${APP_BASE}fnac.svg`} alt="Fnac"/><div className="brand-word"><strong>pulse<span className="brand-period">.</span></strong>{!compact&&<span>ESPACE ÉQUIPE</span>}</div></div>}
@@ -155,14 +160,18 @@ export default function App() {
   const [notificationsModal,setNotificationsModal]=useState(false);
   const [installModal,setInstallModal]=useState(false);
   const [themeModal,setThemeModal]=useState(false);
+  const [goalModal,setGoalModal]=useState(null);
+  const [goalState,setGoalState]=useState({owner:'',goals:null,loading:false,error:''});
   const [theme,setTheme]=useState(readTheme);
   const [installPrompt,setInstallPrompt]=useState(null);
   const [notificationsEnabled,setNotificationsEnabled]=useState(false);
   const [notificationBusy,setNotificationBusy]=useState(false);
   const [pending,setPending]=useState({});
   const [toast,setToast]=useState(null);
-  const requestNumber=useRef(0), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null);
+  const requestNumber=useRef(0), goalRequest=useRef(0), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null);
   const store=data?.stores?.find(s=>s.id===session?.storeId), seller=data?.sellers?.find(s=>s.id===session?.sellerId);
+  const owner=goalOwnerKey(session), ownerRef=useRef(owner);ownerRef.current=owner;
+  const currentGoals=goalState.owner===owner?goalState.goals:null;
 
   useEffect(()=>{
     applyTheme(theme);
@@ -198,6 +207,28 @@ export default function App() {
       if(saved && JSON.stringify(saved.session)===JSON.stringify(session))setData(saved.data);
     }
   },[session,flash,authReady,cloudDay]);
+  const loadGoals=useCallback(async()=>{
+    if(!session)return;
+    const targetOwner=goalOwnerKey(session),n=++goalRequest.current;
+    setGoalState(old=>old.owner===targetOwner?{...old,loading:true,error:''}:{owner:targetOwner,goals:getCachedGoals(targetOwner),loading:true,error:''});
+    try {
+      const query=`?storeId=${encodeURIComponent(session.storeId)}&sellerId=${encodeURIComponent(session.sellerId)}`;
+      const result=await api('/api/goals'+query);
+      if(n!==goalRequest.current||ownerRef.current!==targetOwner)return;
+      if(!result.goals||typeof result.goals!=='object'||Array.isArray(result.goals))throw new Error('Réponse des objectifs invalide.');
+      setGoalState({owner:targetOwner,goals:result.goals,loading:false,error:''});cacheGoals(targetOwner,result.goals);
+    } catch(e) {
+      if(n!==goalRequest.current||ownerRef.current!==targetOwner)return;
+      setGoalState(old=>({owner:targetOwner,goals:old.owner===targetOwner?old.goals:null,loading:false,error:e.message||'Objectifs indisponibles.'}));
+    }
+  },[owner]);
+  useEffect(()=>{
+    goalRequest.current++;setGoalModal(null);
+    if(!owner){setGoalState({owner:'',goals:null,loading:false,error:''});return;}
+    setGoalState({owner,goals:getCachedGoals(owner),loading:true,error:''});
+    loadGoals();
+    return ()=>{goalRequest.current++;};
+  },[owner,loadGoals]);
   useEffect(()=>{if(!CLOUD)return;return observeVendor(next=>{setSession(next);setAuthReady(true);if(!next)localStorage.removeItem(SESSION_KEY);});},[]);
   useEffect(()=>{refresh();},[refresh]);
   useEffect(()=>{
@@ -209,30 +240,30 @@ export default function App() {
       flash(`${sale.sellerName} vient de vendre ${sale.serviceName} !`,{tone:'celebrate'});
     },error=>{
       setConnection('offline');
-      if(error?.code==='permission-denied'){sellerLogout().catch(()=>{});setSession(null);setData(d=>d?{...d,stats:null}:d);localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);flash('Votre accès a changé. Reconnectez-vous avec votre code PIN.',{tone:'warning'});}
+      if(error?.code==='permission-denied'){sellerLogout().catch(()=>{});setSession(null);setData(d=>d?{...d,stats:null}:d);localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);flash('Votre accès a changé. Reconnectez-vous avec votre code PIN.',{tone:'warning'});}
       else flash('Connexion interrompue. Les données seront actualisées au retour du réseau.',{tone:'warning'});
-    });
-  },[session,authReady,cloudDay,flash]);
+    },()=>loadGoals());
+  },[session,authReady,cloudDay,flash,loadGoals]);
   useEffect(()=>{
     if(CLOUD)return;
     if(!session){setConnection('waiting');return;}
     const source=new EventSource(`/api/events?storeId=${encodeURIComponent(session.storeId)}`);
     source.addEventListener('ready',()=>{setConnection('live');refresh();});
     source.addEventListener('change',e=>{
-      try {const event=JSON.parse(e.data);if(event.kind==='sale'&&event.clientId!==clientId.current) flash(`${event.sellerName} vient de vendre ${event.serviceName} !`,{tone:'celebrate'});} catch{}
+      try {const event=JSON.parse(e.data);if(event.kind==='sale'&&event.clientId!==clientId.current) flash(`${event.sellerName} vient de vendre ${event.serviceName} !`,{tone:'celebrate'});if(event.kind==='goals'&&Number(event.sellerId)===Number(session.sellerId))loadGoals();} catch{}
       refresh();
     });
     source.onerror=()=>setConnection('offline');
     return ()=>source.close();
-  },[session,refresh,flash]);
+  },[session,refresh,flash,loadGoals]);
   useEffect(()=>{
     const syncDay=()=>setCloudDay(parisToday());
-    const onOnline=()=>{syncDay();refresh();};
+    const onOnline=()=>{syncDay();refresh();loadGoals();};
     const onVisible=()=>{if(document.visibilityState==='visible'){syncDay();if(!CLOUD)refresh();}};
     window.addEventListener('online',onOnline);document.addEventListener('visibilitychange',onVisible);
     const timer=setInterval(()=>{syncDay();if(!CLOUD&&document.visibilityState==='visible')refresh();},60000);
     return ()=>{window.removeEventListener('online',onOnline);document.removeEventListener('visibilitychange',onVisible);clearInterval(timer);};
-  },[refresh]);
+  },[refresh,loadGoals]);
   useEffect(()=>{
     if('serviceWorker' in navigator) navigator.serviceWorker.register(`${APP_BASE}sw.js`, {scope:APP_BASE}).catch(()=>{});
     const handler=e=>{e.preventDefault();setInstallPrompt(e)};
@@ -265,11 +296,22 @@ export default function App() {
   async function logoutSeller(){
     let warning=false;
     if(CLOUD&&notificationsWanted())try{await unsubscribeFcm(api);}catch{warning=true;}
-    if(CLOUD)await sellerLogout();localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);setSession(null);setData(d=>d?{...d,stats:null}:null);setSessionModal(false);
+    if(CLOUD)await sellerLogout();localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);setSession(null);setData(d=>d?{...d,stats:null}:null);setSessionModal(false);
     flash(warning?'Déconnecté. Vérifiez les notifications de cet appareil lorsque la connexion revient.':'Vous êtes déconnecté.',warning?{tone:'warning'}:{});
   }
   function changeSession(){if(session)setSessionModal(true);else {document.getElementById('selection')?.scrollIntoView({behavior:'smooth',block:'center'});document.querySelector('[aria-label="Votre magasin Fnac"]')?.focus();}}
   function navigate(id){setActiveNav(id);document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});}
+  async function savePersonalGoals(body){
+    if(!session||connection==='offline')throw new Error('Connexion interrompue. Réessayez en ligne.');
+    const targetOwner=goalOwnerKey(session);
+    try {
+      const result=await api('/api/goals',{method:'POST',body:{...body,storeId:session.storeId,sellerId:session.sellerId}});
+      if(ownerRef.current!==targetOwner)throw new Error('Votre profil a changé. Sélectionnez-le à nouveau.');
+      setGoalState({owner:targetOwner,goals:result.goals,loading:false,error:''});cacheGoals(targetOwner,result.goals);
+      loadGoals();setGoalModal(null);flash('Objectifs enregistrés.',{tone:'success'});
+      return result;
+    } catch(e){if(e.status===409)await loadGoals();throw e;}
+  }
   async function addSale(service){
     if(!session){flash('Choisissez d’abord votre magasin et votre profil.',{tone:'warning'});changeSession();return;}
     if(connection==='offline'){flash('Connexion interrompue : la vente n’a pas été enregistrée.',{tone:'warning'});return;}
@@ -325,6 +367,7 @@ export default function App() {
         {!session?<WelcomePanel data={data} onSubmit={selectSession}/>:<div className="session-strip"><div className="strip-icon"><Store size={18}/></div><div className="strip-copy"><span>VOTRE ESPACE DE VENTE</span><strong>{store?.name||'Votre magasin'}</strong></div><div className="strip-divider"/><div className="strip-user"><Avatar name={seller?.name} id={seller?.id} size="small"/><span>Connecté en tant que <strong>{seller?.name}</strong></span></div><button className="text-button" onClick={()=>setSessionModal(true)}>Changer <ArrowRight size={14}/></button></div>}
         <div className="section-overline"><div><span className="kicker-line"/> EN UN COUP D’ŒIL</div><span>{session?'Les chiffres de votre magasin':'Choisissez votre espace pour démarrer'}</span></div>
         <section className="stats-grid" aria-label="Chiffres clés"><StatCard label="AUJOURD’HUI" value={stats?.day.total} detail="Ventes de l’équipe" Icon={Zap} tone="gold"/><StatCard label="MA JOURNÉE" value={stats?.mineTotal} detail="Mes services enregistrés" Icon={UserRound} tone="soft-blue"/></section>
+        {session&&<GoalsPanel seller={seller} services={data.services} goals={currentGoals} stats={stats} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
         <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> PLACE À L’ACTION</div><h2>Ajouter un service</h2><p>Une vente ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
           <Summary stats={stats} hasSession={!!session}/>
         </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/><div className="notification-card"><span className="notification-icon"><BellRing size={18}/></span><div><strong>{notificationsEnabled?'Vous êtes dans la boucle !':'Restez dans la boucle'}</strong><p>{notificationsEnabled?'Notifications activées sur cet appareil.':'Soyez prévenu des ventes de votre équipe.'}</p></div><button onClick={()=>setNotificationsModal(true)}>{notificationsEnabled?'Gérer':'Activer'} <ArrowRight size={13}/></button></div></div></div>
@@ -333,6 +376,7 @@ export default function App() {
     </div>
     <MobileNav onNavigate={navigate} onSession={changeSession} active={activeNav}/>
     {sessionModal&&<Modal title="Changer d’espace" subtitle="Sélectionnez votre magasin et votre profil vendeur." onClose={()=>setSessionModal(false)}><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/>{CLOUD&&<button className="logout-button" onClick={logoutSeller}>Se déconnecter</button>}<p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></Modal>}
+    {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et définissez vos quantités à atteindre." onClose={()=>setGoalModal(null)}><GoalForm services={data.services} goals={currentGoals} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={()=>setGoalModal(null)} disabled={connection==='offline'}/></Modal>}
     {adminModal&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>}
     {notificationsModal&&<Modal title="Notifications d’équipe" subtitle="Ne manquez aucune nouvelle vente de votre magasin." onClose={()=>setNotificationsModal(false)}><div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{notificationsEnabled?'Notifications activées':'Un petit signal, une belle dynamique.'}</strong><p>Chaque nouvelle vente peut vous être signalée sur cet appareil, même lorsque l’application est fermée.</p></div></div><div className="notification-details"><div><Check size={16}/> Une notification pour chaque nouvelle vente</div><div><Check size={16}/> Uniquement pour le magasin sélectionné</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div><div className="notification-device-note"><Info size={15}/><span>Sur iPhone et iPad, installez d’abord l’application sur l’écran d’accueil (iOS/iPadOS 16.4 ou plus). Une connexion HTTPS et un navigateur compatible sont nécessaires.</span></div><button className={notificationsEnabled?'outline-button full-button':'primary-button full-button'} disabled={notificationBusy} onClick={notificationsEnabled?disableNotifications:enableNotifications}>{notificationBusy?'Un instant…':notificationsEnabled?'Désactiver sur cet appareil':'Activer les notifications'} {notificationsEnabled?<BellOff size={16}/>:<Bell size={16}/>}</button></Modal>}
     {themeModal&&<Modal title="Apparence" subtitle="Choisissez l’apparence de cet appareil." onClose={()=>setThemeModal(false)}>

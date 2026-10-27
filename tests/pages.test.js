@@ -25,7 +25,7 @@ function serviceWorker(scope) {
   };
   const caches = {
     async open() { return cache; },
-    async keys() { return ['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','another-application']; },
+    async keys() { return ['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','another-application']; },
     async delete(key) { deleted.push(key); },
     async match() { return undefined; },
   };
@@ -50,7 +50,7 @@ for (const scope of ['https://example.test/', 'https://example.test/FNAC-Pulse/'
     assert.deepEqual(Array.from(sw.added[0]), [base,`${base}manifest.webmanifest`,`${base}icons/icon-192-v2.png`,`${base}icons/icon-512-v2.png`,`${base}icons/icon-maskable-512-v2.png`,`${base}icons/apple-touch-icon-v2.png`,`${base}icons/icon-192.png`,`${base}fnac.svg`]);
     assert.deepEqual(Array.from(sw.added[1]), [`${base}assets/app.js`,`${base}assets/app.css`]);
     await dispatch(sw.handlers.get('activate'));
-    assert.deepEqual(sw.deleted,['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5']);
+    assert.deepEqual(sw.deleted,['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6']);
     await dispatch(sw.handlers.get('push'),{data:{json:()=>({title:'Test', url:'https://elsewhere.invalid/'})}});
     assert.equal(sw.shown[0].options.icon,`${base}icons/icon-192-v2.png`);
     assert.equal(sw.shown[0].options.data.url,scope);
@@ -76,6 +76,6 @@ test('PWA : icônes versionnées, tailles, masque et compatibilité des ancienne
   assert.match(html,/rel="icon"[^>]+icon-192-v2\.png/);
   assert.match(html,/rel="apple-touch-icon"[^>]+apple-touch-icon-v2\.png/);
   const cloudWorker=fs.readFileSync(new URL('../src/sw-cloud.js',import.meta.url),'utf8');
-  assert.match(cloudWorker,/fnac-pulse-shell-v6/);
+  assert.match(cloudWorker,/fnac-pulse-shell-v7/);
   for(const icon of manifest.icons)assert.ok(cloudWorker.includes(icon.src));
 });

@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LEGACY_STORE_ID, comparePeople, orderServices } from '../src/catalog.js';
+import { validGoalValues } from '../src/goals.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = path.resolve(process.env.DATA_DIR || path.join(root, 'data'));
@@ -39,6 +40,11 @@ CREATE TABLE IF NOT EXISTS service_orders (
 CREATE TABLE IF NOT EXISTS subscriptions (
   endpoint TEXT PRIMARY KEY, store_id TEXT NOT NULL REFERENCES stores(id), seller_id INTEGER REFERENCES sellers(id),
   subscription_json TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS seller_goals (
+  store_id TEXT NOT NULL REFERENCES stores(id), seller_id INTEGER NOT NULL REFERENCES sellers(id),
+  service_id INTEGER NOT NULL REFERENCES services(id), day INTEGER, week INTEGER, month INTEGER, revision TEXT NOT NULL,
+  PRIMARY KEY(store_id,seller_id,service_id)
 );
 `);
 
@@ -144,7 +150,7 @@ function serviceOrders() {
   for(const row of db.prepare('SELECT store_id AS storeId,service_id AS serviceId FROM service_orders ORDER BY position').all()) (orders[row.storeId]||=[]).push(row.serviceId);
   return orders;
 }
-function periodSummary(storeId, start, today) {
+function periodSummary(storeId, start, today, sellerId) {
   const total = db.prepare(`SELECT COUNT(*) AS n FROM sales WHERE store_id=? AND business_date BETWEEN ? AND ? AND deleted_at IS NULL`).get(storeId,start,today).n;
   const byService = db.prepare(`SELECT v.id,v.name,v.icon,COUNT(s.id) AS count FROM services v LEFT JOIN sales s
     ON s.service_id=v.id AND s.store_id=? AND s.business_date BETWEEN ? AND ? AND s.deleted_at IS NULL
@@ -154,13 +160,15 @@ function periodSummary(storeId, start, today) {
     FROM sales s JOIN sellers u ON u.id=s.seller_id
     WHERE s.store_id=? AND s.business_date BETWEEN ? AND ? AND s.deleted_at IS NULL GROUP BY u.id`).all(storeId,start,today)
     .sort((a,b)=>b.count-a.count||b.dmax-a.dmax||b.fvd-a.fvd||comparePeople(a,b));
-  return { total, byService:orderServices(byService,serviceOrders(),storeId), bySeller, start, end:today };
+  const mineByService=isId(sellerId) ? db.prepare(`SELECT service_id AS serviceId, COUNT(*) AS count FROM sales
+    WHERE store_id=? AND seller_id=? AND business_date BETWEEN ? AND ? AND deleted_at IS NULL GROUP BY service_id`).all(storeId,Number(sellerId),start,today) : [];
+  return { total, byService:orderServices(byService,serviceOrders(),storeId), bySeller, mineByService, start, end:today };
 }
 function statsFor(storeId, sellerId, today) {
   const starts = periodStarts(today);
-  const day = periodSummary(storeId,starts.day,today);
-  const week = periodSummary(storeId,starts.week,today);
-  const month = periodSummary(storeId,starts.month,today);
+  const day = periodSummary(storeId,starts.day,today,sellerId);
+  const week = periodSummary(storeId,starts.week,today,sellerId);
+  const month = periodSummary(storeId,starts.month,today,sellerId);
   const mine = isId(sellerId) ? db.prepare(`SELECT service_id AS serviceId, COUNT(*) AS count FROM sales
     WHERE store_id=? AND seller_id=? AND business_date=? AND deleted_at IS NULL GROUP BY service_id`).all(storeId,Number(sellerId),today) : [];
   const activity = db.prepare(`SELECT s.id,s.seller_id AS sellerId,u.name AS sellerName,v.name AS serviceName,s.created_at AS createdAt
@@ -199,6 +207,30 @@ app.get('/api/bootstrap', (req,res) => {
   const stats = store ? statsFor(store.id,req.query.sellerId,today) : null;
   res.json({ stores, sellers, services, today, stats, pushPublicKey:vapid.publicKey });
 });
+
+function localGoals(storeId,sellerId) {
+  const rows=db.prepare('SELECT service_id AS serviceId,day,week,month,revision FROM seller_goals WHERE store_id=? AND seller_id=?').all(storeId,Number(sellerId));
+  return {goals:Object.fromEntries(rows.map(({serviceId,...entry})=>[`s${serviceId}`,entry]))};
+}
+function saveLocalGoals(req,res) {
+  const {storeId,sellerId,serviceId,values,revision}=req.body||{};
+  if(!activeStore(storeId)||!activeSeller(sellerId,storeId)||!activeService(serviceId))return failure(res,'Choisissez un vendeur et un service valides.');
+  if(!validGoalValues(values))return failure(res,'Les objectifs doivent être des entiers entre 1 et 9 999, ou être laissés vides.');
+  if(revision!==null&&(typeof revision!=='string'||!/^[A-Za-z0-9_-]{8,80}$/.test(revision)))return failure(res,'Actualisez les objectifs avant de les modifier.');
+  const old=db.prepare('SELECT revision FROM seller_goals WHERE store_id=? AND seller_id=? AND service_id=?').get(storeId,Number(sellerId),Number(serviceId));
+  if((old?.revision||null)!==revision)return failure(res,'Cet objectif a changé. Rechargez ses valeurs avant de le modifier.',409);
+  const next=crypto.randomUUID();
+  db.prepare(`INSERT INTO seller_goals(store_id,seller_id,service_id,day,week,month,revision) VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT(store_id,seller_id,service_id) DO UPDATE SET day=excluded.day,week=excluded.week,month=excluded.month,revision=excluded.revision`)
+    .run(storeId,Number(sellerId),Number(serviceId),values.day,values.week,values.month,next);
+  broadcast(storeId,{kind:'goals',sellerId:Number(sellerId)});res.json(localGoals(storeId,sellerId));
+}
+app.get('/api/goals',(req,res)=>{
+  const {storeId,sellerId}=req.query;
+  if(!activeStore(storeId)||!activeSeller(sellerId,storeId))return failure(res,'Choisissez un vendeur de ce magasin.');
+  res.json(localGoals(storeId,sellerId));
+});
+app.post('/api/goals',saveLocalGoals);
 
 app.post('/api/sales', (req,res) => {
   const {storeId,sellerId,serviceId,requestId,clientId} = req.body || {};
@@ -307,6 +339,12 @@ app.get('/api/admin/all', requireAdmin, (req,res) => {
     serviceOrders:serviceOrders(),
   });
 });
+app.get('/api/admin/goals',requireAdmin,(req,res)=>{
+  const {storeId,sellerId}=req.query;
+  if(!activeStore(storeId)||!activeSeller(sellerId,storeId))return failure(res,'Choisissez un vendeur de ce magasin.');
+  res.json(localGoals(storeId,sellerId));
+});
+app.post('/api/admin/goals',requireAdmin,saveLocalGoals);
 app.post('/api/admin/password', requireAdmin, (req,res) => {
   const {currentPassword,newPassword} = req.body || {};
   if (typeof currentPassword !== 'string' || !checkPassword(currentPassword,getSetting('admin_password'))) return failure(res,'Mot de passe actuel incorrect.',401);
