@@ -115,7 +115,10 @@ test('Cloud : reprise FCM, limitation des doublons et profil archivé',async()=>
     db.write('pulseOutbox/sale-test-0001',{saleId:'sale-test-0001',storeId:store,status:'queued',createdAt:Date.now()})
   ]);
   const first=makeMessage({saleId:'sale-test-0001',storeId:store,tokenId});
-  await worker.queue({messages:[first]},env);assert.equal(first.retried,true);assert.equal(first.acked,false);
+  const warnings=[],warn=console.warn;console.warn=(...args)=>warnings.push(args);
+  try {await worker.queue({messages:[first]},env);} finally {console.warn=warn;}
+  assert.deepEqual(warnings,[['PULSE_PUSH_DIAG','fcm',0,'']]); // Aucun message d'erreur ni jeton personnel.
+  assert.equal(first.retried,true);assert.equal(first.acked,false);
   const second=makeMessage(first.body);await worker.queue({messages:[second]},env);assert.equal(second.acked,true);assert.equal(sent.length,1);
   const again=makeMessage(first.body);await worker.queue({messages:[again]},env);assert.equal(again.acked,true);assert.equal(sent.length,1);
   catalog.sellers.find(x=>x.id===1).active=false;catalog.sellerFlags.s1=false;

@@ -6,6 +6,13 @@ const SERVICES=[['DMax','play'],['Assu Téléph','phone'],['Assu Multim','device
 const PROOF=/^[A-Za-z0-9_-]{43}$/;
 const SAFE_ID=/^[A-Za-z0-9_-]{8,80}$/;
 const STORE_ID=/^[A-Za-z0-9_-]{1,80}$/;
+// Diagnostics anonymes : aucun jeton, identifiant ou texte utilisateur dans les journaux.
+const SAFE_FCM_CODES=new Set(['UNREGISTERED','INVALID_ARGUMENT','SENDER_ID_MISMATCH','QUOTA_EXCEEDED','UNAVAILABLE','INTERNAL','THIRD_PARTY_AUTH_ERROR','PERMISSION_DENIED','UNAUTHENTICATED','NOT_FOUND']);
+function logPushError(stage,error) {
+  const status=Number.isInteger(error?.status)&&error.status>=100&&error.status<=599?error.status:0;
+  const code=SAFE_FCM_CODES.has(error?.fcmCode)?error.fcmCode:'';
+  console.warn('PULSE_PUSH_DIAG',stage,status,code);
+}
 class HttpError extends Error {constructor(status,message){super(message);this.status=status;}}
 const fail=(status,message)=>{throw new HttpError(status,message);};
 const cleanName=x=>typeof x==='string'?x.trim().replace(/\s+/g,' ').slice(0,60):'';
@@ -86,7 +93,10 @@ export async function sendFcm(env,token,sale) {
   const data=await r.json().catch(()=>({}));
   if(!r.ok) {
     const unregistered=r.status===404 || data.error?.details?.some(d=>d.errorCode==='UNREGISTERED');
-    const error=new Error('Envoi FCM impossible');error.unregistered=!!unregistered;error.status=r.status;throw error;
+    const error=new Error('Envoi FCM impossible');error.unregistered=!!unregistered;error.status=r.status;
+    const code=data.error?.details?.find(d=>SAFE_FCM_CODES.has(d.errorCode))?.errorCode||data.error?.status;
+    if(SAFE_FCM_CODES.has(code))error.fcmCode=code;
+    throw error;
   }
 }
 
@@ -184,9 +194,9 @@ export function createWorker(deps={}) {
       if(!conflict(e))throw e;
       const existing=await db.get(docPath(storeId,requestId));
       if(!existing || existing.data.ownerUid!==s.claims.sub || existing.data.serviceId!==service.id)fail(409,'Identifiant de vente déjà utilisé.');
-      ctx.waitUntil(dispatch(env,db,requestId).catch(()=>{}));return {id:requestId,duplicate:true};
+      ctx.waitUntil(dispatch(env,db,requestId).catch(e=>logPushError('dispatch',e)));return {id:requestId,duplicate:true};
     }
-    ctx.waitUntil(dispatch(env,db,requestId).catch(()=>{}));return {id:requestId};
+    ctx.waitUntil(dispatch(env,db,requestId).catch(e=>logPushError('dispatch',e)));return {id:requestId};
   }
   async function deleteSale(req,env,db,id) {
     if(!SAFE_ID.test(id||''))fail(400,'Vente invalide.');
@@ -261,15 +271,18 @@ export function createWorker(deps={}) {
     if(prior?.data.status==='sending'&&prior.data.leaseUntil>now){msg.retry({delaySeconds:30});return;}
     const claim={status:'sending',leaseUntil:now+60000};
     try{await db.commit([db.write(path,claim,precondition(prior))]);}catch(e){if(conflict(e)){msg.retry({delaySeconds:30});return;}throw e;}
+    let stage='load';
     try {
       const [tokenDoc,outbox]=await Promise.all([db.get(`pulseTokens/${tokenId}`),db.get(`pulseOutbox/${saleId}`)]);
       if(!tokenDoc || !outbox || tokenDoc.data.storeId!==storeId || outbox.data.storeId!==storeId || Date.now()-outbox.data.createdAt>60*60*1000) {msg.ack();return;}
+      stage='authorize';
       const [a,c]=await Promise.all([db.get(`pulseAccess/${tokenDoc.data.uid}`),catalog(db)]);
       if(!a?.data.active||a.data.version!==tokenDoc.data.accessVersion||a.data.storeId!==storeId||!sellerBy(c.data,a.data.sellerId)||!validStore(c.data,storeId)){msg.ack();return;}
-      await send(env,tokenDoc.data.token,outbox.data);
-      const current=await db.get(path);if(current)await db.commit([db.write(path,{status:'sent',leaseUntil:0,sentAt:Date.now()},precondition(current))]);
+      stage='fcm';await send(env,tokenDoc.data.token,outbox.data);
+      stage='mark';const current=await db.get(path);if(current)await db.commit([db.write(path,{status:'sent',leaseUntil:0,sentAt:Date.now()},precondition(current))]);
       msg.ack();
     } catch(e) {
+      logPushError(stage,e);
       if(e.unregistered){const t=await db.get(`pulseTokens/${tokenId}`).catch(()=>null);if(t)await db.commit([db.delete(`pulseTokens/${tokenId}`,precondition(t))]).catch(()=>{});msg.ack();return;}
       const current=await db.get(path).catch(()=>null);if(current)await db.commit([db.write(path,{status:'pending',leaseUntil:0},precondition(current))]).catch(()=>{});
       msg.retry();
@@ -321,7 +334,7 @@ export function createWorker(deps={}) {
       ctx.waitUntil((async()=>{
         for(const status of ['pending','dispatching']) {
           const jobs=await db.query('pulseOutbox','status','EQUAL',status,1);
-          for(const j of jobs)await dispatch(env,db,j.id).catch(()=>{});
+          for(const j of jobs)await dispatch(env,db,j.id).catch(e=>logPushError('dispatch',e));
         }
       })());
     },

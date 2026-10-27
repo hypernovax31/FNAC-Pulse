@@ -41,7 +41,7 @@ test('Firebase : signature des jetons, OAuth, PIN et requête FCM',async()=>{
     assert.equal(await googleAccessToken(env),'fake-access-token');assert.equal(await googleAccessToken(env),'fake-access-token');
     const sale={sellerName:'Morgan',serviceName:'DMax',saleId:'fake-sale',storeId:'demo-store'};
     await sendFcm(env,'fake-fcm-registration-token',sale);
-    failFcm=true;await assert.rejects(sendFcm(env,'fake-fcm-registration-token',sale),e=>e.unregistered===true);
+    failFcm=true;await assert.rejects(sendFcm(env,'fake-fcm-registration-token',sale),e=>e.unregistered===true&&e.status===404&&e.fcmCode==='UNREGISTERED');
     assert.equal(oauthCalls,1);assert.equal(fcmCalls,2);
   } finally {globalThis.fetch=original;}
 });
