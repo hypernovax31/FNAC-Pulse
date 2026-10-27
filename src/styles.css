@@ -80,7 +80,8 @@ p,h1,h2,h3 { margin:0; }
 .hello-dot { color:#e6b400; }
 .page-intro p { color:#8c8e85; font-size:13px; margin-top:8px; }
 .date-chip { display:flex; align-items:center; gap:10px; margin-bottom:2px; }
-.date-icon { width:34px; height:34px; display:grid; place-items:center; background:#fff; border:1px solid #e9eae5; border-radius:8px; color:#b39742; }
+.date-icon { position:relative; width:34px; height:34px; display:grid; place-items:center; flex:0 0 auto; background:#fff; border:1px solid #e9eae5; border-radius:8px; color:#b39742; }
+.date-icon-day { position:absolute; left:50%; top:17px; transform:translateX(-50%); color:inherit; font-size:9px; font-weight:800; line-height:1; letter-spacing:-.2px; font-variant-numeric:tabular-nums; }
 .date-chip div { display:flex; flex-direction:column; gap:4px; }
 .date-chip div span { color:#a5a69e; font-size:9px; font-weight:750; letter-spacing:.75px; }
 .date-chip div strong { color:#63655d; font-size:11px; font-weight:650; text-transform:capitalize; }
@@ -122,7 +123,7 @@ p,h1,h2,h3 { margin:0; }
 .section-overline > div { display:flex; align-items:center; gap:8px; color:#898b82; font-size:9px; font-weight:800; letter-spacing:1px; }
 .kicker-line { width:13px; height:3px; border-radius:3px; background:#e7b600; flex:0 0 auto; }
 .section-overline > span { font-size:10px; color:#a7a9a0; }
-.stats-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:13px; }
+.stats-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px; }
 .stat-card { min-height:116px; padding:16px 17px 15px; background:#fff; border:1px solid #eaece7; border-radius:9px; box-shadow:0 3px 11px rgba(36,38,30,.018); }
 .stat-top { display:flex; justify-content:space-between; align-items:flex-start; }
 .stat-top > span:first-child { color:#96988f; font-size:9px; letter-spacing:.9px; font-weight:800; }
@@ -208,24 +209,26 @@ p,h1,h2,h3 { margin:0; }
 .period-tabs { display:flex; background:#f6f7f4; border:1px solid #eff0ec; padding:3px; border-radius:6px; }
 .period-tabs button { background:transparent; color:#96988f; font-size:10px; font-weight:650; padding:8px 10px; border-radius:4px; white-space:nowrap; }
 .period-tabs button.selected { background:#fff; color:#4b4d44; box-shadow:0 1px 4px rgba(37,40,31,.07); }
-.summary-content { display:grid; grid-template-columns:155px minmax(0,1fr); gap:22px; border-top:1px solid #f0f1ed; margin-top:21px; padding-top:20px; }
-.summary-total { display:flex; flex-direction:column; align-items:flex-start; border-right:1px solid #f0f1ed; padding-right:12px; }
+.summary-content { display:grid; grid-template-columns:82px minmax(0,1fr); gap:16px; border-top:1px solid #f0f1ed; margin-top:21px; padding-top:20px; }
+.summary-total { min-width:0; display:flex; flex-direction:column; align-items:flex-start; border-right:1px solid #f0f1ed; padding-right:10px; overflow-wrap:anywhere; }
 .summary-total-label { color:#a3a59b; font-size:9px; font-weight:800; letter-spacing:.7px; }
-.summary-total > strong { font-size:34px; letter-spacing:-1.5px; line-height:1; margin-top:12px; }
+.summary-total > strong { max-width:100%; font-size:34px; letter-spacing:-1.5px; line-height:1; margin-top:12px; }
 .summary-total > span:not(.summary-total-label) { color:#a3a59b; font-size:10px; margin-top:5px; }
-.summary-date { display:flex; align-items:center; gap:6px; color:#a2a497; font-size:10px; margin-top:17px; }
-.summary-breakdown { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:23px; row-gap:13px; }
-.breakdown-row > div:first-child { display:flex; justify-content:space-between; gap:6px; font-size:10px; color:#7d7f75; margin-bottom:7px; }
-.breakdown-row strong { color:#5e6057; }
+.summary-date { display:flex; flex-direction:column; align-items:flex-start; gap:4px; color:#a2a497; font-size:10px; line-height:1.4; margin-top:17px; }
+.summary-date svg { flex:0 0 auto; }
+.summary-date span { min-width:0; }
+.summary-breakdown { min-width:0; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:23px; row-gap:13px; }
+.breakdown-row { min-width:0; }
+.breakdown-row > div:first-child { display:flex; justify-content:space-between; align-items:baseline; gap:6px; font-size:10px; color:#7d7f75; margin-bottom:7px; }
+.breakdown-row > div:first-child span { min-width:0; overflow-wrap:anywhere; }
+.breakdown-row strong { flex:0 0 auto; color:#5e6057; }
 .progress-track { height:4px; border-radius:4px; overflow:hidden; background:#f1f2ee; }
 .progress-track span { display:block; height:100%; border-radius:4px; background:#e6ba25; }
 .summary-empty { grid-column:1/-1; display:flex; align-items:center; gap:12px; padding:6px 0 15px; }
 .summary-empty-icon { width:40px; height:40px; display:grid; place-items:center; border-radius:8px; background:#f7f8f5; color:#b5b8ad; }
 .summary-empty strong { font-size:11px; color:#72746b; }
 .summary-empty p { font-size:10px; line-height:1.5; color:#aeb0a7; margin-top:4px; }
-.page-footer { display:flex; justify-content:space-between; gap:15px; margin-top:26px; color:#b4b6ae; font-size:10px; }
-.page-footer > span:first-child span { color:#d4b13f; padding:0 3px; }
-.footer-heart { color:#d5b134; }
+.page-footer { display:flex; justify-content:center; margin-top:26px; color:#b4b6ae; font-size:10px; text-align:center; }
 .offline-banner { display:flex; gap:10px; align-items:center; padding:12px 14px; border:1px solid #eedaa6; border-radius:8px; background:#fff8e7; color:#8b7333; margin-bottom:20px; font-size:11px; line-height:1.4; }
 .offline-banner svg { flex:0 0 auto; }
 .offline-banner button { background:none; color:#8d6b00; margin-left:auto; font-size:10px; font-weight:750; }
@@ -413,7 +416,7 @@ p,h1,h2,h3 { margin:0; }
 }
 @media (max-width: 390px) {
   .services-panel { padding:15px; }
-  .summary-content { grid-template-columns:115px minmax(0,1fr); gap:14px; }
+  .summary-content { grid-template-columns:72px minmax(0,1fr); gap:12px; }
   .summary-breakdown { grid-template-columns:1fr; }
   .period-tabs button { padding:8px; }
   .admin-selects { grid-template-columns:1fr; }
@@ -532,6 +535,7 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .rank-name span,
 [data-theme='dark'] .rank-total span,
 [data-theme='dark'] .activity-row p,
+[data-theme='dark'] .breakdown-row > div:first-child,
 [data-theme='dark'] .activity-row > div > span,
 [data-theme='dark'] .notification-card p,
 [data-theme='dark'] .summary-date,

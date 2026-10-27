@@ -2,11 +2,11 @@
 import { initializeApp } from 'firebase/app';
 import { getMessaging } from 'firebase/messaging/sw';
 import { firebaseConfig } from './firebase-config';
-const CACHE = 'fnac-pulse-shell-v5';
+const CACHE = 'fnac-pulse-shell-v6';
 const APP_URL = new URL(self.registration.scope);
 const APP_PATH = APP_URL.pathname;
 const appAsset = path => new URL(path, APP_URL).pathname;
-const SHELL = ['', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'fnac.svg'].map(appAsset);
+const SHELL = ['', 'manifest.webmanifest', 'icons/icon-192-v2.png', 'icons/icon-512-v2.png', 'icons/icon-maskable-512-v2.png', 'icons/apple-touch-icon-v2.png', 'icons/icon-192.png', 'fnac.svg'].map(appAsset);
 
 self.addEventListener('install', event => {
   event.waitUntil((async () => {

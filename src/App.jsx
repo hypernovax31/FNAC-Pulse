@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   LayoutDashboard, Zap, Trophy, ChartNoAxesCombined, Settings2, MapPin, ChevronDown, ChevronRight, ArrowRight,
-  Activity, Bell, BellRing, BellOff, Plus, Minus, UserRound, UsersRound, Sparkles, Crosshair, CalendarDays,
-  Check, MoreHorizontal, Play, Smartphone, MonitorSmartphone, ShieldCheck, PackageCheck, BadgePlus,
+  Activity, Bell, BellRing, BellOff, Plus, Minus, UserRound, UsersRound, Sparkles, Crosshair, Calendar, CalendarDays,
+  Check, MoreHorizontal, Play, Smartphone, MonitorSmartphone, Shield, ShieldCheck, HardHat, IdCard, DollarSign, PackageCheck, BadgePlus,
   Repeat2, RefreshCw, Tv, Wifi, Clock3, X, Download, Store, WifiOff, Info, CircleCheck, ArrowUpRight, SunMoon, Sun, Moon, Monitor
 } from 'lucide-react';
 import Admin, { Modal } from './Admin';
@@ -10,12 +10,20 @@ import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
 import { CLOUD, observeVendor, sellerLogin, sellerLogout, listenStore, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
 import { parisToday } from './cloud-stats';
 import { sellersForStore, sellerStoreId } from './catalog';
+import { serviceIconKey } from './service-icons';
 import { THEME_KEY, readTheme, applyTheme } from './theme';
 
 const APP_BASE = import.meta.env.BASE_URL;
 const SESSION_KEY = 'fnac-pulse-session-v1';
 const CACHE_KEY = 'fnac-pulse-last-view-v1';
-const icons = { play:Play, phone:Smartphone, devices:MonitorSmartphone, shield:ShieldCheck, package:PackageCheck, badge:BadgePlus, repeat:Repeat2, refresh:RefreshCw, tv:Tv, wifi:Wifi, other:MoreHorizontal };
+// Un marteau et une clé croisés, dans le même trait que les icônes Lucide.
+function ToolsIcon({size=24,strokeWidth=2}) {
+  return <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+    <g transform="translate(24 0) scale(-1 1)"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5"/></g>
+  </svg>;
+}
+const icons = { play:Play, phone:Smartphone, devices:MonitorSmartphone, shield:ShieldCheck, package:PackageCheck, badge:BadgePlus, repeat:Repeat2, refresh:RefreshCw, tv:Tv, wifi:Wifi, other:MoreHorizontal, tools:ToolsIcon, 'shield-plain':Shield, 'hard-hat':HardHat, 'id-card':IdCard, dollar:DollarSign };
 const iconColors = ['sun','lavender','blue','mint','peach','sun','lavender','mint','blue','peach','sun'];
 const avatarColors = ['#f0c84e','#cbdacf','#d4dbed','#ead4bc','#e8cdd2','#d6d2e8','#d0e2df','#f3d7be'];
 function getSession() { try { const a=JSON.parse(localStorage.getItem(SESSION_KEY));return a?.storeId&&a?.sellerId?a:null; } catch {return null;} }
@@ -24,6 +32,10 @@ function initial(name) {return (name || '?').trim().slice(0,1).toUpperCase();}
 function Avatar({name,id,size='normal'}) {return <span className={`avatar avatar-${size}`} style={{backgroundColor:avatarColors[(Number(id)||0)%avatarColors.length]}}>{initial(name)}</span>}
 function Brand({compact=false}) {return <div className={`brand ${compact?'brand-compact':''}`}><img src={`${APP_BASE}fnac.svg`} alt="Fnac"/><div className="brand-word"><strong>pulse<span className="brand-period">.</span></strong>{!compact&&<span>ESPACE ÉQUIPE</span>}</div></div>}
 function Dot() {return <span className="live-dot" aria-hidden="true"/>}
+function DateChip({today}) {
+  const fullDate=dateLabel(today), day=String(Number(today.slice(-2)));
+  return <div className="date-chip" title={fullDate}><span className="date-icon" role="img" aria-label={`Date du jour : ${fullDate}`}><Calendar size={24} strokeWidth={1.6} aria-hidden="true"/><span className="date-icon-day" aria-hidden="true">{day}</span></span><div><span>AUJOURD’HUI</span><strong>{fullDate}</strong></div></div>;
+}
 
 function SessionForm({data,initialSession,onSubmit,modal=false,onNotify}) {
   const [store,setStore]=useState(initialSession?.storeId||'');
@@ -99,8 +111,8 @@ function StatCard({label,value,detail,Icon,tone}) {
   return <div className="stat-card"><div className="stat-top"><span>{label}</span><span className={`stat-icon ${tone}`}><Icon size={17}/></span></div><div className="stat-value">{value??'—'}<span>{value===undefined||value===null?'':value>1?'services':'service'}</span></div><div className="stat-detail">{detail}</div></div>;
 }
 function ServiceCard({service,index,count,session,pending,onAdd,onRemove}) {
-  const Icon=icons[service.icon]||MoreHorizontal;
-  return <div className="service-card"><div className={`service-icon ${iconColors[index%iconColors.length]}`}><Icon size={19} strokeWidth={1.8}/></div><div className="service-copy"><strong title={service.name}>{service.name}</strong><span>{session?`${count} aujourd’hui`:'À déclarer'}</span></div><div className="service-controls">{session&&count>0&&<button className="minus-button" onClick={()=>onRemove(service)} disabled={pending} title={`Retirer une vente ${service.name}`} aria-label={`Retirer une vente ${service.name}`}><Minus size={15}/></button>}<button className="plus-button" onClick={()=>onAdd(service)} disabled={pending} title={`Ajouter une vente ${service.name}`} aria-label={`Ajouter une vente ${service.name}`}><Plus size={19} strokeWidth={2}/></button></div></div>;
+  const iconKey=serviceIconKey(service), Icon=icons[iconKey]||MoreHorizontal;
+  return <div className="service-card"><div className={`service-icon ${iconColors[index%iconColors.length]}`} data-service-icon={iconKey} aria-hidden="true"><Icon size={19} strokeWidth={1.8}/></div><div className="service-copy"><strong title={service.name}>{service.name}</strong><span>{session?`${count} aujourd’hui`:'À déclarer'}</span></div><div className="service-controls">{session&&count>0&&<button className="minus-button" onClick={()=>onRemove(service)} disabled={pending} title={`Retirer une vente ${service.name}`} aria-label={`Retirer une vente ${service.name}`}><Minus size={15}/></button>}<button className="plus-button" onClick={()=>onAdd(service)} disabled={pending} title={`Ajouter une vente ${service.name}`} aria-label={`Ajouter une vente ${service.name}`}><Plus size={19} strokeWidth={2}/></button></div></div>;
 }
 function Ranking({leaders,hasSession}) {
   return <section className="panel ranking-panel" id="ranking"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> LES PERFORMANCES</div><h2>Top de l’équipe</h2><p>Les vendeurs à l’honneur aujourd’hui.</p></div><span className="panel-icon gold"><Trophy size={18}/></span></div>
@@ -119,7 +131,7 @@ function Summary({stats,hasSession}) {
   const current=stats?.[period];
   const max=Math.max(1,...(current?.byService||[]).map(s=>s.count));
   return <section className="panel summary-panel" id="summary"><div className="summary-heading"><div><div className="section-kicker"><span className="kicker-line"/> PRENDRE DU RECUL</div><h2>Le récap’ des services</h2><p>Retrouvez les résultats de votre équipe en un coup d’œil.</p></div><div className="period-tabs" role="tablist" aria-label="Période du récapitulatif">{Object.entries(labels).map(([id,label])=><button role="tab" aria-selected={period===id} key={id} className={period===id?'selected':''} onClick={()=>setPeriod(id)}>{label}</button>)}</div></div>
-    <div className="summary-content"><div className="summary-total"><span className="summary-total-label">TOTAL ÉQUIPE</span><strong>{current?.total??'—'}</strong><span>{current?current.total>1?'services vendus':'service vendu':'Sélectionnez un magasin'}</span><div className="summary-date"><CalendarDays size={14}/>{current?`${dateLabel(current.start,{day:'numeric',month:'short'})}${current.start!==current.end?` — ${dateLabel(current.end,{day:'numeric',month:'short'})}`:''}`:'En attente'}</div></div>
+    <div className="summary-content"><div className="summary-total"><span className="summary-total-label">TOTAL ÉQUIPE</span><strong>{current?.total??'—'}</strong><span>{current?current.total>1?'services vendus':'service vendu':'Sélectionnez un magasin'}</span><div className="summary-date"><CalendarDays size={13} aria-hidden="true"/><span>{current?`${dateLabel(current.start,{day:'numeric',month:'short'})}${current.start!==current.end?` — ${dateLabel(current.end,{day:'numeric',month:'short'})}`:''}`:'En attente'}</span></div></div>
       <div className="summary-breakdown">{current ? current.byService.map(s=><div className="breakdown-row" key={s.id}><div><span>{s.name}</span><strong>{s.count}</strong></div><div className="progress-track"><span style={{width:`${s.count?Math.max(3,s.count/max*100):0}%`}}/></div></div>) : <div className="summary-empty"><span className="summary-empty-icon"><ChartNoAxesCombined size={20}/></span><div><strong>Les chiffres arrivent bientôt.</strong><p>Choisissez votre magasin pour consulter son récapitulatif.</p></div></div>}</div>
     </div>
   </section>;
@@ -214,9 +226,12 @@ export default function App() {
     return ()=>source.close();
   },[session,refresh,flash]);
   useEffect(()=>{
-    const onOnline=()=>refresh();window.addEventListener('online',onOnline);
-    const timer=setInterval(()=>{if(CLOUD)setCloudDay(parisToday());else if(document.visibilityState==='visible')refresh();},60000);
-    return ()=>{window.removeEventListener('online',onOnline);clearInterval(timer);};
+    const syncDay=()=>setCloudDay(parisToday());
+    const onOnline=()=>{syncDay();refresh();};
+    const onVisible=()=>{if(document.visibilityState==='visible'){syncDay();if(!CLOUD)refresh();}};
+    window.addEventListener('online',onOnline);document.addEventListener('visibilitychange',onVisible);
+    const timer=setInterval(()=>{syncDay();if(!CLOUD&&document.visibilityState==='visible')refresh();},60000);
+    return ()=>{window.removeEventListener('online',onOnline);document.removeEventListener('visibilitychange',onVisible);clearInterval(timer);};
   },[refresh]);
   useEffect(()=>{
     if('serviceWorker' in navigator) navigator.serviceWorker.register(`${APP_BASE}sw.js`, {scope:APP_BASE}).catch(()=>{});
@@ -306,14 +321,14 @@ export default function App() {
     <div className="main-shell"><Header session={session} seller={seller} store={store} connected={connection} onBell={()=>setNotificationsModal(true)} onSession={changeSession} onAdmin={()=>setAdminModal(true)} onTheme={()=>setThemeModal(true)}/>
       <main className="content" id="overview">
         {connection==='offline'&&session&&<div className="offline-banner"><WifiOff size={16}/><div><strong>Connexion interrompue.</strong> Les dernières données restent visibles, mais la saisie est suspendue jusqu’au retour de la connexion.</div><button onClick={refresh}>Réessayer</button></div>}
-        <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><div className="date-chip"><span className="date-icon"><CalendarDays size={17}/></span><div><span>AUJOURD’HUI</span><strong>{dateLabel(data.today)}</strong></div></div></div>
+        <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><DateChip today={cloudDay}/></div>
         {!session?<WelcomePanel data={data} onSubmit={selectSession}/>:<div className="session-strip"><div className="strip-icon"><Store size={18}/></div><div className="strip-copy"><span>VOTRE ESPACE DE VENTE</span><strong>{store?.name||'Votre magasin'}</strong></div><div className="strip-divider"/><div className="strip-user"><Avatar name={seller?.name} id={seller?.id} size="small"/><span>Connecté en tant que <strong>{seller?.name}</strong></span></div><button className="text-button" onClick={()=>setSessionModal(true)}>Changer <ArrowRight size={14}/></button></div>}
         <div className="section-overline"><div><span className="kicker-line"/> EN UN COUP D’ŒIL</div><span>{session?'Les chiffres de votre magasin':'Choisissez votre espace pour démarrer'}</span></div>
-        <section className="stats-grid" aria-label="Chiffres clés"><StatCard label="AUJOURD’HUI" value={stats?.day.total} detail="Ventes de l’équipe" Icon={Zap} tone="gold"/><StatCard label="MA JOURNÉE" value={stats?.mineTotal} detail="Mes services enregistrés" Icon={UserRound} tone="soft-blue"/><StatCard label="CETTE SEMAINE" value={stats?.week.total} detail="Depuis lundi" Icon={ChartNoAxesCombined} tone="soft-green"/><StatCard label="CE MOIS-CI" value={stats?.month.total} detail="Ventes de l’équipe" Icon={CalendarDays} tone="soft-purple"/></section>
+        <section className="stats-grid" aria-label="Chiffres clés"><StatCard label="AUJOURD’HUI" value={stats?.day.total} detail="Ventes de l’équipe" Icon={Zap} tone="gold"/><StatCard label="MA JOURNÉE" value={stats?.mineTotal} detail="Mes services enregistrés" Icon={UserRound} tone="soft-blue"/></section>
         <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> PLACE À L’ACTION</div><h2>Ajouter un service</h2><p>Une vente ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
           <Summary stats={stats} hasSession={!!session}/>
         </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/><div className="notification-card"><span className="notification-icon"><BellRing size={18}/></span><div><strong>{notificationsEnabled?'Vous êtes dans la boucle !':'Restez dans la boucle'}</strong><p>{notificationsEnabled?'Notifications activées sur cet appareil.':'Soyez prévenu des ventes de votre équipe.'}</p></div><button onClick={()=>setNotificationsModal(true)}>{notificationsEnabled?'Gérer':'Activer'} <ArrowRight size={13}/></button></div></div></div>
-        <footer className="page-footer"><span>Fnac Pulse <span>•</span> Chaque service compte.</span><span>Fait pour les équipes, avec <span className="footer-heart">♥</span></span></footer>
+        <footer className="page-footer">Conçu pour les équipes, avec la pêche 🍑</footer>
       </main>
     </div>
     <MobileNav onNavigate={navigate} onSession={changeSession} active={activeNav}/>
