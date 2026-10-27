@@ -25,7 +25,7 @@ function serviceWorker(scope) {
   };
   const caches = {
     async open() { return cache; },
-    async keys() { return ['fnac-pulse-shell-v3','fnac-pulse-shell-v4','another-application']; },
+    async keys() { return ['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','another-application']; },
     async delete(key) { deleted.push(key); },
     async match() { return undefined; },
   };
@@ -50,7 +50,7 @@ for (const scope of ['https://example.test/', 'https://example.test/FNAC-Pulse/'
     assert.deepEqual(Array.from(sw.added[0]), [base,`${base}manifest.webmanifest`,`${base}icons/icon-192.png`,`${base}icons/icon-512.png`,`${base}fnac.svg`]);
     assert.deepEqual(Array.from(sw.added[1]), [`${base}assets/app.js`,`${base}assets/app.css`]);
     await dispatch(sw.handlers.get('activate'));
-    assert.deepEqual(sw.deleted,['fnac-pulse-shell-v3']);
+    assert.deepEqual(sw.deleted,['fnac-pulse-shell-v3','fnac-pulse-shell-v4']);
     await dispatch(sw.handlers.get('push'),{data:{json:()=>({title:'Test', url:'https://elsewhere.invalid/'})}});
     assert.equal(sw.shown[0].options.icon,`${base}icons/icon-192.png`);
     assert.equal(sw.shown[0].options.data.url,scope);
