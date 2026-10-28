@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LEGACY_STORE_ID, comparePeople, orderServices } from '../src/catalog.js';
-import { validGoalValues } from '../src/goals.js';
+import { validGoalValues, validWorkdays, normalizeWorkdays } from '../src/goals.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = path.resolve(process.env.DATA_DIR || path.join(root, 'data'));
@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS seller_goals (
   store_id TEXT NOT NULL REFERENCES stores(id), seller_id INTEGER NOT NULL REFERENCES sellers(id),
   service_id INTEGER NOT NULL REFERENCES services(id), day INTEGER, week INTEGER, month INTEGER, revision TEXT NOT NULL,
   PRIMARY KEY(store_id,seller_id,service_id)
+);
+CREATE TABLE IF NOT EXISTS seller_workdays (
+  store_id TEXT NOT NULL REFERENCES stores(id), seller_id INTEGER NOT NULL REFERENCES sellers(id),
+  days TEXT NOT NULL, revision TEXT NOT NULL, PRIMARY KEY(store_id,seller_id)
 );
 `);
 
@@ -210,7 +214,10 @@ app.get('/api/bootstrap', (req,res) => {
 
 function localGoals(storeId,sellerId) {
   const rows=db.prepare('SELECT service_id AS serviceId,day,week,month,revision FROM seller_goals WHERE store_id=? AND seller_id=?').all(storeId,Number(sellerId));
-  return {goals:Object.fromEntries(rows.map(({serviceId,...entry})=>[`s${serviceId}`,entry]))};
+  const schedule=db.prepare('SELECT days,revision FROM seller_workdays WHERE store_id=? AND seller_id=?').get(storeId,Number(sellerId));
+  let days;try{days=JSON.parse(schedule?.days||'null');}catch{}
+  return {goals:Object.fromEntries(rows.map(({serviceId,...entry})=>[`s${serviceId}`,entry])),
+    workdays:normalizeWorkdays(days),workdaysRevision:schedule?.revision||null};
 }
 function saveLocalGoals(req,res) {
   const {storeId,sellerId,serviceId,values,revision}=req.body||{};
@@ -345,6 +352,18 @@ app.get('/api/admin/goals',requireAdmin,(req,res)=>{
   res.json(localGoals(storeId,sellerId));
 });
 app.post('/api/admin/goals',requireAdmin,saveLocalGoals);
+app.post('/api/admin/workdays',requireAdmin,(req,res)=>{
+  const {storeId,sellerId,workdays,revision}=req.body||{};
+  if(!activeStore(storeId)||!activeSeller(sellerId,storeId))return failure(res,'Choisissez un vendeur de ce magasin.');
+  if(!validWorkdays(workdays))return failure(res,'Choisissez exactement cinq jours différents entre lundi et samedi.');
+  if(revision!==null&&(typeof revision!=='string'||!/^[A-Za-z0-9_-]{8,80}$/.test(revision)))return failure(res,'Actualisez les jours travaillés avant de les modifier.');
+  const old=db.prepare('SELECT revision FROM seller_workdays WHERE store_id=? AND seller_id=?').get(storeId,Number(sellerId));
+  if((old?.revision||null)!==revision)return failure(res,'Les jours travaillés ont changé. Rechargez-les avant de recommencer.',409);
+  db.prepare(`INSERT INTO seller_workdays(store_id,seller_id,days,revision) VALUES (?,?,?,?)
+    ON CONFLICT(store_id,seller_id) DO UPDATE SET days=excluded.days,revision=excluded.revision`)
+    .run(storeId,Number(sellerId),JSON.stringify(normalizeWorkdays(workdays)),crypto.randomUUID());
+  broadcast(storeId,{kind:'goals',sellerId:Number(sellerId)});res.json(localGoals(storeId,sellerId));
+});
 app.post('/api/admin/password', requireAdmin, (req,res) => {
   const {currentPassword,newPassword} = req.body || {};
   if (typeof currentPassword !== 'string' || !checkPassword(currentPassword,getSetting('admin_password'))) return failure(res,'Mot de passe actuel incorrect.',401);

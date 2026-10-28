@@ -13,6 +13,7 @@ import { sellersForStore, sellerStoreId } from './catalog';
 import { serviceIconKey } from './service-icons';
 import { THEME_KEY, readTheme, applyTheme } from './theme';
 import { GoalForm, GoalsPanel } from './Goals';
+import { normalizeWorkdays } from './goals';
 
 const APP_BASE = import.meta.env.BASE_URL;
 const SESSION_KEY = 'fnac-pulse-session-v1';
@@ -31,8 +32,11 @@ const avatarColors = ['#f0c84e','#cbdacf','#d4dbed','#ead4bc','#e8cdd2','#d6d2e8
 function getSession() { try { const a=JSON.parse(localStorage.getItem(SESSION_KEY));return a?.storeId&&a?.sellerId?a:null; } catch {return null;} }
 function getCached() { try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch {return null;} }
 function goalOwnerKey(session) {return session?JSON.stringify([session.storeId,session.sellerId,session.uid||'',session.accessVersion||'']):'';}
-function getCachedGoals(owner) {try{const x=JSON.parse(localStorage.getItem(GOALS_CACHE_KEY));return x?.owner===owner?x.goals:null;}catch{return null;}}
-function cacheGoals(owner,goals) {try{localStorage.setItem(GOALS_CACHE_KEY,JSON.stringify({owner,goals}));}catch{}}
+function goalData(result) {return {goals:result?.goals||null,workdays:normalizeWorkdays(result?.workdays),workdaysRevision:result?.workdaysRevision||null};}
+function getCachedGoals(owner) {
+  try{const x=JSON.parse(localStorage.getItem(GOALS_CACHE_KEY));return goalData(x?.owner===owner?x:null);}catch{return goalData(null);}
+}
+function cacheGoals(owner,result) {try{localStorage.setItem(GOALS_CACHE_KEY,JSON.stringify({owner,...goalData(result)}));}catch{}}
 function initial(name) {return (name || '?').trim().slice(0,1).toUpperCase();}
 function Avatar({name,id,size='normal'}) {return <span className={`avatar avatar-${size}`} style={{backgroundColor:avatarColors[(Number(id)||0)%avatarColors.length]}}>{initial(name)}</span>}
 function Brand({compact=false}) {return <div className={`brand ${compact?'brand-compact':''}`}><img src={`${APP_BASE}fnac.svg`} alt="Fnac"/><div className="brand-word"><strong>pulse<span className="brand-period">.</span></strong>{!compact&&<span>ESPACE ÉQUIPE</span>}</div></div>}
@@ -161,7 +165,7 @@ export default function App() {
   const [installModal,setInstallModal]=useState(false);
   const [themeModal,setThemeModal]=useState(false);
   const [goalModal,setGoalModal]=useState(null);
-  const [goalState,setGoalState]=useState({owner:'',goals:null,loading:false,error:''});
+  const [goalState,setGoalState]=useState({owner:'',...goalData(null),loading:false,error:''});
   const [theme,setTheme]=useState(readTheme);
   const [installPrompt,setInstallPrompt]=useState(null);
   const [notificationsEnabled,setNotificationsEnabled]=useState(false);
@@ -210,22 +214,22 @@ export default function App() {
   const loadGoals=useCallback(async()=>{
     if(!session)return;
     const targetOwner=goalOwnerKey(session),n=++goalRequest.current;
-    setGoalState(old=>old.owner===targetOwner?{...old,loading:true,error:''}:{owner:targetOwner,goals:getCachedGoals(targetOwner),loading:true,error:''});
+    setGoalState(old=>old.owner===targetOwner?{...old,loading:true,error:''}:{owner:targetOwner,...getCachedGoals(targetOwner),loading:true,error:''});
     try {
       const query=`?storeId=${encodeURIComponent(session.storeId)}&sellerId=${encodeURIComponent(session.sellerId)}`;
       const result=await api('/api/goals'+query);
       if(n!==goalRequest.current||ownerRef.current!==targetOwner)return;
       if(!result.goals||typeof result.goals!=='object'||Array.isArray(result.goals))throw new Error('Réponse des objectifs invalide.');
-      setGoalState({owner:targetOwner,goals:result.goals,loading:false,error:''});cacheGoals(targetOwner,result.goals);
+      setGoalState({owner:targetOwner,...goalData(result),loading:false,error:''});cacheGoals(targetOwner,result);
     } catch(e) {
       if(n!==goalRequest.current||ownerRef.current!==targetOwner)return;
-      setGoalState(old=>({owner:targetOwner,goals:old.owner===targetOwner?old.goals:null,loading:false,error:e.message||'Objectifs indisponibles.'}));
+      setGoalState(old=>({...(old.owner===targetOwner?old:{owner:targetOwner,...goalData(null)}),loading:false,error:e.message||'Objectifs indisponibles.'}));
     }
   },[owner]);
   useEffect(()=>{
     goalRequest.current++;setGoalModal(null);
-    if(!owner){setGoalState({owner:'',goals:null,loading:false,error:''});return;}
-    setGoalState({owner,goals:getCachedGoals(owner),loading:true,error:''});
+    if(!owner){setGoalState({owner:'',...goalData(null),loading:false,error:''});return;}
+    setGoalState({owner,...getCachedGoals(owner),loading:true,error:''});
     loadGoals();
     return ()=>{goalRequest.current++;};
   },[owner,loadGoals]);
@@ -307,7 +311,7 @@ export default function App() {
     try {
       const result=await api('/api/goals',{method:'POST',body:{...body,storeId:session.storeId,sellerId:session.sellerId}});
       if(ownerRef.current!==targetOwner)throw new Error('Votre profil a changé. Sélectionnez-le à nouveau.');
-      setGoalState({owner:targetOwner,goals:result.goals,loading:false,error:''});cacheGoals(targetOwner,result.goals);
+      setGoalState({owner:targetOwner,...goalData(result),loading:false,error:''});cacheGoals(targetOwner,result);
       loadGoals();setGoalModal(null);flash('Objectifs enregistrés.',{tone:'success'});
       return result;
     } catch(e){if(e.status===409)await loadGoals();throw e;}
@@ -367,7 +371,7 @@ export default function App() {
         {!session?<WelcomePanel data={data} onSubmit={selectSession}/>:<div className="session-strip"><div className="strip-icon"><Store size={18}/></div><div className="strip-copy"><span>VOTRE ESPACE DE VENTE</span><strong>{store?.name||'Votre magasin'}</strong></div><div className="strip-divider"/><div className="strip-user"><Avatar name={seller?.name} id={seller?.id} size="small"/><span>Connecté en tant que <strong>{seller?.name}</strong></span></div><button className="text-button" onClick={()=>setSessionModal(true)}>Changer <ArrowRight size={14}/></button></div>}
         <div className="section-overline"><div><span className="kicker-line"/> EN UN COUP D’ŒIL</div><span>{session?'Les chiffres de votre magasin':'Choisissez votre espace pour démarrer'}</span></div>
         <section className="stats-grid" aria-label="Chiffres clés"><StatCard label="AUJOURD’HUI" value={stats?.day.total} detail="Ventes de l’équipe" Icon={Zap} tone="gold"/><StatCard label="MA JOURNÉE" value={stats?.mineTotal} detail="Mes services enregistrés" Icon={UserRound} tone="soft-blue"/></section>
-        {session&&<GoalsPanel seller={seller} services={data.services} goals={currentGoals} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
+        {session&&<GoalsPanel seller={seller} services={data.services} goals={currentGoals} workdays={goalState.workdays} workdaysDefault={!goalState.workdaysRevision} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
         <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> PLACE À L’ACTION</div><h2>Ajouter un service</h2><p>Une vente ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
           <Summary stats={stats} hasSession={!!session}/>
         </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/><div className="notification-card"><span className="notification-icon"><BellRing size={18}/></span><div><strong>{notificationsEnabled?'Vous êtes dans la boucle !':'Restez dans la boucle'}</strong><p>{notificationsEnabled?'Notifications activées sur cet appareil.':'Soyez prévenu des ventes de votre équipe.'}</p></div><button onClick={()=>setNotificationsModal(true)}>{notificationsEnabled?'Gérer':'Activer'} <ArrowRight size={13}/></button></div></div></div>
@@ -376,7 +380,7 @@ export default function App() {
     </div>
     <MobileNav onNavigate={navigate} onSession={changeSession} active={activeNav}/>
     {sessionModal&&<Modal title="Changer d’espace" subtitle="Sélectionnez votre magasin et votre profil vendeur." onClose={()=>setSessionModal(false)}><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/>{CLOUD&&<button className="logout-button" onClick={logoutSeller}>Se déconnecter</button>}<p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></Modal>}
-    {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={()=>setGoalModal(null)}><GoalForm services={data.services} goals={currentGoals} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={()=>setGoalModal(null)} disabled={connection==='offline'}/></Modal>}
+    {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={()=>setGoalModal(null)}><GoalForm services={data.services} goals={currentGoals} workdays={goalState.workdays} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={()=>setGoalModal(null)} disabled={connection==='offline'}/></Modal>}
     {adminModal&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>}
     {notificationsModal&&<Modal title="Notifications d’équipe" subtitle="Ne manquez aucune nouvelle vente de votre magasin." onClose={()=>setNotificationsModal(false)}><div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{notificationsEnabled?'Notifications activées':'Un petit signal, une belle dynamique.'}</strong><p>Chaque nouvelle vente peut vous être signalée sur cet appareil, même lorsque l’application est fermée.</p></div></div><div className="notification-details"><div><Check size={16}/> Une notification pour chaque nouvelle vente</div><div><Check size={16}/> Uniquement pour le magasin sélectionné</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div><div className="notification-device-note"><Info size={15}/><span>Sur iPhone et iPad, installez d’abord l’application sur l’écran d’accueil (iOS/iPadOS 16.4 ou plus). Une connexion HTTPS et un navigateur compatible sont nécessaires.</span></div><button className={notificationsEnabled?'outline-button full-button':'primary-button full-button'} disabled={notificationBusy} onClick={notificationsEnabled?disableNotifications:enableNotifications}>{notificationBusy?'Un instant…':notificationsEnabled?'Désactiver sur cet appareil':'Activer les notifications'} {notificationsEnabled?<BellOff size={16}/>:<Bell size={16}/>}</button></Modal>}
     {themeModal&&<Modal title="Apparence" subtitle="Choisissez l’apparence de cet appareil." onClose={()=>setThemeModal(false)}>

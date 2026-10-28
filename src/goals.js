@@ -2,6 +2,18 @@
 export const GOAL_PERIODS = ['day','week','month'];
 export const GOAL_LIMIT = 9999;
 export const GOAL_LABELS = {day:'Aujourd’hui',week:'Cette semaine',month:'Ce mois'};
+// JavaScript : lundi = 1 … samedi = 6 ; dimanche reste hors planning.
+export const DEFAULT_WORKDAYS = Object.freeze([1,2,3,4,5]);
+export const WORKDAY_NAMES = Object.freeze({1:'lundi',2:'mardi',3:'mercredi',4:'jeudi',5:'vendredi',6:'samedi'});
+export function validWorkdays(days) {
+  return Array.isArray(days)&&days.length===5&&new Set(days).size===5&&days.every(day=>Number.isInteger(day)&&day>=1&&day<=6);
+}
+export function normalizeWorkdays(days) {
+  return validWorkdays(days)?[...days].sort((a,b)=>a-b):[...DEFAULT_WORKDAYS];
+}
+export function workdaysLabel(days) {
+  return normalizeWorkdays(days).map(day=>WORKDAY_NAMES[day]).join(', ');
+}
 
 export function validGoalValues(values) {
   return !!values && typeof values==='object' && !Array.isArray(values) && GOAL_PERIODS.every(period =>
@@ -43,11 +55,12 @@ function offsetDate(date,offset) {
 function monthDays(date) {
   return new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,0,12)).getUTCDate();
 }
-function workedThrough(year,month,lastDay) {
+function workedThrough(year,month,lastDay,workdays) {
   const first=new Date(Date.UTC(year,month,1,12)).getUTCDay();
-  const firstSunday=first===0?1:8-first;
-  const sundays=lastDay<firstSunday?0:1+Math.floor((lastDay-firstSunday)/7);
-  return lastDay-sundays;
+  return workdays.reduce((count,weekday)=>{
+    const firstOccurrence=1+(weekday-first+7)%7;
+    return count+(lastDay<firstOccurrence?0:1+Math.floor((lastDay-firstOccurrence)/7));
+  },0);
 }
 // Les différences de cumuls arrondis répartissent les entiers régulièrement
 // sans en créer ni en perdre, même lorsque l'objectif est inférieur aux jours.
@@ -55,30 +68,30 @@ function distributed(amount,slots,index) {
   const cumulative=n=>Math.floor((amount*n+slots/2)/slots);
   return cumulative(index)-cumulative(index-1);
 }
-function plannedForDate(reference,date) {
-  const weekday=date.getUTCDay();
-  if(weekday===0)return 0; // Dimanche : hors planning, même si une vente est saisie.
+function plannedForDate(reference,date,workdays) {
+  const weekday=date.getUTCDay(),indexInWeek=workdays.indexOf(weekday)+1;
+  if(!indexInWeek)return 0; // Hors des cinq jours choisis, y compris le dimanche.
   if(reference.period==='day')return reference.amount;
-  if(reference.period==='week')return distributed(reference.amount,6,weekday);
+  if(reference.period==='week')return distributed(reference.amount,workdays.length,indexInWeek);
   const year=date.getUTCFullYear(),month=date.getUTCMonth(),length=monthDays(date);
-  const slots=workedThrough(year,month,length),index=workedThrough(year,month,date.getUTCDate());
+  const slots=workedThrough(year,month,length,workdays),index=workedThrough(year,month,date.getUTCDate(),workdays);
   return distributed(reference.amount,slots,index);
 }
 
 // Les semaines vont du lundi au dimanche ; une semaine à cheval sur deux mois
-// additionne les quotas prévus dans chacun d'eux. Tous les jours fériés restent
-// comptés du lundi au samedi, conformément au planning choisi.
-export function goalTargets(entry,isoDate) {
-  const reference=goalReference(entry),date=parseDate(isoDate);
+// additionne les quotas des deux mois. Les cinq jours habituels sont propres au
+// vendeur et les jours fériés restent inclus lorsqu'ils tombent sur ces jours.
+export function goalTargets(entry,isoDate,days=DEFAULT_WORKDAYS) {
+  const reference=goalReference(entry),date=parseDate(isoDate),workdays=normalizeWorkdays(days);
   if(!reference||!date)return null;
   const start=offsetDate(date,-((date.getUTCDay()+6)%7));
   let week=0,month=0;
-  for(let i=0;i<7;i++)week+=plannedForDate(reference,offsetDate(start,i));
+  for(let i=0;i<7;i++)week+=plannedForDate(reference,offsetDate(start,i),workdays);
   for(let day=1;day<=monthDays(date);day++) {
     const item=new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),day,12));
-    month+=plannedForDate(reference,item);
+    month+=plannedForDate(reference,item,workdays);
   }
-  return {day:plannedForDate(reference,date),week,month};
+  return {day:plannedForDate(reference,date,workdays),week,month};
 }
 export function progressFor(count,target) {
   if(!Number.isInteger(target)||target<1)return null;

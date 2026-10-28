@@ -4,7 +4,8 @@ import { api } from './api';
 import { CLOUD, adminLogin, adminLogout, changeAdminPassword, setPin } from './cloud';
 import { randomPin } from './pin';
 import { sellersForStore, orderServices } from './catalog';
-import { GoalForm } from './Goals';
+import { GoalForm, WorkdaysForm } from './Goals';
+import { normalizeWorkdays } from './goals';
 
 function Modal({title,subtitle,onClose,children,wide=false}) {
   const dialog=useRef(null),close=useRef(onClose);
@@ -49,6 +50,8 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [countsFor,setCountsFor]=useState('');
   const [countsLoading,setCountsLoading]=useState(false);
   const [adminGoals,setAdminGoals]=useState(null);
+  const [adminWorkdays,setAdminWorkdays]=useState(null);
+  const [adminWorkdaysRevision,setAdminWorkdaysRevision]=useState(null);
   const [goalsFor,setGoalsFor]=useState('');
   const [goalsLoading,setGoalsLoading]=useState(false);
   const goalScope=useRef('');goalScope.current=`${adminStore}:${adminSeller}:${tab}`;
@@ -76,11 +79,14 @@ export default function Admin({onClose,data,session,onChanged}) {
     return ()=>{cancelled=true};
   },[token,adminStore,adminSeller,tab]);
 
+  function applyAdminGoals(result) {
+    setAdminGoals(result.goals);setAdminWorkdays(normalizeWorkdays(result.workdays));setAdminWorkdaysRevision(result.workdaysRevision||null);
+  }
   useEffect(()=>{
     if(!token||!adminStore||!adminSeller||tab!=='goals')return;
-    let cancelled=false;setGoalsFor('');setAdminGoals(null);setGoalsLoading(true);
+    let cancelled=false;setGoalsFor('');setAdminGoals(null);setAdminWorkdays(null);setGoalsLoading(true);
     api(`/api/admin/goals?storeId=${encodeURIComponent(adminStore)}&sellerId=${encodeURIComponent(adminSeller)}`,{token}).then(result=>{
-      if(!cancelled){setAdminGoals(result.goals);setGoalsFor(`${adminStore}:${adminSeller}`);}
+      if(!cancelled){applyAdminGoals(result);setGoalsFor(`${adminStore}:${adminSeller}`);}
     }).catch(e=>{if(!cancelled)setError(e.message)}).finally(()=>{if(!cancelled)setGoalsLoading(false)});
     return ()=>{cancelled=true};
   },[token,adminStore,adminSeller,tab]);
@@ -88,11 +94,24 @@ export default function Admin({onClose,data,session,onChanged}) {
     const scope=`${adminStore}:${adminSeller}:${tab}`;setBusy(true);setError('');setNotice('');
     try {
       const result=await api('/api/admin/goals',{method:'POST',token,body:{...body,storeId:adminStore,sellerId:Number(adminSeller)}});
-      if(goalScope.current===scope)setAdminGoals(result.goals);
+      if(goalScope.current===scope)applyAdminGoals(result);
       onChanged();return result;
     } catch(e) {
       if(e.status===409&&goalScope.current===scope) {
-        try{const latest=await api(`/api/admin/goals?storeId=${encodeURIComponent(adminStore)}&sellerId=${encodeURIComponent(adminSeller)}`,{token});if(goalScope.current===scope)setAdminGoals(latest.goals);}catch{}
+        try{const latest=await api(`/api/admin/goals?storeId=${encodeURIComponent(adminStore)}&sellerId=${encodeURIComponent(adminSeller)}`,{token});if(goalScope.current===scope)applyAdminGoals(latest);}catch{}
+      }
+      throw e;
+    } finally {setBusy(false);}
+  }
+  async function saveAdminWorkdays(body) {
+    const scope=`${adminStore}:${adminSeller}:${tab}`;setBusy(true);setError('');setNotice('');
+    try {
+      const result=await api('/api/admin/workdays',{method:'POST',token,body:{...body,storeId:adminStore,sellerId:Number(adminSeller)}});
+      if(goalScope.current===scope)applyAdminGoals(result);
+      onChanged();return result;
+    } catch(e) {
+      if(e.status===409&&goalScope.current===scope) {
+        try{const latest=await api(`/api/admin/goals?storeId=${encodeURIComponent(adminStore)}&sellerId=${encodeURIComponent(adminSeller)}`,{token});if(goalScope.current===scope)applyAdminGoals(latest);}catch{}
       }
       throw e;
     } finally {setBusy(false);}
@@ -164,9 +183,9 @@ export default function Admin({onClose,data,session,onChanged}) {
         <div className="admin-note"><Info size={15}/> Les corrections ne déclenchent pas de notification de vente.</div>
       </>}
       {tab==='goals'&&<>
-        <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Choisissez une cible par service : les autres périodes sont calculées automatiquement. Le vendeur peut aussi les modifier.</p></div></div>
+        <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Réglez ses cinq jours habituels, puis une cible par service. Les autres périodes sont calculées automatiquement.</p></div></div>
         <div className="admin-selects admin-selects-single"><label><span className="form-label">Vendeur</span><select aria-label="Vendeur pour les objectifs" className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>setAdminSeller(e.target.value)}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label></div>
-        {adminStore&&adminSeller ? goalsFor===`${adminStore}:${adminSeller}`&&adminGoals ? <GoalForm key={`${adminStore}:${adminSeller}`} services={activeServices} goals={adminGoals} date={data.today} onSave={saveAdminGoals} disabled={busy}/> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un magasin et un vendeur pour gérer ses objectifs.</div>}
+        {adminStore&&adminSeller ? goalsFor===`${adminStore}:${adminSeller}`&&adminGoals&&adminWorkdays ? <React.Fragment key={`${adminStore}:${adminSeller}`}><WorkdaysForm workdays={adminWorkdays} revision={adminWorkdaysRevision} onSave={saveAdminWorkdays} disabled={busy}/><GoalForm services={activeServices} goals={adminGoals} workdays={adminWorkdays} date={data.today} onSave={saveAdminGoals} disabled={busy}/></React.Fragment> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un magasin et un vendeur pour gérer ses objectifs.</div>}
         <div className="admin-note"><Info size={15}/> Les objectifs se répètent et toute modification s’applique aux périodes suivantes.</div>
       </>}
       {(tab==='sellers'||tab==='services')&&<>

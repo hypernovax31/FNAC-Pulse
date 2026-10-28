@@ -1,7 +1,7 @@
 import locations from '../server/locations.json' with {type:'json'};
 import { FirestoreRest, FirebaseError, googleAccessToken, verifyIdToken, makeCustomToken, digestBase64, pinMac, verifyPin } from './firebase.js';
 import { LEGACY_STORE_ID, comparePeople, orderServices, sellerStoreId } from '../src/catalog.js';
-import { validGoalValues, GOAL_PERIODS } from '../src/goals.js';
+import { validGoalValues, GOAL_PERIODS, validWorkdays, normalizeWorkdays } from '../src/goals.js';
 
 const SELLERS=['Morgan','Anthony','Cedric','Philippe','Fabien','Florent','Eric','Tamera','Ikram','Selenia','Johan','Alice'];
 const SERVICES=[['DMax','play'],['Assu Téléph','phone'],['Assu Multim','devices'],['Garantie','shield'],['FVD','package'],['FNAC +','badge'],['TRC','repeat'],['Reprise','refresh'],['Canal +','tv'],['Free','wifi'],['Autre','other']];
@@ -179,9 +179,12 @@ export function createWorker(deps={}) {
     if(!validStore(c.data,storeId)||!sellerBy(c.data,sellerId,storeId))fail(400,'Choisissez un vendeur de ce magasin.');
     return {uid:await sellerUid(storeId,Number(sellerId)),storeId,sellerId:Number(sellerId),catalog:c.data};
   }
+  function goalPayload(data) {
+    return {goals:data?.goals||{},workdays:normalizeWorkdays(data?.workdays),workdaysRevision:data?.workdaysRevision||null};
+  }
   async function readGoals(db,owner) {
     const doc=await db.get(`pulseGoals/${owner.uid}`);
-    return {goals:doc?.data?.goals||{}};
+    return goalPayload(doc?.data);
   }
   async function saveGoals(db,owner,body,accessVersion=null) {
     const serviceId=Number(body.serviceId), values=body.values, expected=body.revision;
@@ -196,16 +199,37 @@ export function createWorker(deps={}) {
       const previous=goalDoc?.data?.goals?.[key];
       if((previous?.revision||null)!==expected)fail(409,'Cet objectif a changé. Rechargez ses valeurs avant de le modifier.');
       const entry={...Object.fromEntries(GOAL_PERIODS.map(period=>[period,values[period]])),revision:crypto.randomUUID()};
-      const next={storeId:owner.storeId,sellerId:owner.sellerId,goals:{...(goalDoc?.data?.goals||{}),[key]:entry}};
+      // Préserver le planning personnel et les autres champs lors d'une cible.
+      const next={...(goalDoc?.data||{}),storeId:owner.storeId,sellerId:owner.sellerId,goals:{...(goalDoc?.data?.goals||{}),[key]:entry}};
       const writes=[db.write(goalPath,next,precondition(goalDoc))];
       if(statusDoc)writes.push(db.write(statusPath,{...statusDoc.data,goalsRevision:crypto.randomUUID()},precondition(statusDoc)));
       // Si le PIN est créé en parallèle, recommencer avec le statut apparu afin de
       // notifier le vendeur. Supprimer un document absent sous précondition ne le crée pas.
       else writes.push(db.delete(statusPath,{exists:false}));
-      try {await db.commit(writes);return {goals:next.goals};}
+      try {await db.commit(writes);return goalPayload(next);}
       catch(e){if(!conflict(e))throw e;}
     }
     fail(409,'Plusieurs modifications simultanées. Rechargez les objectifs puis réessayez.');
+  }
+  // Le planning est privé et réservé à l'administrateur. Une révision distincte
+  // protège deux éditions simultanées, sans écraser les cibles du vendeur.
+  async function saveWorkdays(db,owner,body) {
+    const {workdays,revision:expected}=body;
+    if(!validWorkdays(workdays))fail(400,'Choisissez exactement cinq jours différents entre lundi et samedi.');
+    if(expected!==null&&(typeof expected!=='string'||!SAFE_ID.test(expected)))fail(400,'Actualisez les jours travaillés avant de les modifier.');
+    const goalPath=`pulseGoals/${owner.uid}`,statusPath=`pulseStatus/${owner.uid}`;
+    for(let attempt=0;attempt<8;attempt++) {
+      const [goalDoc,statusDoc]=await Promise.all([db.get(goalPath),db.get(statusPath)]);
+      if((goalDoc?.data?.workdaysRevision||null)!==expected)fail(409,'Les jours travaillés ont changé. Rechargez-les avant de recommencer.');
+      const next={...(goalDoc?.data||{}),storeId:owner.storeId,sellerId:owner.sellerId,
+        goals:goalDoc?.data?.goals||{},workdays:normalizeWorkdays(workdays),workdaysRevision:crypto.randomUUID()};
+      const writes=[db.write(goalPath,next,precondition(goalDoc))];
+      if(statusDoc)writes.push(db.write(statusPath,{...statusDoc.data,goalsRevision:crypto.randomUUID()},precondition(statusDoc)));
+      else writes.push(db.delete(statusPath,{exists:false}));
+      try {await db.commit(writes);return goalPayload(next);}
+      catch(e){if(!conflict(e))throw e;}
+    }
+    fail(409,'Plusieurs modifications simultanées. Rechargez les jours travaillés puis réessayez.');
   }
   async function mutateCatalog(db,kind,id,body,method) {
     const c=await catalog(db), d=structuredClone(c.data), list=d[kind];
@@ -392,6 +416,10 @@ export function createWorker(deps={}) {
       if(method==='POST'&&path==='/api/admin/goals') {
         const body=await readBody(req), owner=await goalOwner(db,body.storeId,body.sellerId);
         return saveGoals(db,owner,body);
+      }
+      if(method==='POST'&&path==='/api/admin/workdays') {
+        const body=await readBody(req), owner=await goalOwner(db,body.storeId,body.sellerId);
+        return saveWorkdays(db,owner,body);
       }
       if(method==='POST'&&path==='/api/admin/services/order')return saveServiceOrder(db,await readBody(req));
       if(method==='POST'&&path==='/api/admin/stores')return addStore(db,await readBody(req));

@@ -312,3 +312,78 @@ test('Objectifs : activation du PIN simultanée à la première cible signale le
   assert.equal(status.version,'pin-created-concurrently');assert(status.goalsRevision);
   assert.equal((await db.get(`pulseGoals/${uid}`)).data.goals.s1.day,3);
 });
+
+test('Jours personnels cloud : admin seul, isolation, conservation et modifications simultanées',async()=>{
+  const db=new MemoryDb(),identities=new Map([['admin',{sub:'administrator'}]]);
+  const worker=createWorker({createDb:()=>db,
+    verifyIdToken:async(_env,t)=>{const claims=identities.get(t);if(!claims)throw Error('invalid');return claims;},
+    makeCustomToken:async(_env,uid,claims)=>{const token=`seller-${claims.sellerId}`;identities.set(token,{sub:uid,...claims});return token;},
+  });
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PIN_PEPPER:Buffer.alloc(32,9).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  async function req(path,method='GET',body,token) {
+    const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:r.status,body:await r.json()};
+  }
+  const base=(await req('/api/bootstrap')).body,store=LEGACY_STORE_ID,other=base.stores.find(s=>s.name==='Fnac Bordeaux').id;
+  const schedule={storeId:store,sellerId:1,workdays:[1,2,3,4,6],revision:null};
+  assert.equal((await req('/api/admin/workdays','POST',schedule)).status,401);
+  assert.equal((await req('/api/admin/workdays','POST',{...schedule,storeId:other},'admin')).status,400);
+  for(const days of [[1,2,3,4],[1,2,3,4,5,6],[1,1,2,3,4],[0,1,2,3,4],['1',2,3,4,5]])assert.equal((await req('/api/admin/workdays','POST',{...schedule,workdays:days},'admin')).status,400);
+  const before=(await req(`/api/admin/goals?storeId=${store}&sellerId=1`,'GET',undefined,'admin')).body;
+  assert.deepEqual(before.workdays,[1,2,3,4,5]);assert.equal(before.workdaysRevision,null);
+  const prepared=await req('/api/admin/workdays','POST',schedule,'admin');assert.equal(prepared.status,200);
+  const uid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;
+  assert.equal(await db.get(`pulseStatus/${uid}`),null);assert.equal(await db.get(`pulseAccess/${uid}`),null);
+  const proof1=await pinProof('demo-fnac',store,1,'73628519'),proof2=await pinProof('demo-fnac',store,2,'59386271');
+  for(const [id,proof] of [[1,proof1],[2,proof2]]) {
+    assert.equal((await req('/api/admin/pin','POST',{storeId:store,sellerId:id,proof},'admin')).status,200);
+    assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:id,proof})).status,200);
+  }
+  assert.deepEqual((await req('/api/goals','GET',undefined,'seller-1')).body.workdays,[1,2,3,4,6]);
+  assert.deepEqual((await req('/api/goals','GET',undefined,'seller-2')).body.workdays,[1,2,3,4,5]);
+  assert.equal((await req('/api/admin/workdays','POST',schedule,'seller-1')).status,403);
+  const statusBefore=(await db.get(`pulseStatus/${uid}`)).data;
+  // Le vendeur et l'admin modifient en parallèle un objectif et le planning : rien n'est perdu.
+  const [goal,plan]=await Promise.all([
+    req('/api/goals','POST',{serviceId:1,values:{day:5,week:null,month:null},revision:null},'seller-1'),
+    req('/api/admin/workdays','POST',{...schedule,workdays:[2,3,4,5,6],revision:prepared.body.workdaysRevision},'admin'),
+  ]);
+  assert.equal(goal.status,200);assert.equal(plan.status,200);
+  const after=(await req('/api/goals','GET',undefined,'seller-1')).body;
+  assert.equal(after.goals.s1.day,5);assert.deepEqual(after.workdays,[2,3,4,5,6]);
+  const statusAfter=(await db.get(`pulseStatus/${uid}`)).data;
+  assert.notEqual(statusAfter.goalsRevision,statusBefore.goalsRevision);
+  assert.equal(statusAfter.version,statusBefore.version);assert.equal('workdays' in statusAfter,false);assert.equal('goals' in statusAfter,false);
+  // Deux administrateurs avec la même révision ne peuvent pas s'écraser.
+  const race=await Promise.all([
+    req('/api/admin/workdays','POST',{...schedule,workdays:[1,3,4,5,6],revision:after.workdaysRevision},'admin'),
+    req('/api/admin/workdays','POST',{...schedule,workdays:[1,2,4,5,6],revision:after.workdaysRevision},'admin'),
+  ]);
+  assert.deepEqual(race.map(x=>x.status).sort(),[200,409]);
+  const final=(await req('/api/goals','GET',undefined,'seller-1')).body;
+  assert.equal(final.goals.s1.day,5);
+  assert.deepEqual((await req('/api/goals','GET',undefined,'seller-2')).body.workdays,[1,2,3,4,5]);
+  const newProof=await pinProof('demo-fnac',store,1,'82467913');
+  assert.equal((await req('/api/admin/pin','POST',{storeId:store,sellerId:1,proof:newProof},'admin')).status,200);
+  assert.equal((await req('/api/goals','GET',undefined,'seller-1')).status,403);
+  assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:1,proof:newProof})).status,200);
+  assert.deepEqual((await req('/api/goals','GET',undefined,'seller-1')).body.workdays,final.workdays);
+});
+
+test('Planning : création du PIN simultanée signale la modification',async()=>{
+  const db=new MemoryDb(),worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'administrator'})});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator'},ctx={waitUntil(){}};
+  await worker.fetch(new Request('https://worker.test/api/bootstrap'),env,ctx);
+  const store=LEGACY_STORE_ID,uid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;
+  const statusPath=`pulseStatus/${uid}`,original=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path===statusPath&&w.del&&w.currentDocument?.exists===false)) {
+      raced=true;await original([db.write(statusPath,{active:true,storeId:store,sellerId:1,version:'pin-created-concurrently'})]);
+    }
+    return original(writes);
+  };
+  const request=new Request('https://worker.test/api/admin/workdays',{method:'POST',headers:{authorization:'Bearer admin','content-type':'application/json'},body:JSON.stringify({storeId:store,sellerId:1,workdays:[2,3,4,5,6],revision:null})});
+  const result=await worker.fetch(request,env,ctx);assert.equal(result.status,200);assert.equal(raced,true);
+  const status=(await db.get(statusPath)).data;assert.equal(status.version,'pin-created-concurrently');assert(status.goalsRevision);
+  assert.deepEqual((await db.get(`pulseGoals/${uid}`)).data.workdays,[2,3,4,5,6]);
+});

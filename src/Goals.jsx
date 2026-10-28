@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowRight, Pencil, Target, RotateCw } from 'lucide-react';
-import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, goalReference, goalTargets, hasGoal, parseGoalInputs, progressFor } from './goals';
+import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, WORKDAY_NAMES, goalReference, goalTargets, hasGoal, parseGoalInputs, progressFor, normalizeWorkdays, validWorkdays, workdaysLabel } from './goals';
 import { parisToday } from './cloud-stats';
 
 const REFERENCE_SUFFIX = {day:'jour travaillé',week:'semaine',month:'mois'};
@@ -11,7 +11,7 @@ function formReference(entry) {
 }
 
 // Utilisé par le vendeur et par l'administration pour garder les mêmes règles.
-export function GoalForm({services,goals,initialServiceId,onSave,onCancel,disabled=false,date=parisToday()}) {
+export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCancel,disabled=false,date=parisToday()}) {
   const initial=services.find(s=>String(s.id)===String(initialServiceId))?.id||services[0]?.id||'';
   const entry=goals?.[`s${initial}`],initialReference=formReference(entry);
   const [service,setService]=useState(String(initial));
@@ -24,7 +24,7 @@ export function GoalForm({services,goals,initialServiceId,onSave,onCancel,disabl
   const current=goals?.[`s${service}`];
   const stale=!!service && (current?.revision||null)!==revision;
   const numeric=/^\d+$/.test(amount)?Number(amount):0;
-  const preview=numeric>=1&&numeric<=GOAL_LIMIT?goalTargets({[basis]:numeric},date):null;
+  const preview=numeric>=1&&numeric<=GOAL_LIMIT?goalTargets({[basis]:numeric},date,workdays):null;
   function loadService(id) {
     const next=goals?.[`s${id}`],reference=formReference(next);
     setService(String(id));setBasis(reference.period);setAmount(reference.amount);setRevision(next?.revision||null);setError('');setNotice('');
@@ -68,12 +68,48 @@ export function GoalForm({services,goals,initialServiceId,onSave,onCancel,disabl
       <label><span className="form-label">CIBLE À ATTEINDRE</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min="1" max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={busy||disabled||!service} onChange={e=>{setAmount(e.target.value);setNotice('');}} required/></label>
     </div>
     <div className="goal-preview" aria-live="polite"><span className="form-label">RÉPARTITION ACTUELLE</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{GOAL_LABELS[period]}</span><strong>{preview?preview[period]:'—'}</strong></div>)}</div></div>
-    <p className="goal-form-hint">Répartition en nombres entiers du lundi au samedi, jours fériés inclus. Certains jours peuvent être à 0. La cible choisie se répète ; les autres s’adaptent au calendrier.</p>
+    <p className="goal-form-hint">Cinq jours habituels : {workdaysLabel(workdays)}. Jours fériés inclus ; l’administrateur peut modifier ces jours. La répartition est entière et certains jours peuvent être à 0.</p>
     {stale&&<div className="goal-conflict" role="alert"><span>Cet objectif a été modifié ailleurs.</span><button type="button" onClick={()=>loadService(service)}><RotateCw size={13}/> Recharger les valeurs</button></div>}
     {error&&<div className="form-error" role="alert">{error}</div>}
     {notice&&<div className="goal-saved" role="status">{notice}</div>}
     {hasGoal(current)&&<button type="button" className="goal-remove" onClick={remove} disabled={busy||disabled||stale}>Supprimer l’objectif de ce service</button>}
     <div className="goal-form-actions">{onCancel&&<button type="button" className="outline-button" onClick={onCancel} disabled={busy}>Fermer</button>}<button className="primary-button" type="submit" disabled={busy||disabled||stale||!service||!amount}>{busy?'Enregistrement…':'Enregistrer'} <ArrowRight size={15}/></button></div>
+  </form>;
+}
+
+// Cinq jours habituels par vendeur ; seul l'administrateur voit ce formulaire.
+export function WorkdaysForm({workdays,revision,onSave,disabled=false}) {
+  const [selected,setSelected]=useState(()=>normalizeWorkdays(workdays));
+  const [editRevision,setEditRevision]=useState(revision||null);
+  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+  const stale=(revision||null)!==editRevision;
+  const changed=selected.join(',')!==normalizeWorkdays(workdays).join(',');
+  function reload() {setSelected(normalizeWorkdays(workdays));setEditRevision(revision||null);setError('');setNotice('');}
+  function toggle(day) {
+    setSelected(days=>(days.includes(day)?days.filter(x=>x!==day):[...days,day]).sort((a,b)=>a-b));
+    setError('');setNotice('');
+  }
+  async function submit(event) {
+    event.preventDefault();setError('');setNotice('');
+    if(stale||!validWorkdays(selected))return;
+    setBusy(true);
+    try {
+      const result=await onSave({workdays:selected,revision:editRevision});
+      setSelected(normalizeWorkdays(result.workdays));setEditRevision(result.workdaysRevision||null);setNotice('Jours travaillés enregistrés.');
+    } catch(e){setError(e.message||'Impossible d’enregistrer les jours travaillés.');}
+    finally{setBusy(false);}
+  }
+  return <form className="workdays-form" onSubmit={submit}>
+    <div className="workdays-heading"><div><h4>Jours habituels du vendeur</h4><p>Choisissez exactement 5 jours, du lundi au samedi. Les jours fériés sont inclus.</p></div>{!revision&&<span>Par défaut · à vérifier</span>}</div>
+    <fieldset className="workdays-list" disabled={busy||disabled}><legend className="sr-only">Jours travaillés de ce vendeur</legend>
+      {Object.entries(WORKDAY_NAMES).map(([id,name])=><label className={`workday-option ${selected.includes(Number(id))?'is-selected':''}`} key={id}>
+        <input type="checkbox" checked={selected.includes(Number(id))} onChange={()=>toggle(Number(id))}/><span>{name[0].toUpperCase()+name.slice(1)}</span>
+      </label>)}
+    </fieldset>
+    <div className="workdays-actions"><span aria-live="polite">{selected.length} / 5 jours sélectionnés</span><button type="submit" className="outline-button" disabled={busy||disabled||stale||!validWorkdays(selected)||(!changed&&!!editRevision)}>{busy?'Enregistrement…':'Enregistrer les jours'}</button></div>
+    <p className="goal-form-hint">Le dimanche n’est pas prévu ; toute vente reste comptée. Ce planning se répète chaque semaine et ne gère pas les absences ponctuelles.</p>
+    {stale&&<div className="goal-conflict" role="alert"><span>Ces jours ont été modifiés ailleurs.</span><button type="button" onClick={reload}><RotateCw size={13}/> Recharger les jours</button></div>}
+    {error&&<div className="form-error" role="alert">{error}</div>}{notice&&<div className="goal-saved" role="status">{notice}</div>}
   </form>;
 }
 
@@ -92,7 +128,7 @@ function GoalMetric({service,period,target,stats}) {
   </div>;
 }
 
-export function GoalsPanel({seller,services,goals,stats,loading,error,offline,onEdit,onRetry,date=parisToday()}) {
+export function GoalsPanel({seller,services,goals,workdays,workdaysDefault=false,stats,loading,error,offline,onEdit,onRetry,date=parisToday()}) {
   const configured=services.filter(service=>hasGoal(goals?.[`s${service.id}`]));
   return <section className="panel goals-panel" aria-labelledby="personal-goals-title">
     <div className="goals-heading"><div><div className="section-kicker"><span className="kicker-line"/> VOTRE PROGRESSION</div><h2 id="personal-goals-title">Mes objectifs</h2><p>Vos ventes font avancer vos objectifs par service.</p></div>
@@ -102,13 +138,13 @@ export function GoalsPanel({seller,services,goals,stats,loading,error,offline,on
     {!goals ? <div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>{loading?'Chargement de vos objectifs…':'Vos objectifs sont indisponibles.'}</strong><p>{error||'Ils apparaîtront ici dès que votre espace sera prêt.'}</p>{!loading&&!offline&&<button type="button" onClick={onRetry}>Réessayer</button>}</div></div>
     :configured.length===0?<div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>Aucun objectif défini pour le moment.</strong><p>Choisissez un service pour définir vos objectifs, ou demandez à votre responsable.</p><button type="button" onClick={()=>onEdit(null)} disabled={offline||!services.length}>Définir un objectif <ArrowRight size={13}/></button></div></div>
     :<div className="goals-grid">{configured.map(service=>{
-      const entry=goals?.[`s${service.id}`],reference=goalReference(entry),targets=goalTargets(entry,date);
+      const entry=goals?.[`s${service.id}`],reference=goalReference(entry),targets=goalTargets(entry,date,workdays);
       return <article className="goal-card" key={service.id}>
         <div className="goal-card-heading"><div><span className="goal-card-icon"><Target size={16}/></span><div className="goal-card-name"><strong>{service.name}</strong>{reference&&<span>Référence : {reference.amount} / {REFERENCE_SUFFIX[reference.period]}</span>}</div></div><button className="icon-button goal-card-edit" aria-label={`Modifier les objectifs ${service.name}`} onClick={()=>onEdit(service.id)} disabled={offline}><Pencil size={15}/></button></div>
         <div className="goal-metrics">{GOAL_PERIODS.map(period=><GoalMetric key={period} service={service} period={period} target={targets?.[period]??null} stats={stats}/>)}</div>
       </article>;
     })}</div>}
     {error&&goals&&!offline&&<p className="goal-sync-warning">Dernières valeurs affichées · {error} <button type="button" onClick={onRetry}>Réessayer</button></p>}
-    {configured.length>0&&<p className="goal-caption">Objectifs de {seller?.name||'votre profil'} répartis du lundi au samedi, jours fériés inclus. Les ventes du dimanche comptent dans les bilans.</p>}
+    {configured.length>0&&<p className="goal-caption">Jours habituels de {seller?.name||'votre profil'}{workdaysDefault?' (par défaut, à vérifier)':''} : {workdaysLabel(workdays)}. Jours fériés inclus ; toutes les ventes restent comptées dans les bilans.</p>}
   </section>;
 }

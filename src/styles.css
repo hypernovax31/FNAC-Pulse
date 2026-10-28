@@ -651,9 +651,26 @@ p,h1,h2,h3 { margin:0; }
 .goal-conflict { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px; border-radius:6px; background:#fff2df; color:#8b641c; font-size:10px; }
 .goal-conflict button { display:inline-flex; align-items:center; gap:4px; background:transparent; color:#8c690d; font-weight:800; }
 .goal-saved { color:#648464; font-size:10px; font-weight:750; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.workdays-form { display:flex; flex-direction:column; gap:12px; margin:0 0 18px; padding:15px; border:1px solid #eeeade; border-radius:8px; background:#fbfaf5; }
+.workdays-heading { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px; }
+.workdays-heading h4 { color:#41433c; font-size:12px; line-height:1.3; }
+.workdays-heading p { margin-top:5px; color:#888b80; font-size:10px; line-height:1.5; }
+.workdays-heading > span { padding:4px 7px; border-radius:5px; background:#f7edc9; color:#92750b; font-size:9px; font-weight:750; white-space:nowrap; }
+.workdays-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; min-width:0; margin:0; padding:0; border:0; }
+.workday-option { display:flex; align-items:center; gap:6px; min-width:0; min-height:36px; padding:7px; border:1px solid #e5e5de; border-radius:6px; background:#fff; color:#6d7066; font-size:10px; cursor:pointer; }
+.workday-option.is-selected { border-color:#e2cb71; background:#fff8df; color:#665416; }
+.workday-option input { flex:0 0 auto; width:14px; height:14px; margin:0; accent-color:#d2a300; }
+.workday-option:has(input:focus-visible) { outline:2px solid #a4820a; outline-offset:2px; }
+.workday-option span { overflow-wrap:anywhere; }
+.workdays-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+.workdays-actions > span { color:#888b80; font-size:10px; }
+.workdays-actions .outline-button { min-height:34px; padding:0 11px; }
+.workdays-actions .outline-button:disabled { opacity:.5; cursor:not-allowed; }
 @media(max-width:1270px) { .goals-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:690px) { .goals-panel { margin-top:13px; padding:18px; } }
 @media(max-width:480px) { .goals-grid { grid-template-columns:1fr; } .goals-panel { padding:16px; } }
+@media(max-width:380px) { .workdays-list { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 [data-theme='dark'] .goals-heading p,
 [data-theme='dark'] .goal-caption,
 [data-theme='dark'] .goal-form-hint,
@@ -662,6 +679,13 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .goal-card-name span,
 [data-theme='dark'] .goals-empty p,
 [data-theme='dark'] .goal-metric-label { color:#b7bcae; }
+[data-theme='dark'] .workdays-form { background:#292b23; border-color:#514c37; }
+[data-theme='dark'] .workdays-heading h4 { color:#eeefe7; }
+[data-theme='dark'] .workdays-heading p,
+[data-theme='dark'] .workdays-actions > span { color:#b7bcae; }
+[data-theme='dark'] .workdays-heading > span { background:#4a4021; color:#ecd073; }
+[data-theme='dark'] .workday-option { background:#292d27; border-color:#41473d; color:#d0d4c7; }
+[data-theme='dark'] .workday-option.is-selected { background:#3b351f; border-color:#b99b40; color:#eed478; }
 [data-theme='dark'] .goal-preview { background:#292b23; border-color:#514c37; }
 [data-theme='dark'] .goal-preview-grid > div { color:#b7bcae; }
 [data-theme='dark'] .goal-preview-grid strong { color:#eeefe7; }

@@ -6,13 +6,15 @@ Ce guide configure **GitHub Pages + Firebase Spark + Cloudflare Workers/Queues F
 >
 > Ne partagez jamais ici ou dans Git de mot de passe, PIN, fichier JSON de compte de service, clé privée VAPID, `PIN_PEPPER` ou jeton d'accès. La configuration Web Firebase, l'URL Worker et la **clé VAPID publique** ne sont pas des secrets. Les règles Firestore et les contrôles du Worker, et non la confidentialité de la configuration Web, protègent les données.
 
-## Mise à jour d'une installation existante : objectifs liés
+## Mise à jour d'une installation existante : cinq jours par vendeur
 
-Les cibles quotidiennes, hebdomadaires et mensuelles sont désormais calculées à partir d'une seule référence choisie par service. La répartition utilise les jours du **lundi au samedi, jours fériés inclus**, et des nombres entiers : certains jours ou certaines semaines peuvent être à zéro. Une semaine qui traverse un changement de mois additionne les quotas quotidiens prévus de part et d'autre ; les ventes du dimanche restent comptabilisées dans la semaine et le mois.
+L'administrateur choisit **cinq jours habituels du lundi au samedi** pour chaque vendeur dans **Administration → Objectifs**. Tant que ce choix n'a pas été enregistré, le lundi au vendredi est utilisé **par défaut et doit être vérifié**. Les jours fériés sont inclus s'ils tombent sur un jour choisi ; le dimanche est hors planning. Il s'agit d'un planning hebdomadaire récurrent, sans suivi des absences ou rotations ponctuelles. La modification s'applique immédiatement à la période courante et aux suivantes, sans modifier les ventes ni la cible choisie.
 
-Pour les objectifs déjà enregistrés avec plusieurs cibles, la nouvelle interface retient le **mensuel en priorité**, puis l'hebdomadaire, puis le quotidien. Cette adaptation change l'affichage immédiatement, sans réécrire les anciens documents. Lors d'une modification, seule la nouvelle référence est enregistrée. Les ventes, PIN et permissions existants ne sont pas modifiés.
+Les cibles jour, semaine et mois sont calculées à partir d'une seule référence par service et réparties en nombres entiers : certains jours ou certaines semaines peuvent être à zéro. Une semaine qui traverse un changement de mois additionne les quotas quotidiens des deux mois ; toutes les ventes restent comptabilisées, même hors planning. Pour les anciens objectifs à plusieurs cibles, le mensuel reste prioritaire, puis l'hebdomadaire et le quotidien.
 
-Si la version d'objectifs personnels est déjà installée, cette évolution ne nécessite **aucun changement du Worker ou des règles Firestore** : pousser le code, lancer le workflow GitHub Pages manuel puis fermer et rouvrir la PWA. Vérifier une cible de chaque type, un jour à zéro et une semaine à cheval sur deux mois. Pour supprimer les trois cibles d'un service, utiliser le bouton de suppression dédié.
+1. Déployer d'abord le **nouveau Worker Cloudflare** en préservant ses secrets et sa Queue. Le planning est stocké dans le document privé `pulseGoals` existant ; seules les routes réservées à l'administrateur peuvent le modifier. Les règles Firestore existantes restent inchangées.
+2. Pousser le code et lancer le workflow GitHub Pages manuel, puis fermer et rouvrir la PWA en ligne. Dans l'onglet **Objectifs** de l'administration, sélectionner chaque vendeur, vérifier ses cinq jours et les enregistrer. La période de référence jour/semaine/mois reste réglable pour chaque service.
+3. Tester un vendeur avec le samedi inclus, une autre personne avec le samedi exclu, une vente et sa correction, puis la synchronisation sur leurs appareils. Pour supprimer les trois cibles d'un service, utiliser le bouton dédié. Les PIN, les cibles de référence et les ventes existants ne sont pas effacés.
 
 ### Première installation des objectifs personnels
 
