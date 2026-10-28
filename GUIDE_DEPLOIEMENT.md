@@ -6,15 +6,23 @@ Ce guide configure **GitHub Pages + Firebase Spark + Cloudflare Workers/Queues F
 >
 > Ne partagez jamais ici ou dans Git de mot de passe, PIN, fichier JSON de compte de service, clé privée VAPID, `PIN_PEPPER` ou jeton d'accès. La configuration Web Firebase, l'URL Worker et la **clé VAPID publique** ne sont pas des secrets. Les règles Firestore et les contrôles du Worker, et non la confidentialité de la configuration Web, protègent les données.
 
-## Mise à jour d'une installation existante : objectifs personnels
+## Mise à jour d'une installation existante : objectifs liés
 
-Les objectifs sont séparés par vendeur et par service. Le vendeur et l'administrateur peuvent régler trois cibles récurrentes ; les ventes et corrections déjà enregistrées alimentent automatiquement les barres. Aucun objectif n'est créé par défaut, et les PIN et les ventes existants ne sont pas modifiés.
+Les cibles quotidiennes, hebdomadaires et mensuelles sont désormais calculées à partir d'une seule référence choisie par service. La répartition utilise les jours du **lundi au samedi, jours fériés inclus**, et des nombres entiers : certains jours ou certaines semaines peuvent être à zéro. Une semaine qui traverse un changement de mois additionne les quotas quotidiens prévus de part et d'autre ; les ventes du dimanche restent comptabilisées dans la semaine et le mois.
+
+Pour les objectifs déjà enregistrés avec plusieurs cibles, la nouvelle interface retient le **mensuel en priorité**, puis l'hebdomadaire, puis le quotidien. Cette adaptation change l'affichage immédiatement, sans réécrire les anciens documents. Lors d'une modification, seule la nouvelle référence est enregistrée. Les ventes, PIN et permissions existants ne sont pas modifiés.
+
+Si la version d'objectifs personnels est déjà installée, cette évolution ne nécessite **aucun changement du Worker ou des règles Firestore** : pousser le code, lancer le workflow GitHub Pages manuel puis fermer et rouvrir la PWA. Vérifier une cible de chaque type, un jour à zéro et une semaine à cheval sur deux mois. Pour supprimer les trois cibles d'un service, utiliser le bouton de suppression dédié.
+
+### Première installation des objectifs personnels
+
+Les objectifs sont séparés par vendeur et par service. Le vendeur et l'administrateur peuvent choisir une référence récurrente ; les ventes et corrections déjà enregistrées alimentent automatiquement les barres. Aucun objectif n'est créé par défaut, et les PIN et les ventes existants ne sont pas modifiés.
 
 1. Vérifier que les règles Firestore publiées correspondent à [`firestore.rules`](firestore.rules), notamment que la règle de refus par défaut interdit toute lecture et écriture directes de `pulseGoals`. Les cibles sont lues et modifiées par le Worker après contrôle du vendeur ou de l'administrateur. Ne pas ajouter de règle autorisant directement cette collection, même au propriétaire. Si les règles en place sont déjà identiques, aucune nouvelle publication des règles n'est nécessaire.
 2. Déployer d'abord le **nouveau Worker Cloudflare**, en conservant les trois secrets et la Queue existants ; vérifier `/api/health` et `/api/bootstrap`. La collection d'objectifs se crée automatiquement lors du premier enregistrement : aucune migration des ventes ou création manuelle n'est nécessaire.
 3. Pousser le code, puis exécuter le workflow **Déployer Fnac Pulse sur GitHub Pages**. Il est manuel et ne se lance pas au seul push. Sur chaque appareil, fermer puis rouvrir l'application pour actualiser son cache.
 4. En ligne, régler une cible dans **Mes objectifs → Gérer**, enregistrer une vente puis la corriger : les trois périodes concernées doivent se mettre à jour. Avec un second vendeur, vérifier qu'il ne voit pas les objectifs du premier. Dans **Administration → Objectifs**, choisir le magasin et le vendeur et modifier une cible ; vérifier sa mise à jour sur l'appareil du vendeur.
-5. La modification est immédiate et durable pour la période courante et les suivantes ; laisser une cible vide la supprime. Si une autre personne modifie le même service au même moment, recharger les valeurs avant de recommencer. Hors ligne, la dernière vue peut rester visible, mais aucune vente ni modification d'objectif n'est enregistrée en attente. L'appareil peut garder des données en cache : se déconnecter et, si nécessaire, effacer les données du site sur un appareil partagé.
+5. La modification est immédiate et durable pour la période courante et les suivantes ; le bouton de suppression retire les trois cibles du service. Si une autre personne modifie le même service au même moment, recharger les valeurs avant de recommencer. Hors ligne, la dernière vue peut rester visible, mais aucune vente ni modification d'objectif n'est enregistrée en attente. L'appareil peut garder des données en cache : se déconnecter et, si nécessaire, effacer les données du site sur un appareil partagé.
 
 ### Historique : migration des vendeurs par magasin
 

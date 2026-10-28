@@ -164,9 +164,9 @@ export default function Admin({onClose,data,session,onChanged}) {
         <div className="admin-note"><Info size={15}/> Les corrections ne déclenchent pas de notification de vente.</div>
       </>}
       {tab==='goals'&&<>
-        <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Fixez des quantités pour chaque service. Le vendeur peut aussi les modifier ; les ventes remplissent ses barres automatiquement.</p></div></div>
+        <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Choisissez une cible par service : les autres périodes sont calculées automatiquement. Le vendeur peut aussi les modifier.</p></div></div>
         <div className="admin-selects admin-selects-single"><label><span className="form-label">Vendeur</span><select aria-label="Vendeur pour les objectifs" className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>setAdminSeller(e.target.value)}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label></div>
-        {adminStore&&adminSeller ? goalsFor===`${adminStore}:${adminSeller}`&&adminGoals ? <GoalForm key={`${adminStore}:${adminSeller}`} services={activeServices} goals={adminGoals} onSave={saveAdminGoals} disabled={busy}/> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un magasin et un vendeur pour gérer ses objectifs.</div>}
+        {adminStore&&adminSeller ? goalsFor===`${adminStore}:${adminSeller}`&&adminGoals ? <GoalForm key={`${adminStore}:${adminSeller}`} services={activeServices} goals={adminGoals} date={data.today} onSave={saveAdminGoals} disabled={busy}/> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un magasin et un vendeur pour gérer ses objectifs.</div>}
         <div className="admin-note"><Info size={15}/> Les objectifs se répètent et toute modification s’applique aux périodes suivantes.</div>
       </>}
       {(tab==='sellers'||tab==='services')&&<>

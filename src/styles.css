@@ -611,6 +611,8 @@ p,h1,h2,h3 { margin:0; }
 .goal-card-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:14px; }
 .goal-card-heading > div { display:flex; align-items:center; gap:8px; min-width:0; }
 .goal-card-heading strong { min-width:0; overflow-wrap:anywhere; color:#41433c; font-size:11px; }
+.goal-card-name { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.goal-card-name span { color:#92958a; font-size:9px; line-height:1.3; overflow-wrap:anywhere; }
 .goal-card-icon,.goals-empty-icon { width:32px; height:32px; flex:0 0 auto; display:grid; place-items:center; border-radius:7px; background:#faf0cc; color:#a78512; }
 .goal-card-edit { width:32px; height:32px; }
 .goal-metrics { display:grid; gap:12px; }
@@ -622,6 +624,7 @@ p,h1,h2,h3 { margin:0; }
 .goal-track > span { display:block; height:100%; border-radius:8px; background:#e1b10d; transition:width .25s ease; }
 .goal-track.is-reached > span { background:#80ad82; }
 .goal-track.is-unset { height:4px; opacity:.65; }
+.goal-zero-note { display:block; margin-top:5px; color:#9b9e93; font-size:9px; line-height:1.3; }
 .goals-empty { display:flex; align-items:flex-start; gap:12px; margin-top:18px; padding:15px; border:1px dashed #e9e7d9; border-radius:8px; background:#fdfcf7; }
 .goals-empty strong { color:#56594f; font-size:11px; }
 .goals-empty p { color:#999c91; font-size:10px; line-height:1.5; margin-top:4px; }
@@ -631,11 +634,18 @@ p,h1,h2,h3 { margin:0; }
 .goal-offline { color:#9b7b1c; }
 .goal-sync-warning button { margin:0 0 0 4px; }
 .goal-form { display:flex; flex-direction:column; gap:14px; }
-.goal-form > label,.goal-inputs label { display:flex; flex-direction:column; gap:7px; min-width:0; }
+.goal-form > label,.goal-base-fields label { display:flex; flex-direction:column; gap:7px; min-width:0; }
 .goal-form .form-label { margin:0; }
-.goal-inputs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; }
-.goal-inputs input { min-width:0; font-size:14px; font-variant-numeric:tabular-nums; }
+.goal-form-intro { color:#777b70; font-size:11px; line-height:1.45; }
+.goal-base-fields { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(88px,.6fr); gap:9px; }
+.goal-base-fields input { min-width:0; font-size:14px; font-variant-numeric:tabular-nums; }
+.goal-preview { padding:12px; border:1px solid #eeeade; border-radius:7px; background:#fbfaf5; }
+.goal-preview-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-top:10px; }
+.goal-preview-grid > div { display:flex; flex-direction:column; gap:5px; min-width:0; color:#888b80; font-size:10px; }
+.goal-preview-grid strong { color:#41433c; font-size:16px; font-variant-numeric:tabular-nums; }
 .goal-form-hint { color:#92958a; font-size:10px; line-height:1.5; }
+.goal-remove { align-self:flex-start; padding:0; background:transparent; color:#a35e52; font-size:10px; font-weight:700; text-align:left; }
+.goal-remove:disabled { opacity:.5; }
 .goal-form-actions { display:flex; justify-content:flex-end; gap:9px; }
 .goal-form-actions .outline-button { padding:0 14px; }
 .goal-conflict { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px; border-radius:6px; background:#fff2df; color:#8b641c; font-size:10px; }
@@ -647,8 +657,15 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .goals-heading p,
 [data-theme='dark'] .goal-caption,
 [data-theme='dark'] .goal-form-hint,
+[data-theme='dark'] .goal-form-intro,
+[data-theme='dark'] .goal-zero-note,
+[data-theme='dark'] .goal-card-name span,
 [data-theme='dark'] .goals-empty p,
 [data-theme='dark'] .goal-metric-label { color:#b7bcae; }
+[data-theme='dark'] .goal-preview { background:#292b23; border-color:#514c37; }
+[data-theme='dark'] .goal-preview-grid > div { color:#b7bcae; }
+[data-theme='dark'] .goal-preview-grid strong { color:#eeefe7; }
+[data-theme='dark'] .goal-remove { color:#e6aa9f; }
 [data-theme='dark'] .goal-card { background:#282c26; border-color:#3a3e36; }
 [data-theme='dark'] .goal-card-heading strong,
 [data-theme='dark'] .goal-metric-label strong,

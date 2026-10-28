@@ -2,7 +2,7 @@
 import { initializeApp } from 'firebase/app';
 import { getMessaging } from 'firebase/messaging/sw';
 import { firebaseConfig } from './firebase-config';
-const CACHE = 'fnac-pulse-shell-v8';
+const CACHE = 'fnac-pulse-shell-v9';
 const APP_URL = new URL(self.registration.scope);
 const APP_PATH = APP_URL.pathname;
 const appAsset = path => new URL(path, APP_URL).pathname;
