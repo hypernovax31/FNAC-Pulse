@@ -328,7 +328,7 @@ test('Jours personnels cloud : admin seul, isolation, conservation et modificati
   const schedule={storeId:store,sellerId:1,workdays:[1,2,3,4,6],revision:null};
   assert.equal((await req('/api/admin/workdays','POST',schedule)).status,401);
   assert.equal((await req('/api/admin/workdays','POST',{...schedule,storeId:other},'admin')).status,400);
-  for(const days of [[1,2,3,4],[1,2,3,4,5,6],[1,1,2,3,4],[0,1,2,3,4],['1',2,3,4,5]])assert.equal((await req('/api/admin/workdays','POST',{...schedule,workdays:days},'admin')).status,400);
+  for(const days of [[],[1,1,2,3,4],[-1,0,1],[7],['1',2,3,4,5],[0,1,2,3,4,5,6,0]])assert.equal((await req('/api/admin/workdays','POST',{...schedule,workdays:days},'admin')).status,400);
   const before=(await req(`/api/admin/goals?storeId=${store}&sellerId=1`,'GET',undefined,'admin')).body;
   assert.deepEqual(before.workdays,[1,2,3,4,5]);assert.equal(before.workdaysRevision,null);
   const prepared=await req('/api/admin/workdays','POST',schedule,'admin');assert.equal(prepared.status,200);
@@ -363,11 +363,16 @@ test('Jours personnels cloud : admin seul, isolation, conservation et modificati
   const final=(await req('/api/goals','GET',undefined,'seller-1')).body;
   assert.equal(final.goals.s1.day,5);
   assert.deepEqual((await req('/api/goals','GET',undefined,'seller-2')).body.workdays,[1,2,3,4,5]);
+  const allDays=await req('/api/admin/workdays','POST',{...schedule,workdays:[0,1,2,3,4,5,6],revision:final.workdaysRevision},'admin');
+  assert.equal(allDays.status,200);assert.deepEqual(allDays.body.workdays,[1,2,3,4,5,6,0]);
+  const sunday=await req('/api/admin/workdays','POST',{...schedule,workdays:[0],revision:allDays.body.workdaysRevision},'admin');
+  assert.equal(sunday.status,200);assert.deepEqual(sunday.body.workdays,[0]);assert.equal(sunday.body.goals.s1.day,5);
+  assert.deepEqual((await req('/api/goals','GET',undefined,'seller-1')).body.workdays,[0]);
   const newProof=await pinProof('demo-fnac',store,1,'82467913');
   assert.equal((await req('/api/admin/pin','POST',{storeId:store,sellerId:1,proof:newProof},'admin')).status,200);
   assert.equal((await req('/api/goals','GET',undefined,'seller-1')).status,403);
   assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:1,proof:newProof})).status,200);
-  assert.deepEqual((await req('/api/goals','GET',undefined,'seller-1')).body.workdays,final.workdays);
+  assert.deepEqual((await req('/api/goals','GET',undefined,'seller-1')).body.workdays,[0]);
 });
 
 test('Planning : création du PIN simultanée signale la modification',async()=>{

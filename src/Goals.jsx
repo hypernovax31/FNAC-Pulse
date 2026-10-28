@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowRight, Pencil, Target, RotateCw } from 'lucide-react';
-import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, WORKDAY_NAMES, goalReference, goalTargets, hasGoal, parseGoalInputs, progressFor, normalizeWorkdays, validWorkdays, workdaysLabel } from './goals';
+import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, WORKDAY_NAMES, WORKDAY_ORDER, goalReference, goalTargets, hasGoal, parseGoalInputs, progressFor, normalizeWorkdays, validWorkdays, workdaysLabel } from './goals';
 import { parisToday } from './cloud-stats';
 
 const REFERENCE_SUFFIX = {day:'jour travaillé',week:'semaine',month:'mois'};
@@ -68,7 +68,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
       <label><span className="form-label">CIBLE À ATTEINDRE</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min="1" max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={busy||disabled||!service} onChange={e=>{setAmount(e.target.value);setNotice('');}} required/></label>
     </div>
     <div className="goal-preview" aria-live="polite"><span className="form-label">RÉPARTITION ACTUELLE</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{GOAL_LABELS[period]}</span><strong>{preview?preview[period]:'—'}</strong></div>)}</div></div>
-    <p className="goal-form-hint">Cinq jours habituels : {workdaysLabel(workdays)}. Jours fériés inclus ; l’administrateur peut modifier ces jours. La répartition est entière et certains jours peuvent être à 0.</p>
+    <p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Jours fériés inclus ; l’administrateur peut modifier ces jours. La répartition est entière et certains jours peuvent être à 0.</p>
     {stale&&<div className="goal-conflict" role="alert"><span>Cet objectif a été modifié ailleurs.</span><button type="button" onClick={()=>loadService(service)}><RotateCw size={13}/> Recharger les valeurs</button></div>}
     {error&&<div className="form-error" role="alert">{error}</div>}
     {notice&&<div className="goal-saved" role="status">{notice}</div>}
@@ -77,7 +77,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
   </form>;
 }
 
-// Cinq jours habituels par vendeur ; seul l'administrateur voit ce formulaire.
+// Jours habituels par vendeur, du lundi au dimanche ; formulaire réservé à l'administration.
 export function WorkdaysForm({workdays,revision,onSave,disabled=false}) {
   const [selected,setSelected]=useState(()=>normalizeWorkdays(workdays));
   const [editRevision,setEditRevision]=useState(revision||null);
@@ -86,7 +86,7 @@ export function WorkdaysForm({workdays,revision,onSave,disabled=false}) {
   const changed=selected.join(',')!==normalizeWorkdays(workdays).join(',');
   function reload() {setSelected(normalizeWorkdays(workdays));setEditRevision(revision||null);setError('');setNotice('');}
   function toggle(day) {
-    setSelected(days=>(days.includes(day)?days.filter(x=>x!==day):[...days,day]).sort((a,b)=>a-b));
+    setSelected(days=>{const next=days.includes(day)?days.filter(x=>x!==day):[...days,day];return WORKDAY_ORDER.filter(x=>next.includes(x));});
     setError('');setNotice('');
   }
   async function submit(event) {
@@ -99,15 +99,15 @@ export function WorkdaysForm({workdays,revision,onSave,disabled=false}) {
     } catch(e){setError(e.message||'Impossible d’enregistrer les jours travaillés.');}
     finally{setBusy(false);}
   }
-  return <form className="workdays-form" onSubmit={submit}>
-    <div className="workdays-heading"><div><h4>Jours habituels du vendeur</h4><p>Choisissez exactement 5 jours, du lundi au samedi. Les jours fériés sont inclus.</p></div>{!revision&&<span>Par défaut · à vérifier</span>}</div>
+  return <form className="workdays-form" aria-labelledby="admin-workdays-title" onSubmit={submit}>
+    <div className="workdays-heading"><div><h4 id="admin-workdays-title">Jours travaillés</h4><p>Choisissez les jours habituels de ce vendeur, du lundi au dimanche. Sélectionnez au moins un jour.</p></div>{!revision&&<span>Par défaut · à vérifier</span>}</div>
     <fieldset className="workdays-list" disabled={busy||disabled}><legend className="sr-only">Jours travaillés de ce vendeur</legend>
-      {Object.entries(WORKDAY_NAMES).map(([id,name])=><label className={`workday-option ${selected.includes(Number(id))?'is-selected':''}`} key={id}>
-        <input type="checkbox" checked={selected.includes(Number(id))} onChange={()=>toggle(Number(id))}/><span>{name[0].toUpperCase()+name.slice(1)}</span>
+      {WORKDAY_ORDER.map(id=><label className={`workday-option ${selected.includes(id)?'is-selected':''}`} key={id}>
+        <input type="checkbox" checked={selected.includes(id)} onChange={()=>toggle(id)}/><span>{WORKDAY_NAMES[id][0].toUpperCase()+WORKDAY_NAMES[id].slice(1)}</span>
       </label>)}
     </fieldset>
-    <div className="workdays-actions"><span aria-live="polite">{selected.length} / 5 jours sélectionnés</span><button type="submit" className="outline-button" disabled={busy||disabled||stale||!validWorkdays(selected)||(!changed&&!!editRevision)}>{busy?'Enregistrement…':'Enregistrer les jours'}</button></div>
-    <p className="goal-form-hint">Le dimanche n’est pas prévu ; toute vente reste comptée. Ce planning se répète chaque semaine et ne gère pas les absences ponctuelles.</p>
+    <div className="workdays-actions"><span aria-live="polite">{selected.length} {selected.length>1?'jours sélectionnés':'jour sélectionné'}</span><button type="submit" className="outline-button" disabled={busy||disabled||stale||!validWorkdays(selected)||(!changed&&!!editRevision)}>{busy?'Enregistrement…':'Enregistrer les jours'}</button></div>
+    <p className="goal-form-hint">Jours fériés inclus. Le planning se répète chaque semaine et ne gère pas les absences ponctuelles ; toutes les ventes restent comptées.</p>
     {stale&&<div className="goal-conflict" role="alert"><span>Ces jours ont été modifiés ailleurs.</span><button type="button" onClick={reload}><RotateCw size={13}/> Recharger les jours</button></div>}
     {error&&<div className="form-error" role="alert">{error}</div>}{notice&&<div className="goal-saved" role="status">{notice}</div>}
   </form>;
@@ -145,6 +145,6 @@ export function GoalsPanel({seller,services,goals,workdays,workdaysDefault=false
       </article>;
     })}</div>}
     {error&&goals&&!offline&&<p className="goal-sync-warning">Dernières valeurs affichées · {error} <button type="button" onClick={onRetry}>Réessayer</button></p>}
-    {configured.length>0&&<p className="goal-caption">Jours habituels de {seller?.name||'votre profil'}{workdaysDefault?' (par défaut, à vérifier)':''} : {workdaysLabel(workdays)}. Jours fériés inclus ; toutes les ventes restent comptées dans les bilans.</p>}
+    {configured.length>0&&<p className="goal-caption">Jours travaillés de {seller?.name||'votre profil'}{workdaysDefault?' (par défaut, à vérifier)':''} : {workdaysLabel(workdays)}. Jours fériés inclus ; toutes les ventes restent comptées dans les bilans.</p>}
   </section>;
 }

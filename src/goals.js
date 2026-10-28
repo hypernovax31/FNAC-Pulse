@@ -2,14 +2,15 @@
 export const GOAL_PERIODS = ['day','week','month'];
 export const GOAL_LIMIT = 9999;
 export const GOAL_LABELS = {day:'Aujourd’hui',week:'Cette semaine',month:'Ce mois'};
-// JavaScript : lundi = 1 … samedi = 6 ; dimanche reste hors planning.
+// JavaScript : dimanche = 0, lundi = 1 … samedi = 6 ; affichage du lundi au dimanche.
 export const DEFAULT_WORKDAYS = Object.freeze([1,2,3,4,5]);
-export const WORKDAY_NAMES = Object.freeze({1:'lundi',2:'mardi',3:'mercredi',4:'jeudi',5:'vendredi',6:'samedi'});
+export const WORKDAY_ORDER = Object.freeze([1,2,3,4,5,6,0]);
+export const WORKDAY_NAMES = Object.freeze({1:'lundi',2:'mardi',3:'mercredi',4:'jeudi',5:'vendredi',6:'samedi',0:'dimanche'});
 export function validWorkdays(days) {
-  return Array.isArray(days)&&days.length===5&&new Set(days).size===5&&days.every(day=>Number.isInteger(day)&&day>=1&&day<=6);
+  return Array.isArray(days)&&days.length>=1&&days.length<=7&&new Set(days).size===days.length&&days.every(day=>Number.isInteger(day)&&day>=0&&day<=6);
 }
 export function normalizeWorkdays(days) {
-  return validWorkdays(days)?[...days].sort((a,b)=>a-b):[...DEFAULT_WORKDAYS];
+  return validWorkdays(days)?WORKDAY_ORDER.filter(day=>days.includes(day)):[...DEFAULT_WORKDAYS];
 }
 export function workdaysLabel(days) {
   return normalizeWorkdays(days).map(day=>WORKDAY_NAMES[day]).join(', ');
@@ -70,7 +71,7 @@ function distributed(amount,slots,index) {
 }
 function plannedForDate(reference,date,workdays) {
   const weekday=date.getUTCDay(),indexInWeek=workdays.indexOf(weekday)+1;
-  if(!indexInWeek)return 0; // Hors des cinq jours choisis, y compris le dimanche.
+  if(!indexInWeek)return 0; // Jour hors du planning choisi, dimanche compris si décoché.
   if(reference.period==='day')return reference.amount;
   if(reference.period==='week')return distributed(reference.amount,workdays.length,indexInWeek);
   const year=date.getUTCFullYear(),month=date.getUTCMonth(),length=monthDays(date);
@@ -79,8 +80,8 @@ function plannedForDate(reference,date,workdays) {
 }
 
 // Les semaines vont du lundi au dimanche ; une semaine à cheval sur deux mois
-// additionne les quotas des deux mois. Les cinq jours habituels sont propres au
-// vendeur et les jours fériés restent inclus lorsqu'ils tombent sur ces jours.
+// additionne les quotas des deux mois. Les jours habituels sont propres au
+// vendeur, dimanche compris si sélectionné ; les jours fériés restent inclus.
 export function goalTargets(entry,isoDate,days=DEFAULT_WORKDAYS) {
   const reference=goalReference(entry),date=parseDate(isoDate),workdays=normalizeWorkdays(days);
   if(!reference||!date)return null;

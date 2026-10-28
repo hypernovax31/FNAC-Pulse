@@ -215,7 +215,7 @@ export function createWorker(deps={}) {
   // protège deux éditions simultanées, sans écraser les cibles du vendeur.
   async function saveWorkdays(db,owner,body) {
     const {workdays,revision:expected}=body;
-    if(!validWorkdays(workdays))fail(400,'Choisissez exactement cinq jours différents entre lundi et samedi.');
+    if(!validWorkdays(workdays))fail(400,'Choisissez de un à sept jours différents, du lundi au dimanche.');
     if(expected!==null&&(typeof expected!=='string'||!SAFE_ID.test(expected)))fail(400,'Actualisez les jours travaillés avant de les modifier.');
     const goalPath=`pulseGoals/${owner.uid}`,statusPath=`pulseStatus/${owner.uid}`;
     for(let attempt=0;attempt<8;attempt++) {

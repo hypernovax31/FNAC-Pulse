@@ -101,13 +101,16 @@ test('Répartition mensuelle exacte sur tous les mois de douze années',()=>{
   }
 });
 
-test('Cinq jours personnalisés : validation, samedi, jour de repos et férié',()=>{
+test('Jours personnalisés : validation, samedi, jour de repos et férié',()=>{
   const saturday=[1,2,3,4,6];
   assert(validWorkdays(saturday));assert(validWorkdays([6,4,3,2,1]));
-  for(const invalid of [null,[],[1,2,3,4],[1,2,3,4,5,6],[1,1,2,3,4],[0,1,2,3,4],['1',2,3,4,5],[1,2,3,4,7]])assert.equal(validWorkdays(invalid),false);
+  for(const valid of [[0],[1,2,3,4],[1,2,3,4,5,6],[0,1,2,3,4,5,6]])assert.equal(validWorkdays(valid),true);
+  for(const invalid of [null,[],[1,1],[0,1,1,2,3,4,5,6],['1',2],[-1,0],[1,7],[NaN]])assert.equal(validWorkdays(invalid),false);
   assert.deepEqual(normalizeWorkdays([6,4,3,2,1]),saturday);
+  assert.deepEqual(normalizeWorkdays([0,6,1]),[1,6,0]);
   assert.deepEqual(normalizeWorkdays(null),[1,2,3,4,5]);
   assert.equal(workdaysLabel(saturday),'lundi, mardi, mercredi, jeudi, samedi');
+  assert.equal(workdaysLabel([0,6,1]),'lundi, samedi, dimanche');
   const daily={day:5};
   assert.deepEqual(goalTargets(daily,'2026-10-30',saturday),{day:0,week:25,month:110}); // Vendredi non travaillé.
   assert.deepEqual(goalTargets(daily,'2026-10-31',saturday),{day:5,week:25,month:110}); // Samedi travaillé.
@@ -136,6 +139,41 @@ test('Six plannings possibles : toutes les répartitions restent exactes',()=>{
         assert(dates.every(date=>goalTargets(goal,date,days).week===total));
         if(goal.week)assert.equal(total,13);
         if(goal.day)assert.equal(total,10);
+      }
+    }
+  }
+});
+
+test('Dimanche choisi, planning à 1, 3 ou 7 jours : objectifs jour, semaine et mois',()=>{
+  assert.deepEqual(goalTargets({day:5},'2026-10-25',[0]),{day:5,week:5,month:20});
+  assert.deepEqual(goalTargets({day:5},'2026-11-01',[0]),{day:5,week:5,month:25});
+  assert.deepEqual(goalTargets({day:5},'2026-10-26',[0]),{day:0,week:5,month:20});
+  assert.deepEqual(goalTargets({week:7},'2026-11-01',[0]),{day:7,week:7,month:35});
+  assert.deepEqual(goalTargets({month:10},'2026-11-01',[0]),{day:2,week:2,month:10});
+  assert.equal(goalTargets({week:5},'2026-10-27',[0,6,2]).day,2); // mardi
+  assert.equal(goalTargets({week:5},'2026-10-31',[0,6,2]).day,1); // samedi
+  assert.equal(goalTargets({week:5},'2026-11-01',[0,6,2]).day,2); // dimanche
+  assert.equal(goalTargets({day:5},'2026-11-01',[0,1,2,3,4,5,6]).week,35);
+  assert.equal(goalTargets({day:5},'2026-11-11',[0,1,2,3,4,5,6]).day,5); // Férié inclus.
+});
+
+test('Tous les 127 plannings possibles répartissent exactement les objectifs',()=>{
+  const daysOfWeek=[1,2,3,4,5,6,0];
+  for(let mask=1;mask<128;mask++) {
+    const days=daysOfWeek.filter((_,bit)=>mask&(1<<bit));
+    for(let month=1;month<=12;month++) {
+      const dates=isoDates(2028,month),targets=dates.map(date=>goalTargets({month:37},date,days));
+      assert.equal(targets.reduce((sum,target)=>sum+target.day,0),37,`mois ${month}, planning ${days}`);
+      assert(targets.every(target=>target.month===37));
+      for(let i=0;i<dates.length;i++)if(!days.includes(new Date(`${dates[i]}T12:00:00Z`).getUTCDay()))assert.equal(targets[i].day,0);
+    }
+    for(const monday of ['2026-10-26','2027-12-27','2028-02-28']) {
+      const dates=Array.from({length:7},(_,i)=>plusDays(monday,i));
+      for(const goal of [{month:13},{week:11},{day:2}]) {
+        const total=dates.reduce((sum,date)=>sum+goalTargets(goal,date,days).day,0);
+        assert(dates.every(date=>goalTargets(goal,date,days).week===total));
+        if(goal.week)assert.equal(total,11);
+        if(goal.day)assert.equal(total,2*days.length);
       }
     }
   }

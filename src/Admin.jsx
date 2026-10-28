@@ -41,7 +41,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [error,setError]=useState('');
   const [notice,setNotice]=useState('');
   const [busy,setBusy]=useState(false);
-  const [tab,setTab]=useState('sales');
+  const [tab,setTab]=useState(()=>session?.storeId?'sales':'stores');
   const [all,setAll]=useState({sellers:[],services:[],serviceOrders:{}});
   const [adminStore,setAdminStore]=useState(session?.storeId||'');
   const [adminSeller,setAdminSeller]=useState(session?.sellerId?String(session.sellerId):'');
@@ -141,6 +141,8 @@ export default function Admin({onClose,data,session,onChanged}) {
   const storeSellers=sellersForStore(all.sellers,adminStore,{activeOnly:false});
   const orderedServices=orderServices(all.services,all.serviceOrders,adminStore);
   const activeServices=orderedServices.filter(s=>s.active);
+  const adminStoreName=data.stores.find(s=>s.id===adminStore)?.name||'';
+  const needsStore=['sales','goals','sellers','services','pins'].includes(tab);
   function moveService(index,offset) {
     const ids=orderedServices.map(s=>s.id),target=index+offset;
     if(target<0||target>=ids.length)return;
@@ -160,18 +162,15 @@ export default function Admin({onClose,data,session,onChanged}) {
     </form>
   </Modal>;
 
-  return <Modal title="Administration" subtitle="Configurez votre espace en toute simplicité." onClose={onClose} wide>
+  return <Modal title="Administration" subtitle={adminStoreName?`Magasin sélectionné : ${adminStoreName}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={onClose} wide>
     <div className="admin-tabs" role="tablist" aria-label="Rubriques administration">
       {[['sales','Ventes'],['goals','Objectifs'],['sellers','Vendeurs'],['services','Services'],['stores','Magasins'],...(CLOUD?[['pins','Codes PIN']]:[]),['security','Sécurité']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} disabled={busy} onClick={()=>switchTab(key)} className={tab===key?'active':''}>{label}</button>)}
     </div>
     {error&&<div className="admin-alert error" role="alert">{error}</div>}
     {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
     <div className="admin-body">
-      {['sales','goals','sellers','services','pins'].includes(tab)&&<div className="admin-store-scope">
-        <label><span className="form-label">MAGASIN À GÉRER</span><select aria-label="Magasin à gérer" className="text-input" disabled={busy} value={adminStore} onChange={e=>changeStore(e.target.value)}><option value="">Choisir un magasin</option>{data.stores.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
-        <p>Vendeurs et ordre des services propres au magasin sélectionné.</p>
-      </div>}
-      {tab==='sales'&&<>
+      {needsStore&&!adminStore&&<div className="empty-admin">Choisissez d’abord le magasin dans l’onglet <button type="button" className="admin-inline-link" onClick={()=>switchTab('stores')}>Magasins</button>.</div>}
+      {tab==='sales'&&adminStore&&<>
         <div className="admin-section-heading"><div><h3>Ventes du jour</h3><p>Modifiez un total pour corriger une saisie. Les changements sont visibles immédiatement.</p></div></div>
         <div className="admin-selects admin-selects-single">
           <label><span className="form-label">Vendeur</span><select className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>setAdminSeller(e.target.value)}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
@@ -182,13 +181,16 @@ export default function Admin({onClose,data,session,onChanged}) {
         </div>:<div className="empty-admin">{countsLoading?'Chargement des ventes…':'Ventes indisponibles. Réessayez en changeant de sélection.'}</div>:<div className="empty-admin">Sélectionnez un magasin et un vendeur pour modifier les ventes.</div>}
         <div className="admin-note"><Info size={15}/> Les corrections ne déclenchent pas de notification de vente.</div>
       </>}
-      {tab==='goals'&&<>
-        <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Réglez ses cinq jours habituels, puis une cible par service. Les autres périodes sont calculées automatiquement.</p></div></div>
+      {tab==='goals'&&adminStore&&<>
+        <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Choisissez les jours travaillés, puis les objectifs par service. Les autres périodes sont calculées automatiquement.</p></div></div>
         <div className="admin-selects admin-selects-single"><label><span className="form-label">Vendeur</span><select aria-label="Vendeur pour les objectifs" className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>setAdminSeller(e.target.value)}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label></div>
-        {adminStore&&adminSeller ? goalsFor===`${adminStore}:${adminSeller}`&&adminGoals&&adminWorkdays ? <React.Fragment key={`${adminStore}:${adminSeller}`}><WorkdaysForm workdays={adminWorkdays} revision={adminWorkdaysRevision} onSave={saveAdminWorkdays} disabled={busy}/><GoalForm services={activeServices} goals={adminGoals} workdays={adminWorkdays} date={data.today} onSave={saveAdminGoals} disabled={busy}/></React.Fragment> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un magasin et un vendeur pour gérer ses objectifs.</div>}
+        {adminSeller ? goalsFor===`${adminStore}:${adminSeller}`&&adminGoals&&adminWorkdays ? <React.Fragment key={`${adminStore}:${adminSeller}`}>
+          <WorkdaysForm workdays={adminWorkdays} revision={adminWorkdaysRevision} onSave={saveAdminWorkdays} disabled={busy}/>
+          <section className="admin-goals-services" aria-labelledby="admin-goals-services-title"><div className="workdays-heading"><div><h4 id="admin-goals-services-title">Services</h4><p>Définissez une cible et sa période de référence pour chaque service.</p></div></div><GoalForm services={activeServices} goals={adminGoals} workdays={adminWorkdays} date={data.today} onSave={saveAdminGoals} disabled={busy}/></section>
+        </React.Fragment> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un vendeur pour gérer ses objectifs.</div>}
         <div className="admin-note"><Info size={15}/> Les objectifs se répètent et toute modification s’applique aux périodes suivantes.</div>
       </>}
-      {(tab==='sellers'||tab==='services')&&<>
+      {(tab==='sellers'||tab==='services')&&adminStore&&<>
         <div className="admin-section-heading"><div><h3>{tab==='sellers'?'Votre équipe':'Vos services'}</h3><p>{tab==='sellers'?'Les vendeurs sont propres à ce magasin et affichés par ordre alphabétique.':'Utilisez les flèches pour choisir l’ordre de ce magasin. Les noms et l’activation des services sont communs à tous les magasins.'} L’historique est conservé.</p></div></div>
         {!adminStore?<div className="empty-admin">Choisissez d’abord le magasin à gérer.</div>:<>
           <form className="add-entity" onSubmit={e=>{e.preventDefault();if(!name.trim())return;run(async()=>{await api(`/api/admin/entities/${tab}`,{method:'POST',token,body:{name,...(tab==='sellers'?{storeId:adminStore}:{})}});setName('');},tab==='sellers'?'Vendeur ajouté dans ce magasin.':'Service ajouté dans tous les magasins.');}}>
@@ -203,6 +205,10 @@ export default function Admin({onClose,data,session,onChanged}) {
         </>}
       </>}
       {tab==='stores'&&<>
+        <div className="admin-store-scope">
+          <label><span className="form-label">MAGASIN À GÉRER</span><select aria-label="Magasin à gérer" className="text-input" disabled={busy} value={adminStore} onChange={e=>changeStore(e.target.value)}><option value="">Choisir un magasin</option>{data.stores.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
+          <p>Ce choix s’applique aux ventes, objectifs, vendeurs, services et codes PIN de l’administration.</p>
+        </div>
         <div className="admin-section-heading"><div><h3>Ajouter un magasin</h3><p>Un magasin absent de la liste ? Ajoutez-le à votre espace.</p></div></div>
         <form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{await api('/api/admin/stores',{method:'POST',token,body:newStore});setNewStore({name:'',lat:'',lon:''});},'Magasin ajouté.')}}>
           <label><span className="form-label">Nom du magasin</span><input className="text-input" required maxLength={60} placeholder="Ex. Fnac Bordeaux" value={newStore.name} onChange={e=>setNewStore(v=>({...v,name:e.target.value}))}/></label>
@@ -211,7 +217,7 @@ export default function Admin({onClose,data,session,onChanged}) {
         </form>
         <div className="admin-note"><Store size={15}/> Les coordonnées permettent de proposer ce magasin lors de la géolocalisation. Liste initiale issue d’OpenStreetMap, susceptible d’être incomplète.</div>
       </>}
-      {CLOUD&&tab==='pins'&&<>
+      {CLOUD&&tab==='pins'&&adminStore&&<>
         <div className="admin-section-heading"><div><h3>Codes PIN individuels</h3><p>Définissez un code différent pour chaque vendeur et chaque magasin. Aucun code par défaut n’est créé.</p></div></div>
         <div className="admin-selects admin-selects-single">
           <label><span className="form-label">Vendeur</span><select className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>setAdminSeller(e.target.value)}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>

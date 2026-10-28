@@ -71,12 +71,14 @@ test('API Fnac Pulse : saisie, isolation, administration, push et persistance',a
     assert.deepEqual((await request(`/api/admin/goals?storeId=${store.id}&sellerId=${s2}`, 'GET',undefined,token)).value.goals,{});
     const schedule={storeId:store.id,sellerId:s1,workdays:[1,2,3,4,6],revision:null};
     assert.equal((await request('/api/admin/workdays','POST',schedule)).status,401);
-    assert.equal((await request('/api/admin/workdays','POST',{...schedule,workdays:[1,2,3,4]},token)).status,400);
+    assert.equal((await request('/api/admin/workdays','POST',{...schedule,workdays:[]},token)).status,400);
     assert.equal((await request('/api/admin/workdays','POST',{...schedule,storeId:other.id},token)).status,400);
     const planned=await request('/api/admin/workdays','POST',schedule,token);assert.equal(planned.status,200);
     assert.deepEqual(planned.value.workdays,[1,2,3,4,6]);
     assert.equal(planned.value.goals[`s${service}`].day,3);
     assert.equal((await request('/api/admin/workdays','POST',schedule,token)).status,409);
+    const withSunday=await request('/api/admin/workdays','POST',{...schedule,workdays:[0,6,2],revision:planned.value.workdaysRevision},token);
+    assert.equal(withSunday.status,200);assert.deepEqual(withSunday.value.workdays,[2,6,0]);
     assert.deepEqual((await request(`/api/goals?storeId=${store.id}&sellerId=${s2}`)).value.workdays,[1,2,3,4,5]);
 
     const name=first.value.sellers[0].name;
@@ -104,7 +106,7 @@ test('API Fnac Pulse : saisie, isolation, administration, push et persistance',a
     view=(await request(`/api/bootstrap?storeId=${store.id}&sellerId=${s1}`)).value;
     assert.equal(view.stats.day.total,3);assert.equal(view.stats.leaderboard[0].name,'Morgan Test');assert.equal(view.pushPublicKey,publicKey);
     const restored=(await request(`/api/goals?storeId=${store.id}&sellerId=${s1}`)).value;
-    assert.equal(restored.goals[`s${service}`].day,3);assert.deepEqual(restored.workdays,[1,2,3,4,6]);assert(restored.workdaysRevision);
+    assert.equal(restored.goals[`s${service}`].day,3);assert.deepEqual(restored.workdays,[2,6,0]);assert(restored.workdaysRevision);
     console.log('Ventes, isolation des magasins, administration, validation push et persistance : OK');
   } finally {await stop(server);fs.rmSync(temp,{recursive:true,force:true});}
 });

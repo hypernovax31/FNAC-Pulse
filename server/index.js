@@ -355,7 +355,7 @@ app.post('/api/admin/goals',requireAdmin,saveLocalGoals);
 app.post('/api/admin/workdays',requireAdmin,(req,res)=>{
   const {storeId,sellerId,workdays,revision}=req.body||{};
   if(!activeStore(storeId)||!activeSeller(sellerId,storeId))return failure(res,'Choisissez un vendeur de ce magasin.');
-  if(!validWorkdays(workdays))return failure(res,'Choisissez exactement cinq jours différents entre lundi et samedi.');
+  if(!validWorkdays(workdays))return failure(res,'Choisissez de un à sept jours différents, du lundi au dimanche.');
   if(revision!==null&&(typeof revision!=='string'||!/^[A-Za-z0-9_-]{8,80}$/.test(revision)))return failure(res,'Actualisez les jours travaillés avant de les modifier.');
   const old=db.prepare('SELECT revision FROM seller_workdays WHERE store_id=? AND seller_id=?').get(storeId,Number(sellerId));
   if((old?.revision||null)!==revision)return failure(res,'Les jours travaillés ont changé. Rechargez-les avant de recommencer.',409);

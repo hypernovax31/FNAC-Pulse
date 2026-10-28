@@ -438,6 +438,7 @@ p,h1,h2,h3 { margin:0; }
 .no-store-sellers { margin-top:9px; color:#876b18; font-size:11px; line-height:1.45; }
 .admin-store-scope { margin-bottom:18px; padding:12px; background:#f8f9f5; border:1px solid #edeee8; border-radius:8px; }
 .admin-store-scope p { margin-top:7px; color:#888b80; font-size:10px; line-height:1.4; }
+.admin-inline-link { padding:0; background:transparent; color:#93730a; font-size:inherit; font-weight:750; text-decoration:underline; }
 .admin-selects-single { grid-template-columns:1fr; }
 .entity-name { min-width:0; overflow-wrap:anywhere; }
 .entity-actions { flex:0 0 auto; }
@@ -652,7 +653,8 @@ p,h1,h2,h3 { margin:0; }
 .goal-conflict button { display:inline-flex; align-items:center; gap:4px; background:transparent; color:#8c690d; font-weight:800; }
 .goal-saved { color:#648464; font-size:10px; font-weight:750; }
 .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
-.workdays-form { display:flex; flex-direction:column; gap:12px; margin:0 0 18px; padding:15px; border:1px solid #eeeade; border-radius:8px; background:#fbfaf5; }
+.workdays-form { display:flex; flex-direction:column; gap:12px; margin:0 0 14px; padding:15px; border:1px solid #eeeade; border-radius:8px; background:#fbfaf5; }
+.admin-goals-services { display:flex; flex-direction:column; gap:15px; margin:0 0 18px; padding:15px; border:1px solid #edeee8; border-radius:8px; background:#fff; }
 .workdays-heading { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px; }
 .workdays-heading h4 { color:#41433c; font-size:12px; line-height:1.3; }
 .workdays-heading p { margin-top:5px; color:#888b80; font-size:10px; line-height:1.5; }
@@ -670,7 +672,8 @@ p,h1,h2,h3 { margin:0; }
 @media(max-width:1270px) { .goals-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:690px) { .goals-panel { margin-top:13px; padding:18px; } }
 @media(max-width:480px) { .goals-grid { grid-template-columns:1fr; } .goals-panel { padding:16px; } }
-@media(max-width:380px) { .workdays-list { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:380px) { .workdays-list { grid-template-columns:repeat(2,minmax(0,1fr)); } .goal-base-fields { grid-template-columns:1fr; } }
+@media(min-width:700px) { .workdays-list { grid-template-columns:repeat(4,minmax(0,1fr)); } }
 [data-theme='dark'] .goals-heading p,
 [data-theme='dark'] .goal-caption,
 [data-theme='dark'] .goal-form-hint,
@@ -680,6 +683,8 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .goals-empty p,
 [data-theme='dark'] .goal-metric-label { color:#b7bcae; }
 [data-theme='dark'] .workdays-form { background:#292b23; border-color:#514c37; }
+[data-theme='dark'] .admin-goals-services { background:#282c26; border-color:#3a3e36; }
+[data-theme='dark'] .admin-inline-link { color:#ecd073; }
 [data-theme='dark'] .workdays-heading h4 { color:#eeefe7; }
 [data-theme='dark'] .workdays-heading p,
 [data-theme='dark'] .workdays-actions > span { color:#b7bcae; }
