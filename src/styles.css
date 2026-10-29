@@ -313,6 +313,11 @@ p,h1,h2,h3 { margin:0; }
 .store-form { display:flex; flex-direction:column; gap:14px; align-items:flex-start; }
 .store-form > label,.store-form .admin-selects { width:100%; }
 .store-form .admin-selects { margin:0; }
+.directory-sync { margin-top:18px; padding:14px; border:1px solid var(--border); background:var(--panel); border-radius:9px; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.directory-sync strong { color:var(--ink); font-size:12px; }
+.directory-sync p { color:var(--muted); font-size:11px; line-height:1.5; margin-top:5px; }
+.directory-sync .outline-button { padding:0 12px; flex-shrink:0; }
+@media (max-width:520px) { .directory-sync { flex-direction:column; } }
 .optional { color:#b1b3aa; font-weight:500; letter-spacing:0; text-transform:none; }
 .logout-button { display:flex; align-items:center; gap:7px; background:none; color:#9c7168; font-size:11px; font-weight:700; padding:0; margin-top:23px; }
 .notification-details { display:flex; flex-direction:column; gap:12px; margin-bottom:20px; }

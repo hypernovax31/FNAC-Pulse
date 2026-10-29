@@ -176,3 +176,48 @@ test('SQLite départements : isolation, objectifs agrégés, transfert et persis
     assert.equal(restored.departmentsByStore[other],undefined);
   } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
 });
+
+test('SQLite annuaire Fnac : migration non destructive et idempotente des magasins',async()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'fnac-pulse-stores-'));
+  const old=new Database(path.join(folder,'pulse.sqlite'));
+  old.exec(`
+    CREATE TABLE settings (key TEXT PRIMARY KEY,value TEXT NOT NULL);
+    CREATE TABLE stores (id TEXT PRIMARY KEY,name TEXT NOT NULL,city TEXT NOT NULL DEFAULT '',address TEXT NOT NULL DEFAULT '',lat REAL,lon REAL,active INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE sellers (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,sort_order INTEGER NOT NULL DEFAULT 0,store_id TEXT);
+    CREATE TABLE services (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,icon TEXT NOT NULL DEFAULT 'other',active INTEGER NOT NULL DEFAULT 1,sort_order INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE sales (id TEXT PRIMARY KEY,request_id TEXT UNIQUE,store_id TEXT NOT NULL REFERENCES stores(id),seller_id INTEGER NOT NULL REFERENCES sellers(id),service_id INTEGER NOT NULL REFERENCES services(id),business_date TEXT NOT NULL,created_at TEXT NOT NULL,deleted_at TEXT,source TEXT NOT NULL DEFAULT 'sale');
+    CREATE TABLE seller_goals (store_id TEXT NOT NULL REFERENCES stores(id),seller_id INTEGER NOT NULL REFERENCES sellers(id),service_id INTEGER NOT NULL REFERENCES services(id),day INTEGER,week INTEGER,month INTEGER,revision TEXT NOT NULL,PRIMARY KEY(store_id,seller_id,service_id));
+    CREATE TABLE seller_workdays (store_id TEXT NOT NULL REFERENCES stores(id),seller_id INTEGER NOT NULL REFERENCES sellers(id),days TEXT NOT NULL,revision TEXT NOT NULL,PRIMARY KEY(store_id,seller_id));
+  `);
+  const insert=old.prepare('INSERT INTO stores(id,name,city,address,lat,lon,active) VALUES (?,?,?,?,?,?,?)');
+  insert.run(LEGACY_STORE_ID,'Fnac Labège','Labège','',43.551969,1.506877,1);
+  insert.run('osm-node-3782323705','Fnac Laval','Laval','5 Rue du Général de Gaulle',48.070549,-0.77434,1);
+  insert.run('osm-node-2445153699',"Fnac Toulouse – 77 Rue d'Alsace-Lorraine",'Toulouse',"77 Rue d'Alsace-Lorraine",43.607949,1.4455,1);
+  insert.run('osm-node-7619822721','Fnac Nantes','Nantes','',47.21,-1.55,0);
+  insert.run('custom-shop','Espace ajouté','', '',12,3,1);
+  old.prepare('INSERT INTO sellers(id,name,store_id) VALUES (?,?,?)').run(7,'Éric',LEGACY_STORE_ID);
+  old.prepare('INSERT INTO sellers(id,name,store_id) VALUES (?,?,?)').run(8,'Vendeur Laval','osm-node-3782323705');
+  old.prepare('INSERT INTO services(id,name,icon) VALUES (?,?,?)').run(1,'DMax','play');
+  old.prepare('INSERT INTO sales(id,store_id,seller_id,service_id,business_date,created_at) VALUES (?,?,?,?,?,?)').run('historique','osm-node-3782323705',8,1,'2026-10-01','2026-10-01T12:00:00Z');
+  old.prepare('INSERT INTO seller_goals VALUES (?,?,?,?,?,?,?)').run(LEGACY_STORE_ID,7,1,1,3,12,'revision-goal');
+  old.prepare('INSERT INTO seller_workdays VALUES (?,?,?,?)').run(LEGACY_STORE_ID,7,'[1,3,5]','revision-days');
+  old.close();const port=await freePort();let server;
+  try {
+    server=await start(port,folder);
+    const payload=await (await fetch(`http://127.0.0.1:${port}/api/bootstrap`)).json();
+    assert.equal(payload.stores.find(s=>s.fnacId==='cl57').id,LEGACY_STORE_ID);
+    assert.deepEqual(payload.directoryRegions,['Fnac Guadeloupe','Fnac La Réunion']);
+    assert(payload.stores.every(s=>s.directoryStatus!=='region'));
+    assert.equal(payload.stores.find(s=>s.fnacId==='cl449').id,'osm-node-3782323705');
+    assert.equal(payload.stores.find(s=>s.fnacId==='cl56').name,"Fnac Toulouse - Jeanne-d'Arc (Micro)");
+    assert(payload.stores.some(s=>s.id==='custom-shop'));
+    assert.equal(payload.sellers.find(s=>s.id===8).storeId,'osm-node-3782323705');
+    await stop(server);server=await start(port,folder);await stop(server);server=null;
+    const check=new Database(path.join(folder,'pulse.sqlite'),{readonly:true});
+    assert.equal(check.prepare("SELECT active FROM stores WHERE id='osm-node-7619822721'").get().active,0);
+    assert.equal(check.prepare("SELECT COUNT(*) n FROM stores WHERE fnac_id='cl57'").get().n,1);
+    assert.equal(check.prepare("SELECT store_id FROM sales WHERE id='historique'").get().store_id,'osm-node-3782323705');
+    assert.equal(check.prepare('SELECT month FROM seller_goals WHERE seller_id=7').get().month,12);
+    assert.equal(check.prepare('SELECT days FROM seller_workdays WHERE seller_id=7').get().days,'[1,3,5]');check.close();
+  } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
+});

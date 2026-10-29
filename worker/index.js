@@ -1,4 +1,7 @@
 import locations from '../server/locations.json' with {type:'json'};
+import directorySnapshot from '../server/fnac-directory.json' with {type:'json'};
+import { DIRECTORY_VERSION, mergeStoreDirectory, initialDirectorySync } from '../src/store-directory.js';
+import { fetchFnacDirectory, assertDirectoryCoverage, DirectorySourceError } from './fnac-source.js';
 import { FirestoreRest, FirebaseError, googleAccessToken, verifyIdToken, makeCustomToken, digestBase64, pinMac, verifyPin } from './firebase.js';
 import { LEGACY_STORE_ID, comparePeople, orderServices, sellerStoreId } from '../src/catalog.js';
 import { validGoalValues, GOAL_PERIODS, validWorkdays, normalizeWorkdays } from '../src/goals.js';
@@ -47,17 +50,22 @@ function scopedCatalog(data) {
     services:data.services.map(s=>({...s,...(!s.priorityCode&&s.id===1?{priorityCode:'dmax'}:!s.priorityCode&&s.id===5?{priorityCode:'fvd'}:{})})),
     serviceOrders:data.serviceOrders||{}});
 }
+function initialStores(stores) {
+  return mergeStoreDirectory(stores,directorySnapshot.stores,{legacyIds:locations.map(s=>s.id)});
+}
 function freshCatalog() {
   const sellers=SELLERS.map((name,i)=>({id:i+1,name,active:true,storeId:LEGACY_STORE_ID}));
   const services=SERVICES.map(([name,icon],i)=>({id:i+1,name,icon,active:true}));
-  const stores=locations.map(s=>({...s,active:true}));
-  return scopedCatalog({sellers,services,stores,nextSellerId:sellers.length+1,nextServiceId:services.length+1});
+  const merged=initialStores(locations.map(s=>({...s,active:true})));
+  return scopedCatalog({sellers,services,stores:merged.stores,nextSellerId:sellers.length+1,nextServiceId:services.length+1,
+    directoryRegions:directorySnapshot.unlinkedRegions.map(({name})=>name),
+    storeDirectoryVersion:DIRECTORY_VERSION,directorySync:{...initialDirectorySync(directorySnapshot),reviewCount:merged.review.length}});
 }
 const publicCatalog=(data,storeId)=>({
   sellers:data.sellers.filter(s=>s.active).sort(comparePeople).map(s=>({id:s.id,name:s.name,storeId:sellerStoreId(s),departmentId:sellerDepartmentId(s)})),
   services:orderServices(data.services.filter(s=>s.active),data.serviceOrders,storeId).map(({id,name,icon})=>({id,name,icon})),
-  departmentsByStore:data.departmentsByStore||{},
-  stores:data.stores.filter(s=>s.active).map(({active,...s})=>s),today:today(),stats:null,
+  departmentsByStore:data.departmentsByStore||{}, directoryRegions:data.directoryRegions||[],
+  stores:data.stores.filter(s=>s.active&&s.directoryStatus!=='region').map(({active,...s})=>s),today:today(),stats:null,
 });
 function validStore(data,id) {return typeof id==='string'&&STORE_ID.test(id)&&data.storeFlags[id]===true;}
 function sellerBy(data,id,storeId) {return isId(id)?data.sellers.find(s=>s.id===Number(id)&&s.active&&sellerStoreId(s)===storeId):null;}
@@ -87,14 +95,31 @@ async function catalog(db) {
     try {
       if(!c) {
         await db.commit([db.write('pulse/catalog',freshCatalog(),{exists:false})]);
-      } else if(c.data.catalogVersion!==2||!c.data.serviceOrders||c.data.sellers.some(s=>!s.storeId||c.data.sellerStores?.[`s${s.id}`]!==sellerStoreId(s))) {
-        const backupPath='pulseBackups/catalog-before-store-scoping-v1';
-        const backup=await db.get(backupPath);
+      } else {
+        const scopeNeeded=c.data.catalogVersion!==2||!c.data.serviceOrders||c.data.sellers.some(s=>!s.storeId||c.data.sellerStores?.[`s${s.id}`]!==sellerStoreId(s));
+        const directoryNeeded=c.data.storeDirectoryVersion!==DIRECTORY_VERSION;
+        if(!scopeNeeded&&!directoryNeeded)return c;
+        // La fusion clone les magasins qu’elle modifie ; ne pas recopier toutes
+        // les autres données du catalogue, surtout sur le plan Workers gratuit.
+        let next=scopeNeeded?scopedCatalog(c.data):{...c.data};
+        if(directoryNeeded) {
+          const merged=initialStores(next.stores);
+          next=withFlags({...next,stores:merged.stores,storeDirectoryVersion:DIRECTORY_VERSION,
+            directoryRegions:directorySnapshot.unlinkedRegions.map(({name})=>name),
+            directorySync:next.directorySync||{...initialDirectorySync(directorySnapshot),reviewCount:merged.review.length}});
+        }
         const writes=[];
-        if(!backup)writes.push(db.write(backupPath,{catalog:c.data,savedAt:new Date().toISOString()},{exists:false}));
-        writes.push(db.write('pulse/catalog',scopedCatalog(c.data),{updateTime:c.updateTime}));
-        await db.commit(writes);
-      } else return c;
+        for(const backupPath of [
+          ...(scopeNeeded?['pulseBackups/catalog-before-store-scoping-v1']:[]),
+          ...(directoryNeeded?['pulseBackups/catalog-before-fnac-directory-v1']:[]),
+        ]) {
+          if(!await db.get(backupPath))writes.push(db.write(backupPath,{catalog:c.data,savedAt:new Date().toISOString()},{exists:false}));
+        }
+        writes.push(db.write('pulse/catalog',next,{updateTime:c.updateTime}));
+        const committed=await db.commit(writes);
+        const updateTime=committed?.writeResults?.[writes.length-1]?.updateTime;
+        if(updateTime)return {...c,data:next,updateTime};
+      }
     } catch(e) {if(!conflict(e))throw e;}
   }
   throw new Error('Initialisation du catalogue impossible après modifications simultanées');
@@ -149,7 +174,45 @@ export function createWorker(deps={}) {
   const verify=deps.verifyIdToken || verifyIdToken;
   const custom=deps.makeCustomToken || makeCustomToken;
   const send=deps.sendFcm || sendFcm;
+  const directoryFetch=deps.fetchDirectory || fetch;
   let resetComplete=false;
+
+  async function refreshDirectory(db) {
+    const started=Date.now(),when=new Date(started).toISOString();
+    let source=null,result='ok';
+    try {
+      source=await fetchFnacDirectory(directoryFetch);
+      assertDirectoryCoverage(source.entries,(await catalog(db)).data.stores);
+    } catch(e) {
+      result=e instanceof DirectorySourceError?e.code:'unavailable';
+    }
+    // L'accès réseau peut durer plusieurs secondes : relire et fusionner le
+    // catalogue courant, avec précondition, après la réponse de Fnac.
+    for(let attempt=0;attempt<8;attempt++) {
+      const c=await catalog(db),old=c.data.directorySync||initialDirectorySync(directorySnapshot);
+      if(Date.parse(old.lastAttempt||0)>started)return {ok:false,result:'superseded'};
+      let merged=null;
+      if(source)try {
+        assertDirectoryCoverage(source.entries,c.data.stores);
+        merged=mergeStoreDirectory(c.data.stores,source.entries,{retireMissing:true});
+      } catch(e) {
+        source=null;result=e instanceof DirectorySourceError?e.code:'ambiguous';
+      }
+      const status={...old,lastAttempt:when,lastResult:merged?(merged.review.length?'review':'ok'):result};
+      if(merged)Object.assign(status,{verifiedAt:when,lastSuccessfulSync:when,reviewCount:merged.review.length,
+        review:merged.review.slice(0,50)});
+      const next=withFlags({...c.data,...(merged?{stores:merged.stores}:{}),directorySync:status});
+      const writes=[];
+      if(merged) {
+        const backupPath=`pulseBackups/catalog-before-fnac-sync-${when.slice(0,7)}`;
+        if(!await db.get(backupPath))writes.push(db.write(backupPath,{catalog:c.data,savedAt:when},{exists:false}));
+      }
+      writes.push(db.write('pulse/catalog',next,{updateTime:c.updateTime}));
+      try {await db.commit(writes);return {ok:!!merged,result:status.lastResult,reviewCount:status.reviewCount||0};}
+      catch(e){if(!conflict(e))throw e;}
+    }
+    throw new Error('Actualisation des magasins impossible après modifications simultanées');
+  }
   async function admin(req,env) {
     if(!env.ADMIN_UID)fail(503,'Administration non configurée.');
     let payload;try{payload=await verify(env,authHeader(req));}catch{fail(401,'Session administrateur expirée. Reconnectez-vous.');}
@@ -601,7 +664,8 @@ export function createWorker(deps={}) {
     if((method==='POST'||method==='DELETE')&&path==='/api/push/subscribe')return tokenSubscribe(req,env,db,await readBody(req),method);
     if(path.startsWith('/api/admin/')) {
       await admin(req,env);
-      if(method==='GET'&&path==='/api/admin/all'){const d=(await catalog(db)).data;return {sellers:d.sellers,services:d.services,serviceOrders:d.serviceOrders||{},departmentsByStore:d.departmentsByStore||{}};}
+      if(method==='GET'&&path==='/api/admin/all'){const d=(await catalog(db)).data;return {sellers:d.sellers,services:d.services,serviceOrders:d.serviceOrders||{},departmentsByStore:d.departmentsByStore||{},directorySync:d.directorySync||null};}
+      if(method==='POST'&&path==='/api/admin/stores/sync')return refreshDirectory(db);
       const department=path.match(/^\/api\/admin\/departments(?:\/([A-Za-z0-9_-]+))?$/);
       if(department&&((method==='POST'&&!department[1])||(method==='PATCH'&&department[1])))return mutateDepartment(db,department[1],await readBody(req),method);
       if(method==='POST'&&path==='/api/admin/pin-reset')return resetPin(db,await readBody(req));
@@ -643,8 +707,12 @@ export function createWorker(deps={}) {
         const res=response({error:message},status);for(const [k,v] of Object.entries(cors))res.headers.set(k,v);return res;
       }
     },
-    async scheduled(_event,env,ctx) {
+    async scheduled(event,env,ctx) {
       const db=createDb(env);
+      if(event.cron==='0 6 1 * *') {
+        ctx.waitUntil(refreshDirectory(db).catch(e=>console.warn('PULSE_DIRECTORY_SYNC',e?.code||e?.name||'error')));
+        return;
+      }
       ctx.waitUntil((async()=>{
         for(const status of ['pending','dispatching']) {
           const jobs=await db.query('pulseOutbox','status','EQUAL',status,1);

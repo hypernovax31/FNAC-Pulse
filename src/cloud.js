@@ -63,9 +63,9 @@ export async function changeAdminPassword(currentPassword,newPassword) {
 }
 function presentation(catalog,storeId) {
   return {
-    stores:catalog.stores.filter(x=>x.active).map(({active,...x})=>x),
+    stores:catalog.stores.filter(x=>x.active&&x.directoryStatus!=='region').map(({active,...x})=>x),
     sellers:catalog.sellers.filter(x=>x.active).sort(comparePeople).map(x=>({id:x.id,name:x.name,storeId:sellerStoreId(x),departmentId:sellerDepartmentId(x)})),
-    departmentsByStore:catalog.departmentsByStore||{},
+    departmentsByStore:catalog.departmentsByStore||{}, directoryRegions:catalog.directoryRegions||[],
     services:orderServices(catalog.services.filter(x=>x.active),catalog.serviceOrders,storeId).map(({id,name,icon})=>({id,name,icon})),
   };
 }

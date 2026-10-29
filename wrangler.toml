@@ -26,4 +26,6 @@ max_batch_timeout = 5
 max_retries = 8
 
 [triggers]
-crons = ["*/2 * * * *"]
+# Notifications : toutes les deux minutes. Annuaire Fnac : le 1er de chaque
+# mois à 06:00 UTC. En cas de refus, conserver la dernière liste vérifiée.
+crons = ["*/2 * * * *", "0 6 1 * *"]

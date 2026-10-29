@@ -10,6 +10,7 @@ import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
 import { CLOUD, observeVendor, sellerLogin, sellerChoosePin, sellerLogout, listenStore, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
 import { parisToday } from './cloud-stats';
 import { sellerStoreId } from './catalog';
+import { storeSelectionGroups } from './store-directory.js';
 import { departmentsForStore, sellerDepartmentId, sellersForDepartment } from './departments';
 import { serviceIconKey } from './service-icons';
 import { THEME_KEY, readTheme, applyTheme } from './theme';
@@ -93,6 +94,7 @@ function SessionForm({data,initialSession,initialProfile,onSubmit,onForgetProfil
   },[store,department,seller,statusRetry,unavailable]);
   const departments=store?departmentsForStore(data,store):[];
   const storeSellers=department?sellersForDepartment(data.sellers,store,department):[];
+  const storeGroups=storeSelectionGroups(data.stores,data.sellers,{selectedId:store});
   function clearSecrets(){setPin('');setNewPin('');setConfirmPin('');setFormError('');}
   function cancelLocate(){geoRequest.current++;setGeoBusy(false);setGeoText('');}
   const changeStore=value=>{if(value!==store){setDepartment('');setSeller('');clearSecrets();}setStore(value);};
@@ -103,11 +105,11 @@ function SessionForm({data,initialSession,initialProfile,onSubmit,onForgetProfil
     setGeoBusy(true);setGeoText('Recherche du magasin le plus proche…');
     navigator.geolocation.getCurrentPosition(({coords})=>{
       if(request!==geoRequest.current)return;
-      const located=data.stores.filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon)).map(s=>({ ...s, distance:kmBetween(coords.latitude,coords.longitude,s.lat,s.lon) })).sort((a,b)=>a.distance-b.distance);
+      const located=storeGroups.all.filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon)).map(s=>({ ...s, distance:kmBetween(coords.latitude,coords.longitude,s.lat,s.lon) })).sort((a,b)=>a.distance-b.distance);
       setGeoBusy(false);
       if(!located.length){setGeoText('Aucun magasin géolocalisé dans la liste.');return;}
       const nearest=located[0];changeStore(nearest.id);
-      setGeoText(`${nearest.name} proposé · à environ ${nearest.distance<1?`${Math.round(nearest.distance*1000)} m`:`${nearest.distance.toFixed(1).replace('.',',')} km`} (liste OpenStreetMap).`);
+      setGeoText(`${nearest.name} proposé · à environ ${nearest.distance<1?`${Math.round(nearest.distance*1000)} m`:`${nearest.distance.toFixed(1).replace('.',',')} km`}. Certains magasins n’ont pas de coordonnées.`);
     },err=>{if(request!==geoRequest.current)return;setGeoBusy(false);setGeoText(err.code===1?'Géolocalisation refusée. Vous pouvez choisir votre magasin dans la liste.':'Position indisponible. Choisissez votre magasin dans la liste.');},
     {enableHighAccuracy:false,timeout:12000,maximumAge:300000});
   };
@@ -139,8 +141,8 @@ function SessionForm({data,initialSession,initialProfile,onSubmit,onForgetProfil
     {fixed&&<div className="remembered-profile"><Avatar name={rememberedPerson.name} id={rememberedPerson.id}/><div><span>VOTRE PROFIL SUR CET APPAREIL</span><strong>{rememberedPerson.name}</strong><small>{rememberedStore.name} · {departments.find(d=>d.id===department)?.name||'Votre département'}</small></div></div>}
     <div className="session-fields">
       {!fixed&&<>
-        <label className="session-field store-field"><span>VOTRE MAGASIN</span><div className="select-wrap"><MapPin size={16}/><select aria-label="Votre magasin Fnac" value={store} onChange={e=>{cancelLocate();changeStore(e.target.value);}} disabled={formBusy} required><option value="">Choisir un magasin</option>{data.stores.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
-        <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver le magasin le plus proche" title="Trouver le magasin le plus proche" disabled={geoBusy||formBusy}><Crosshair size={17}/></button>
+        <label className="session-field store-field"><span>VOTRE MAGASIN</span><div className="select-wrap"><MapPin size={16}/><select aria-label="Votre magasin Fnac" value={store} onChange={e=>{cancelLocate();changeStore(e.target.value);}} disabled={formBusy} required><option value="">Choisir un magasin</option>{storeGroups.official.length>0&&<optgroup label="Annuaire Fnac">{storeGroups.official.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>}{storeGroups.other.length>0&&<optgroup label="Magasins ajoutés ou historiques">{storeGroups.other.map(s=><option key={s.id} value={s.id}>{s.name}{s.directoryStatus==='historical'?' · ancien catalogue':''}</option>)}</optgroup>}{data.directoryRegions?.length>0&&<optgroup label="Régions sans fiche magasin · relevé 2026">{data.directoryRegions.map(name=><option key={name} value="" disabled>{name} · magasin non précisé</option>)}</optgroup>}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+        <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver un magasin proche" title="Trouver un magasin proche parmi ceux géolocalisés" disabled={geoBusy||formBusy}><Crosshair size={17}/></button>
         <label className="session-field department-field"><span>VOTRE DÉPARTEMENT</span><div className="select-wrap"><UsersRound size={16}/><select aria-label="Votre département" value={department} onChange={e=>{cancelLocate();changeDepartment(e.target.value);}} disabled={formBusy||!store||!departments.length} required><option value="">Choisir un département</option>{departments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
         <label className="session-field seller-field"><span>VOTRE PROFIL</span><div className="select-wrap"><UserRound size={16}/><select aria-label="Votre profil vendeur" value={seller} onChange={e=>{cancelLocate();setSeller(e.target.value);clearSecrets();}} disabled={formBusy||!department||!storeSellers.length} required><option value="">{department&&!storeSellers.length?'Aucun vendeur dans ce département':'Choisir un vendeur'}</option>{storeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
       </>}

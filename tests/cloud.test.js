@@ -6,6 +6,8 @@ import {pinProof} from '../src/pin.js';
 import {summarize,periodStarts,earliestDate,parisToday} from '../src/cloud-stats.js';
 import {LEGACY_STORE_ID,sellersForStore,orderServices} from '../src/catalog.js';
 import {createSaleAnnouncer} from '../src/live-sales.js';
+import legacyLocations from '../server/locations.json' with {type:'json'};
+import directorySnapshot from '../server/fnac-directory.json' with {type:'json'};
 
 class MemoryDb {
   docs=new Map();n=0;
@@ -598,4 +600,102 @@ test('Réinitialisation concurrente : aucune vente ou annulation après révocat
   shouldRace=true;
   assert.equal((await req('/api/sales/race-sale-delete-001','DELETE',{},'seller')).status,409);
   assert.equal((await db.get(`pulseStores/${storeId}/sales/race-sale-delete-001`)).data.deletedAt,null);
+});
+
+test('Annuaire cloud : migration atomique, données historiques et modification administrateur simultanée',async()=>{
+  const db=new MemoryDb(),worker=createWorker({createDb:()=>db});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac'},ctx={waitUntil(){}};
+  const call=()=>worker.fetch(new Request('https://worker.test/api/bootstrap'),env,ctx);
+  assert.equal((await call()).status,200);
+  const legacy=(await db.get('pulse/catalog')).data;
+  legacy.stores=legacyLocations.map(s=>({...s,active:true}));
+  legacy.stores.find(s=>s.id==='osm-node-3782323705').extra='propriété préservée';
+  legacy.stores.find(s=>s.name==='Fnac Nantes').active=false;
+  legacy.stores.push({id:'custom-before',name:'Magasin personnalisé',active:true,lat:12,lon:5});
+  legacy.sellers.push({id:13,name:'Vendeur Laval',active:true,storeId:'osm-node-3782323705',departmentId:'tech'});
+  legacy.nextSellerId=14;legacy.sellerStores.s13='osm-node-3782323705';legacy.sellerFlags.s13=true;
+  delete legacy.storeDirectoryVersion;delete legacy.directorySync;
+  const pin={storeId:'osm-node-3782323705',sellerId:13,pinMac:'hash-défini',version:'v1',active:true};
+  const sale={id:'vente-historique',storeId:LEGACY_STORE_ID,sellerId:1,serviceId:1,businessDate:'2026-10-15'};
+  const goals={storeId:LEGACY_STORE_ID,sellerId:1,goals:{s1:{month:12}},workdays:[1,2,3,4,5]};
+  await db.commit([db.write('pulse/catalog',legacy),db.write('pulseAccess/existing',pin),db.write('pulseGoals/existing',goals),db.write(`pulseStores/${LEGACY_STORE_ID}/sales/vente-historique`,sale)]);
+  const commit=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path==='pulseBackups/catalog-before-fnac-directory-v1')) {
+      raced=true;const concurrent=(await db.get('pulse/catalog')).data;
+      concurrent.stores.push({id:'custom-race',name:'Ajout simultané',active:true,lat:1,lon:1});
+      await commit([db.write('pulse/catalog',concurrent)]);
+    }
+    return commit(writes);
+  };
+  const a=await call();assert.equal(a.status,200);assert(raced);
+  const repeats=await Promise.all([call(),call()]);assert(repeats.every(response=>response.status===200));
+  const now=(await db.get('pulse/catalog')).data,backup=await db.get('pulseBackups/catalog-before-fnac-directory-v1');
+  assert(backup.data.catalog.stores.some(s=>s.id==='custom-race'));
+  assert(now.stores.some(s=>s.id==='custom-race')&&now.stores.some(s=>s.id==='custom-before'));
+  assert.equal(now.stores.find(s=>s.fnacId==='cl57').id,LEGACY_STORE_ID);
+  assert.deepEqual(now.directoryRegions,['Fnac Guadeloupe','Fnac La Réunion']);
+  assert(now.stores.every(s=>s.directoryStatus!=='region'));
+  const laval=now.stores.find(s=>s.fnacId==='cl449');assert.equal(laval.id,'osm-node-3782323705');assert.equal(laval.extra,'propriété préservée');
+  assert.equal(now.stores.find(s=>s.name==='Fnac Nantes').active,false);
+  assert.equal(now.sellers.find(s=>s.id===13).storeId,'osm-node-3782323705');
+  assert.deepEqual((await db.get('pulseAccess/existing')).data,pin);
+  assert.deepEqual((await db.get('pulseGoals/existing')).data,goals);
+  assert.deepEqual((await db.get(`pulseStores/${LEGACY_STORE_ID}/sales/vente-historique`)).data,sale);
+  const saved=backup.updateTime;await call();assert.equal((await db.get('pulseBackups/catalog-before-fnac-directory-v1')).updateTime,saved);
+});
+
+function simulatedFnacPage(entries,declared=entries.length+2) {
+  const list=entries.map(s=>`<a href="https://www.fnac.com/ville/fiche/${s.fnacId}/w-4">${s.name.replace(/^Fnac /,'').replaceAll('&','&amp;')}</a>`).join('');
+  return `<!doctype html><html><body><h1>Trouver un magasin Fnac</h1><span>${declared}</span><span>Magasins</span>${list}</body></html>`;
+}
+test('Annuaire cloud : refus, essai mensuel, succès simulé concurrent et liste partielle sans perte',async()=>{
+  const db=new MemoryDb();let supplied=new Response('Fnac refuse les requêtes automatiques',{status:403});
+  const worker=createWorker({createDb:()=>db,fetchDirectory:async()=>supplied.clone(),verifyIdToken:async(_env,t)=>{if(t!=='admin')throw Error();return {sub:'admin-uid'};}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'admin-uid'},waiting=[],ctx={waitUntil(p){waiting.push(p)}};
+  const req=async(path,method='GET',token)=>{
+    const response=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:token?{authorization:`Bearer ${token}`}:{}}),env,ctx);
+    return {status:response.status,body:await response.json()};
+  };
+  assert.equal((await req('/api/bootstrap')).status,200);
+  const pin={storeId:LEGACY_STORE_ID,sellerId:1,pinMac:'hash-préservé',active:true,version:'same'};
+  const sale={id:'ancienne',sellerId:1,storeId:LEGACY_STORE_ID};
+  await db.commit([db.write('pulseAccess/x',pin),db.write(`pulseStores/${LEGACY_STORE_ID}/sales/ancienne`,sale)]);
+  const before=(await db.get('pulse/catalog')).data;
+  assert.equal((await req('/api/admin/stores/sync','POST')).status,401);
+  await worker.scheduled({cron:'0 6 1 * *'},env,ctx);await Promise.all(waiting.splice(0));
+  let after=(await db.get('pulse/catalog')).data;
+  assert.equal(after.directorySync.lastResult,'blocked');assert.deepEqual(after.stores,before.stores);assert.deepEqual(after.sellers,before.sellers);
+  assert.equal((await req('/api/admin/stores/sync','POST','admin')).body.result,'blocked');
+
+  const fresh=directorySnapshot.stores.filter(s=>s.fnacId!=='cl124').map(s=>s.fnacId==='cl57'?{...s,name:'Fnac Labège Centrale'}:s);
+  fresh.push({fnacId:'cl9999',name:'Fnac Nouvelle de test'});
+  supplied=new Response(simulatedFnacPage(fresh),{status:200,headers:{'content-type':'text/html'}});
+  const commit=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path.startsWith('pulseBackups/catalog-before-fnac-sync-'))) {
+      raced=true;const concurrent=(await db.get('pulse/catalog')).data;
+      concurrent.stores.push({id:'custom-at-sync',name:'Ajout pendant la vérification',active:true});
+      await commit([db.write('pulse/catalog',concurrent)]);
+    }
+    return commit(writes);
+  };
+  const ok=await req('/api/admin/stores/sync','POST','admin');assert.equal(ok.status,200);assert.equal(ok.body.ok,true);assert(raced);
+  after=(await db.get('pulse/catalog')).data;
+  assert.equal(after.stores.find(s=>s.fnacId==='cl57').id,LEGACY_STORE_ID);
+  assert.equal(after.stores.find(s=>s.fnacId==='cl57').name,'Fnac Labège Centrale');
+  assert.equal(after.stores.find(s=>s.fnacId==='cl124').directoryStatus,'historical');
+  assert.equal(after.stores.find(s=>s.fnacId==='cl124').active,true);
+  assert.equal(after.stores.find(s=>s.fnacId==='cl9999').id,'fnac-cl9999');
+  assert(after.stores.some(s=>s.id==='custom-at-sync'));
+  assert.deepEqual(after.sellers,before.sellers);
+  assert.deepEqual((await db.get('pulseAccess/x')).data,pin);
+  assert.deepEqual((await db.get(`pulseStores/${LEGACY_STORE_ID}/sales/ancienne`)).data,sale);
+  assert(await db.get(`pulseBackups/catalog-before-fnac-sync-${new Date().toISOString().slice(0,7)}`));
+
+  const safe=structuredClone(after.stores);
+  supplied=new Response(simulatedFnacPage(fresh.slice(0,100),191),{status:200});
+  await worker.scheduled({cron:'0 6 1 * *'},env,ctx);await Promise.all(waiting.splice(0));
+  after=(await db.get('pulse/catalog')).data;
+  assert.equal(after.directorySync.lastResult,'incomplete');assert.deepEqual(after.stores,safe);
 });

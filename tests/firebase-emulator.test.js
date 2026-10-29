@@ -7,6 +7,7 @@ import { FirestoreRest, digestBase64, pinMac } from '../worker/firebase.js';
 import { createWorker } from '../worker/index.js';
 import { pinProof } from '../src/pin.js';
 import { LEGACY_STORE_ID } from '../src/catalog.js';
+import legacyLocations from '../server/locations.json' with {type:'json'};
 
 const enabled=!!process.env.FIRESTORE_EMULATOR_HOST;
 const b64=x=>Buffer.from(JSON.stringify(x)).toString('base64url');
@@ -46,6 +47,8 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     assert.equal((await call('/api/bootstrap')).status,200);
     const legacy=(await storeDb.get('pulse/catalog')).data;
     delete legacy.catalogVersion;delete legacy.sellerStores;delete legacy.serviceOrders;
+    delete legacy.storeDirectoryVersion;delete legacy.directorySync;
+    legacy.stores=legacyLocations.map(s=>({...s,active:true}));
     legacy.sellers=legacy.sellers.map(({storeId,...s})=>s);
     legacy.services=legacy.services.map(({priorityCode,...s})=>s);
     const oldAccess={active:true,storeId:LEGACY_STORE_ID,sellerId:1,version:'existing',pinMac:'existing-pin-hash'};
@@ -54,7 +57,13 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     const bootstrap=await call('/api/bootstrap');assert.equal(bootstrap.status,200);
     const backup=await storeDb.get('pulseBackups/catalog-before-store-scoping-v1');
     assert.equal(backup.data.catalog.sellers[0].storeId,undefined);
-    assert.equal((await storeDb.get('pulse/catalog')).data.sellerStores.s1,LEGACY_STORE_ID);
+    const directoryBackup=await storeDb.get('pulseBackups/catalog-before-fnac-directory-v1');
+    assert.equal(directoryBackup.data.catalog.stores.length,180);
+    const migratedCatalog=(await storeDb.get('pulse/catalog')).data;
+    assert.equal(migratedCatalog.sellerStores.s1,LEGACY_STORE_ID);
+    assert.equal(migratedCatalog.stores.find(s=>s.fnacId==='cl57').id,LEGACY_STORE_ID);
+    assert.equal(migratedCatalog.stores.find(s=>s.fnacId==='cl449').id,'osm-node-3782323705');
+    assert.equal(migratedCatalog.stores.filter(s=>s.directoryStatus==='official').length,189);
     assert.deepEqual((await storeDb.get('pulseAccess/legacy-record')).data,oldAccess);
     assert.deepEqual((await storeDb.get(`pulseStores/${LEGACY_STORE_ID}/sales/historic`)).data,oldSale);
     const store=LEGACY_STORE_ID,other=bootstrap.json.stores.find(s=>s.name==='Fnac Bordeaux').id;

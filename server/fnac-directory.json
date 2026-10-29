@@ -1,0 +1,932 @@
+{
+  "source": "https://www.fnac.com/localiser-magasin-fnac/w-4",
+  "reviewedAt": "2026-10-29",
+  "declaredCount": 191,
+  "stores": [
+    {
+      "fnacId": "cl296",
+      "name": "Fnac Aéroport Lyon St-Exupéry T1",
+      "legacyId": "osm-node-5775254834"
+    },
+    {
+      "fnacId": "cl456",
+      "name": "Fnac Aéroport Marseille-Provence"
+    },
+    {
+      "fnacId": "cl224",
+      "name": "Fnac Aéroport Orly 1 ZP",
+      "legacyId": "osm-way-510279920"
+    },
+    {
+      "fnacId": "cl495",
+      "name": "Fnac Aéroport Orly 3"
+    },
+    {
+      "fnacId": "cl314",
+      "name": "Fnac Aéroport Orly 4"
+    },
+    {
+      "fnacId": "cl692",
+      "name": "Fnac Aéroport Orly corners"
+    },
+    {
+      "fnacId": "cl693",
+      "name": "Fnac Aéroport Roissy CDG corners"
+    },
+    {
+      "fnacId": "cl697",
+      "name": "Fnac Aéroport Roissy CDG T1"
+    },
+    {
+      "fnacId": "cl485",
+      "name": "Fnac Aéroport Roissy CDG T1 ZP"
+    },
+    {
+      "fnacId": "cl691",
+      "name": "Fnac Aéroport Roissy CDG T2 liaison BD",
+      "legacyId": "osm-node-12112956201"
+    },
+    {
+      "fnacId": "cl316",
+      "name": "Fnac Aéroport Roissy CDG T2E K"
+    },
+    {
+      "fnacId": "cl461",
+      "name": "Fnac Aéroport Roissy CDG T2E L S3"
+    },
+    {
+      "fnacId": "cl280",
+      "name": "Fnac Aéroport Roissy CDG T2E M"
+    },
+    {
+      "fnacId": "cl348",
+      "name": "Fnac Aéroport Roissy CDG T2F"
+    },
+    {
+      "fnacId": "cl457",
+      "name": "Fnac Aéroport Roissy CDG T3"
+    },
+    {
+      "fnacId": "cl460",
+      "name": "Fnac Aéroport Toulouse Blagnac Hall C/D ZR"
+    },
+    {
+      "fnacId": "cl124",
+      "name": "Fnac Aix-en-Provence",
+      "legacyId": "osm-node-12539025850"
+    },
+    {
+      "fnacId": "cl355",
+      "name": "Fnac Ajaccio",
+      "legacyId": "osm-node-4409245040"
+    },
+    {
+      "fnacId": "cl436",
+      "name": "Fnac Ajaccio Atrium",
+      "legacyId": "osm-node-11500331295"
+    },
+    {
+      "fnacId": "cl499",
+      "name": "Fnac Albi",
+      "legacyId": "osm-node-11153189794"
+    },
+    {
+      "fnacId": "cl439",
+      "name": "Fnac Alençon 3",
+      "legacyId": "osm-node-5849900586"
+    },
+    {
+      "fnacId": "cl487",
+      "name": "Fnac Alès",
+      "legacyId": "osm-node-8104959046"
+    },
+    {
+      "fnacId": "cl123",
+      "name": "Fnac Amiens",
+      "legacyId": "osm-node-3901896334"
+    },
+    {
+      "fnacId": "cl122",
+      "name": "Fnac Angers",
+      "legacyId": "osm-node-1405652413"
+    },
+    {
+      "fnacId": "cl121",
+      "name": "Fnac Annecy",
+      "legacyId": "osm-way-889285932"
+    },
+    {
+      "fnacId": "cl250",
+      "name": "Fnac Annemasse",
+      "legacyId": "osm-node-1888725580"
+    },
+    {
+      "fnacId": "cl498",
+      "name": "Fnac Annonay",
+      "legacyId": "osm-node-11032099799"
+    },
+    {
+      "fnacId": "cl478",
+      "name": "Fnac Arles",
+      "legacyId": "osm-node-6863454143"
+    },
+    {
+      "fnacId": "cl354",
+      "name": "Fnac Aubenas",
+      "legacyId": "osm-way-67933326"
+    },
+    {
+      "fnacId": "cl628",
+      "name": "Fnac Aurillac",
+      "legacyId": "osm-node-10135617478"
+    },
+    {
+      "fnacId": "cl120",
+      "name": "Fnac Avignon",
+      "legacyId": "osm-node-10748161134"
+    },
+    {
+      "fnacId": "cl119",
+      "name": "Fnac Avignon - Le Pontet",
+      "legacyId": "osm-way-124905526"
+    },
+    {
+      "fnacId": "cl504",
+      "name": "Fnac Bastia",
+      "legacyId": "osm-way-223689813"
+    },
+    {
+      "fnacId": "cl118",
+      "name": "Fnac Bayonne",
+      "legacyId": "osm-node-2135468478"
+    },
+    {
+      "fnacId": "cl501",
+      "name": "Fnac Beaune",
+      "legacyId": "osm-node-9439086655"
+    },
+    {
+      "fnacId": "cl117",
+      "name": "Fnac Belfort",
+      "legacyId": "osm-node-5231028758"
+    },
+    {
+      "fnacId": "cl349",
+      "name": "Fnac Belleville-sur-Saône",
+      "legacyId": "osm-way-140597446"
+    },
+    {
+      "fnacId": "cl451",
+      "name": "Fnac Bergerac",
+      "legacyId": "osm-node-12171326655"
+    },
+    {
+      "fnacId": "cl463",
+      "name": "Fnac Besançon",
+      "legacyId": "osm-way-973602012"
+    },
+    {
+      "fnacId": "cl416",
+      "name": "Fnac Biganos",
+      "legacyId": "osm-node-10096464422"
+    },
+    {
+      "fnacId": "cl116",
+      "name": "Fnac Bordeaux",
+      "legacyId": "osm-node-3269635761"
+    },
+    {
+      "fnacId": "cl115",
+      "name": "Fnac Bordeaux-Lac",
+      "legacyId": "osm-way-1049251411"
+    },
+    {
+      "fnacId": "cl114",
+      "name": "Fnac Boulogne",
+      "legacyId": "osm-node-3239199371"
+    },
+    {
+      "fnacId": "cl339",
+      "name": "Fnac Boulogne-sur-Mer",
+      "legacyId": "osm-way-96177750"
+    },
+    {
+      "fnacId": "cl401",
+      "name": "Fnac Bourg-en-Bresse",
+      "legacyId": "osm-node-7087215893"
+    },
+    {
+      "fnacId": "cl113",
+      "name": "Fnac Bourges",
+      "legacyId": "osm-node-288926229"
+    },
+    {
+      "fnacId": "cl112",
+      "name": "Fnac Brest",
+      "legacyId": "osm-node-10937232207"
+    },
+    {
+      "fnacId": "cl111",
+      "name": "Fnac Caen",
+      "legacyId": "osm-node-1635280506"
+    },
+    {
+      "fnacId": "cl398",
+      "name": "Fnac Cagnes-sur-Mer",
+      "legacyId": "osm-node-6109533243"
+    },
+    {
+      "fnacId": "cl110",
+      "name": "Fnac Cannes",
+      "legacyId": "osm-node-7515755392"
+    },
+    {
+      "fnacId": "cl400",
+      "name": "Fnac Capvern",
+      "legacyId": "osm-way-688096173"
+    },
+    {
+      "fnacId": "cl629",
+      "name": "Fnac Carre Senart"
+    },
+    {
+      "fnacId": "cl109",
+      "name": "Fnac Cergy"
+    },
+    {
+      "fnacId": "cl506",
+      "name": "Fnac Chalon-sur-Saône",
+      "legacyId": "osm-node-11091105505"
+    },
+    {
+      "fnacId": "cl251",
+      "name": "Fnac Chambéry",
+      "legacyId": "osm-node-1522513537"
+    },
+    {
+      "fnacId": "cl279",
+      "name": "Fnac Chambourcy",
+      "legacyId": "osm-way-165525164"
+    },
+    {
+      "fnacId": "cl108",
+      "name": "Fnac Chartres",
+      "legacyId": "osm-node-13165491588"
+    },
+    {
+      "fnacId": "cl480",
+      "name": "Fnac Châteauroux",
+      "legacyId": "osm-node-7097955254"
+    },
+    {
+      "fnacId": "cl507",
+      "name": "Fnac Cherbourg",
+      "legacyId": "osm-node-10167025994"
+    },
+    {
+      "fnacId": "cl497",
+      "name": "Fnac Claye-Souilly",
+      "legacyId": "osm-node-10949233559"
+    },
+    {
+      "fnacId": "cl107",
+      "name": "Fnac Clermont-Ferrand",
+      "legacyId": "osm-way-455394647"
+    },
+    {
+      "fnacId": "cl106",
+      "name": "Fnac Colmar"
+    },
+    {
+      "fnacId": "cl340",
+      "name": "Fnac Compiègne 3",
+      "legacyId": "osm-node-13816742490"
+    },
+    {
+      "fnacId": "cl351",
+      "name": "Fnac Crest",
+      "legacyId": "osm-node-3289623011"
+    },
+    {
+      "fnacId": "cl105",
+      "name": "Fnac Créteil"
+    },
+    {
+      "fnacId": "cl104",
+      "name": "Fnac Croix-Blanche",
+      "legacyId": "osm-way-135598547"
+    },
+    {
+      "fnacId": "cl502",
+      "name": "Fnac Dax",
+      "legacyId": "osm-way-1010279594"
+    },
+    {
+      "fnacId": "cl696",
+      "name": "Fnac Deauville",
+      "legacyId": "osm-node-14091773537"
+    },
+    {
+      "fnacId": "cl103",
+      "name": "Fnac Dijon",
+      "legacyId": "osm-node-13194660156"
+    },
+    {
+      "fnacId": "cl381",
+      "name": "Fnac Dinard-Pleurtuit",
+      "legacyId": "osm-way-474681860"
+    },
+    {
+      "fnacId": "cl357",
+      "name": "Fnac Dole",
+      "legacyId": "osm-node-4754965581"
+    },
+    {
+      "fnacId": "cl448",
+      "name": "Fnac Douai 3"
+    },
+    {
+      "fnacId": "cl445",
+      "name": "Fnac Farébersviller 3",
+      "legacyId": "osm-node-6985246076"
+    },
+    {
+      "fnacId": "cl477",
+      "name": "Fnac Fenouillet"
+    },
+    {
+      "fnacId": "cl101",
+      "name": "Fnac Gennevilliers",
+      "legacyId": "osm-node-3751665168"
+    },
+    {
+      "fnacId": "cl483",
+      "name": "Fnac Givet",
+      "legacyId": "osm-node-10055608698"
+    },
+    {
+      "fnacId": "cl100",
+      "name": "Fnac Grenoble - Grand Place",
+      "legacyId": "osm-way-512915173"
+    },
+    {
+      "fnacId": "cl99",
+      "name": "Fnac Grenoble - Victor Hugo",
+      "legacyId": "osm-node-401364026"
+    },
+    {
+      "fnacId": "cl98",
+      "name": "Fnac Herblay",
+      "legacyId": "osm-node-963484290"
+    },
+    {
+      "fnacId": "cl695",
+      "name": "Fnac Isle d'Abeau",
+      "legacyId": "osm-node-2286934649"
+    },
+    {
+      "fnacId": "cl470",
+      "name": "Fnac Issoire",
+      "legacyId": "osm-node-13363707509"
+    },
+    {
+      "fnacId": "cl97",
+      "name": "Fnac La Défense-CNIT",
+      "legacyId": "osm-node-12186972143"
+    },
+    {
+      "fnacId": "cl489",
+      "name": "Fnac La Gorgue"
+    },
+    {
+      "fnacId": "cl466",
+      "name": "Fnac La Rochelle",
+      "legacyId": "osm-node-6505508177"
+    },
+    {
+      "fnacId": "cl287",
+      "name": "Fnac La Roche-sur-Yon",
+      "legacyId": "osm-way-377860496"
+    },
+    {
+      "fnacId": "cl57",
+      "name": "Fnac Labège",
+      "legacyId": "osm-way-386504727"
+    },
+    {
+      "fnacId": "cl724",
+      "name": "Fnac Lampertheim"
+    },
+    {
+      "fnacId": "cl428",
+      "name": "Fnac Lannion",
+      "legacyId": "osm-node-5462923821"
+    },
+    {
+      "fnacId": "cl449",
+      "name": "Fnac Laval",
+      "legacyId": "osm-node-3782323705"
+    },
+    {
+      "fnacId": "cl886",
+      "name": "Fnac Le Cendre"
+    },
+    {
+      "fnacId": "cl95",
+      "name": "Fnac Le Havre",
+      "legacyId": "osm-node-2013920092"
+    },
+    {
+      "fnacId": "cl94",
+      "name": "Fnac Le Mans",
+      "legacyId": "osm-node-9306621881"
+    },
+    {
+      "fnacId": "cl496",
+      "name": "Fnac Libourne",
+      "legacyId": "osm-node-9870154630"
+    },
+    {
+      "fnacId": "cl93",
+      "name": "Fnac Lille",
+      "legacyId": "osm-node-10169546127"
+    },
+    {
+      "fnacId": "cl486",
+      "name": "Fnac Lille - Gare Lille-Flandres",
+      "legacyId": "osm-way-1166230739"
+    },
+    {
+      "fnacId": "cl92",
+      "name": "Fnac Limoges",
+      "legacyId": "osm-node-843127948"
+    },
+    {
+      "fnacId": "cl405",
+      "name": "Fnac Limoges Boisseuil",
+      "legacyId": "osm-node-7398227861"
+    },
+    {
+      "fnacId": "cl441",
+      "name": "Fnac Lisieux",
+      "legacyId": "osm-node-5336519598"
+    },
+    {
+      "fnacId": "cl91",
+      "name": "Fnac Lorient",
+      "legacyId": "osm-relation-13963398"
+    },
+    {
+      "fnacId": "cl230",
+      "name": "Fnac Lyon - Gare Part-Dieu",
+      "legacyId": "osm-way-1165439509"
+    },
+    {
+      "fnacId": "cl90",
+      "name": "Fnac Lyon Bellecour",
+      "legacyId": "osm-node-1425488607"
+    },
+    {
+      "fnacId": "cl89",
+      "name": "Fnac Lyon Part-Dieu",
+      "legacyId": "osm-way-1069650108"
+    },
+    {
+      "fnacId": "cl723",
+      "name": "Fnac Mâcon",
+      "legacyId": "osm-node-8999608735"
+    },
+    {
+      "fnacId": "cl96",
+      "name": "Fnac Marseille - La Valentine",
+      "legacyId": "osm-node-3234042328"
+    },
+    {
+      "fnacId": "cl88",
+      "name": "Fnac Marseille Centre Bourse",
+      "legacyId": "osm-node-2608547504"
+    },
+    {
+      "fnacId": "cl462",
+      "name": "Fnac Maulette",
+      "legacyId": "osm-node-7982649764"
+    },
+    {
+      "fnacId": "cl297",
+      "name": "Fnac Melun",
+      "legacyId": "osm-way-112360300"
+    },
+    {
+      "fnacId": "cl87",
+      "name": "Fnac Metz",
+      "legacyId": "osm-node-2108122927"
+    },
+    {
+      "fnacId": "cl379",
+      "name": "Fnac Metz - Gare Metz-Ville",
+      "legacyId": "osm-way-1162431772"
+    },
+    {
+      "fnacId": "cl86",
+      "name": "Fnac Monaco",
+      "legacyId": "osm-node-268113334"
+    },
+    {
+      "fnacId": "cl500",
+      "name": "Fnac Montceau-Les-Mines",
+      "legacyId": "osm-node-10132828659"
+    },
+    {
+      "fnacId": "cl433",
+      "name": "Fnac Montélimar",
+      "legacyId": "osm-node-6269342182"
+    },
+    {
+      "fnacId": "cl443",
+      "name": "Fnac Montluçon",
+      "legacyId": "osm-node-11545548729"
+    },
+    {
+      "fnacId": "cl85",
+      "name": "Fnac Montpellier",
+      "legacyId": "osm-node-11681439007"
+    },
+    {
+      "fnacId": "cl378",
+      "name": "Fnac Montpon-Menesterol",
+      "legacyId": "osm-node-9549061168"
+    },
+    {
+      "fnacId": "cl432",
+      "name": "Fnac Morlaix",
+      "legacyId": "osm-node-8900136560"
+    },
+    {
+      "fnacId": "cl399",
+      "name": "Fnac Morteau",
+      "legacyId": "osm-way-475631806"
+    },
+    {
+      "fnacId": "cl84",
+      "name": "Fnac Mulhouse",
+      "legacyId": "osm-node-2292061993"
+    },
+    {
+      "fnacId": "cl83",
+      "name": "Fnac Nancy",
+      "legacyId": "osm-node-611643885"
+    },
+    {
+      "fnacId": "cl82",
+      "name": "Fnac Nantes",
+      "legacyId": "osm-node-7619822721"
+    },
+    {
+      "fnacId": "cl380",
+      "name": "Fnac Nemours"
+    },
+    {
+      "fnacId": "cl365",
+      "name": "Fnac Nevers",
+      "legacyId": "osm-node-3811815974"
+    },
+    {
+      "fnacId": "cl81",
+      "name": "Fnac Nice",
+      "legacyId": "osm-node-11171967418"
+    },
+    {
+      "fnacId": "cl80",
+      "name": "Fnac Nîmes",
+      "legacyId": "osm-node-8218744825"
+    },
+    {
+      "fnacId": "cl435",
+      "name": "Fnac Nogent-le-Rotrou",
+      "legacyId": "osm-node-14041936238"
+    },
+    {
+      "fnacId": "cl79",
+      "name": "Fnac Noisy-le-Grand",
+      "legacyId": "osm-node-1446124302"
+    },
+    {
+      "fnacId": "cl78",
+      "name": "Fnac Orléans",
+      "legacyId": "osm-node-1792003111"
+    },
+    {
+      "fnacId": "cl442",
+      "name": "Fnac Pamiers",
+      "legacyId": "osm-node-7724004942"
+    },
+    {
+      "fnacId": "cl77",
+      "name": "Fnac Parinor",
+      "legacyId": "osm-node-5796496573"
+    },
+    {
+      "fnacId": "cl321",
+      "name": "Fnac Paris - Beaugrenelle",
+      "legacyId": "osm-node-3477372668"
+    },
+    {
+      "fnacId": "cl277",
+      "name": "Fnac Paris - Bercy Village",
+      "legacyId": "osm-node-2912780878"
+    },
+    {
+      "fnacId": "cl74",
+      "name": "Fnac Paris - Forum des Halles",
+      "legacyId": "osm-node-1345636994"
+    },
+    {
+      "fnacId": "cl653",
+      "name": "Fnac Paris - Gare Auber"
+    },
+    {
+      "fnacId": "cl503",
+      "name": "Fnac Paris - Gare Châtelet"
+    },
+    {
+      "fnacId": "cl231",
+      "name": "Fnac Paris - Gare de l'Est",
+      "legacyId": "osm-way-401999671"
+    },
+    {
+      "fnacId": "cl229",
+      "name": "Fnac Paris - Gare de Lyon",
+      "legacyId": "osm-way-366390614"
+    },
+    {
+      "fnacId": "cl389",
+      "name": "Fnac Paris - Gare du Nord"
+    },
+    {
+      "fnacId": "cl227",
+      "name": "Fnac Paris - Gare Montparnasse",
+      "legacyId": "osm-relation-14133168"
+    },
+    {
+      "fnacId": "cl889",
+      "name": "Fnac Paris - Gare Saint Lazare"
+    },
+    {
+      "fnacId": "cl45",
+      "name": "Fnac Paris - Montparnasse",
+      "legacyId": "osm-node-727779858"
+    },
+    {
+      "fnacId": "cl72",
+      "name": "Fnac Paris - Saint-Lazare",
+      "legacyId": "osm-way-346655276"
+    },
+    {
+      "fnacId": "cl71",
+      "name": "Fnac Paris - Ternes",
+      "legacyId": "osm-way-84319508"
+    },
+    {
+      "fnacId": "cl70",
+      "name": "Fnac Parly 2",
+      "legacyId": "osm-node-1859474832"
+    },
+    {
+      "fnacId": "cl69",
+      "name": "Fnac Pau",
+      "legacyId": "osm-node-2282854354"
+    },
+    {
+      "fnacId": "cl68",
+      "name": "Fnac Perpignan",
+      "legacyId": "osm-node-7060207063"
+    },
+    {
+      "fnacId": "cl505",
+      "name": "Fnac Plouzané",
+      "legacyId": "osm-node-10106582018"
+    },
+    {
+      "fnacId": "cl67",
+      "name": "Fnac Poitiers",
+      "legacyId": "osm-node-1730512714"
+    },
+    {
+      "fnacId": "cl447",
+      "name": "Fnac Pontarlier",
+      "legacyId": "osm-way-37719887"
+    },
+    {
+      "fnacId": "cl725",
+      "name": "Fnac Pont-Audemer",
+      "legacyId": "osm-node-11360363222"
+    },
+    {
+      "fnacId": "cl315",
+      "name": "Fnac Pontault-Combault",
+      "legacyId": "osm-node-1722014291"
+    },
+    {
+      "fnacId": "cl395",
+      "name": "Fnac Pontivy",
+      "legacyId": "osm-node-11235443373"
+    },
+    {
+      "fnacId": "cl267",
+      "name": "Fnac Quimper",
+      "legacyId": "osm-node-2146533948"
+    },
+    {
+      "fnacId": "cl871",
+      "name": "Fnac Redon",
+      "legacyId": "osm-node-12364993504"
+    },
+    {
+      "fnacId": "cl66",
+      "name": "Fnac Reims",
+      "legacyId": "osm-way-365067609"
+    },
+    {
+      "fnacId": "cl189",
+      "name": "Fnac Reims Thillois",
+      "legacyId": "osm-node-6284809067"
+    },
+    {
+      "fnacId": "cl65",
+      "name": "Fnac Rennes",
+      "legacyId": "osm-node-4329611865"
+    },
+    {
+      "fnacId": "cl473",
+      "name": "Fnac Roanne",
+      "legacyId": "osm-node-9824611437"
+    },
+    {
+      "fnacId": "cl694",
+      "name": "Fnac Rochefort",
+      "legacyId": "osm-node-11015227655"
+    },
+    {
+      "fnacId": "cl64",
+      "name": "Fnac Rosny 2",
+      "legacyId": "osm-node-760473008"
+    },
+    {
+      "fnacId": "cl63",
+      "name": "Fnac Rouen",
+      "legacyId": "osm-way-1556444865"
+    },
+    {
+      "fnacId": "cl437",
+      "name": "Fnac Saint-Brieuc",
+      "legacyId": "osm-node-3289935727"
+    },
+    {
+      "fnacId": "cl453",
+      "name": "Fnac Sainte-Marie-Des-Champs"
+    },
+    {
+      "fnacId": "cl62",
+      "name": "Fnac Saint-Etienne",
+      "legacyId": "osm-way-1007838222"
+    },
+    {
+      "fnacId": "cl467",
+      "name": "Fnac Saint-Genis-Laval"
+    },
+    {
+      "fnacId": "cl382",
+      "name": "Fnac Saint-Marcel",
+      "legacyId": "osm-node-1593395171"
+    },
+    {
+      "fnacId": "cl61",
+      "name": "Fnac Saint-Maximin",
+      "legacyId": "osm-node-2364730482"
+    },
+    {
+      "fnacId": "cl404",
+      "name": "Fnac Saint-Nazaire",
+      "legacyId": "osm-node-4754009039"
+    },
+    {
+      "fnacId": "cl403",
+      "name": "Fnac Saint-Yrieix",
+      "legacyId": "osm-node-4896838677"
+    },
+    {
+      "fnacId": "cl491",
+      "name": "Fnac Sallanches",
+      "legacyId": "osm-node-7890632634"
+    },
+    {
+      "fnacId": "cl455",
+      "name": "Fnac Salon-de-Provence",
+      "legacyId": "osm-node-5961729401"
+    },
+    {
+      "fnacId": "cl431",
+      "name": "Fnac Saumur",
+      "legacyId": "osm-way-587529948"
+    },
+    {
+      "fnacId": "cl492",
+      "name": "Fnac Somain",
+      "legacyId": "osm-node-8980325566"
+    },
+    {
+      "fnacId": "cl488",
+      "name": "Fnac St-Lô",
+      "legacyId": "osm-node-4741430844"
+    },
+    {
+      "fnacId": "cl60",
+      "name": "Fnac Strasbourg",
+      "legacyId": "osm-node-473208690"
+    },
+    {
+      "fnacId": "cl59",
+      "name": "Fnac Thiais",
+      "legacyId": "osm-way-200140761"
+    },
+    {
+      "fnacId": "cl396",
+      "name": "Fnac Thonon-les-Bains",
+      "legacyId": "osm-node-7006201261"
+    },
+    {
+      "fnacId": "cl58",
+      "name": "Fnac Toulon",
+      "legacyId": "osm-node-13381076202"
+    },
+    {
+      "fnacId": "cl56",
+      "name": "Fnac Toulouse - Jeanne-d'Arc (Micro)",
+      "legacyId": "osm-node-2445153699"
+    },
+    {
+      "fnacId": "cl55",
+      "name": "Fnac Toulouse Les Variétés",
+      "legacyId": "osm-node-14257395379"
+    },
+    {
+      "fnacId": "cl54",
+      "name": "Fnac Tours",
+      "legacyId": "osm-way-1556812404"
+    },
+    {
+      "fnacId": "cl53",
+      "name": "Fnac Troyes",
+      "legacyId": "osm-node-2451942481"
+    },
+    {
+      "fnacId": "cl52",
+      "name": "Fnac Val d'Europe",
+      "legacyId": "osm-way-654318909"
+    },
+    {
+      "fnacId": "cl51",
+      "name": "Fnac Valence",
+      "legacyId": "osm-node-3906350255"
+    },
+    {
+      "fnacId": "cl50",
+      "name": "Fnac Valenciennes"
+    },
+    {
+      "fnacId": "cl49",
+      "name": "Fnac Vannes",
+      "legacyId": "osm-node-3838383453"
+    },
+    {
+      "fnacId": "cl48",
+      "name": "Fnac Vélizy",
+      "legacyId": "osm-node-2388593100"
+    },
+    {
+      "fnacId": "cl438",
+      "name": "Fnac Verneuil-sur-Avre",
+      "legacyId": "osm-node-5316836060"
+    },
+    {
+      "fnacId": "cl325",
+      "name": "Fnac Vichy",
+      "legacyId": "osm-node-1510043626"
+    },
+    {
+      "fnacId": "cl47",
+      "name": "Fnac Villebon",
+      "legacyId": "osm-node-2303943750"
+    }
+  ],
+  "unlinkedRegions": [
+    {
+      "id": "fnac-region-guadeloupe",
+      "name": "Fnac Guadeloupe"
+    },
+    {
+      "id": "fnac-region-reunion",
+      "name": "Fnac La Réunion"
+    }
+  ]
+}

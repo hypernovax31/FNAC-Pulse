@@ -11,6 +11,8 @@ import { saleMessage } from '../src/sale-message.js';
 import { DEFAULT_DEPARTMENTS, TECH_DEPARTMENT_ID, departmentsForStore, sellerDepartmentId } from '../src/departments.js';
 import { summaryGoals } from '../src/summary-goals.js';
 import { summarize, earliestDate } from '../src/cloud-stats.js';
+import { DIRECTORY_VERSION, mergeStoreDirectory } from '../src/store-directory.js';
+import directorySnapshot from './fnac-directory.json' with {type:'json'};
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = path.resolve(process.env.DATA_DIR || path.join(root, 'data'));
@@ -65,6 +67,8 @@ if (!db.prepare('PRAGMA table_info(sellers)').all().some(c=>c.name==='store_id')
 db.prepare("UPDATE sellers SET store_id=? WHERE store_id IS NULL OR store_id=''").run(LEGACY_STORE_ID);
 if (!db.prepare('PRAGMA table_info(sellers)').all().some(c=>c.name==='department_id')) db.exec("ALTER TABLE sellers ADD COLUMN department_id TEXT NOT NULL DEFAULT 'tech'");
 if (!db.prepare('PRAGMA table_info(sales)').all().some(c=>c.name==='department_id')) db.exec("ALTER TABLE sales ADD COLUMN department_id TEXT NOT NULL DEFAULT 'tech'");
+if (!db.prepare('PRAGMA table_info(stores)').all().some(c=>c.name==='fnac_id')) db.exec('ALTER TABLE stores ADD COLUMN fnac_id TEXT');
+if (!db.prepare('PRAGMA table_info(stores)').all().some(c=>c.name==='directory_status')) db.exec('ALTER TABLE stores ADD COLUMN directory_status TEXT');
 
 const getSetting = key => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value;
 const setSetting = (key, value) => db.prepare('INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value);
@@ -90,6 +94,24 @@ const seed = db.transaction(() => {
   }
 });
 seed();
+
+// La base SQLite de développement peut déjà contenir des ventes et des
+// magasins personnalisés : fusionner sans supprimer ni changer les clés.
+const migrateStoreDirectory=db.transaction(()=>{
+  if(getSetting('store_directory_version')===DIRECTORY_VERSION)return;
+  const locations=JSON.parse(fs.readFileSync(path.join(root,'server/locations.json'),'utf8'));
+  const current=db.prepare('SELECT id,name,city,address,lat,lon,active,fnac_id AS fnacId,directory_status AS directoryStatus FROM stores').all();
+  const merged=mergeStoreDirectory(current,directorySnapshot.stores,{legacyIds:locations.map(s=>s.id)});
+  const ids=new Set(current.map(s=>s.id));
+  const update=db.prepare('UPDATE stores SET name=@name,fnac_id=@fnacId,directory_status=@directoryStatus WHERE id=@id');
+  const insert=db.prepare('INSERT INTO stores (id,name,city,address,lat,lon,active,fnac_id,directory_status) VALUES (@id,@name,@city,@address,@lat,@lon,@active,@fnacId,@directoryStatus)');
+  for(const s of merged.stores) {
+    const row={...s,fnacId:s.fnacId||null,directoryStatus:s.directoryStatus||null,active:s.active?1:0};
+    if(ids.has(s.id))update.run(row);else insert.run(row);
+  }
+  setSetting('store_directory_version',DIRECTORY_VERSION);
+});
+migrateStoreDirectory();
 
 function makePasswordRecord(password) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -198,12 +220,12 @@ app.get('/api/events', (req,res) => {
 
 app.get('/api/bootstrap', (req,res) => {
   const today = parisToday();
-  const stores = db.prepare('SELECT id,name,city,address,lat,lon FROM stores WHERE active=1 ORDER BY name COLLATE NOCASE').all();
+  const stores = db.prepare("SELECT id,name,city,address,lat,lon,fnac_id AS fnacId,directory_status AS directoryStatus FROM stores WHERE active=1 AND COALESCE(directory_status,'')!='region' ORDER BY name COLLATE NOCASE").all();
   const sellers = db.prepare('SELECT id,name,store_id AS storeId,department_id AS departmentId FROM sellers WHERE active=1').all().sort(comparePeople);
   const services = orderServices(db.prepare('SELECT id,name,icon FROM services WHERE active=1 ORDER BY sort_order,id').all(),serviceOrders(),req.query.storeId);
   const store = req.query.storeId ? activeStore(req.query.storeId) : null;
   const stats = store ? statsFor(store.id,req.query.sellerId,today) : null;
-  res.json({ stores, sellers, services, departmentsByStore:localDepartmentsByStore(), today, stats, pushPublicKey:vapid.publicKey });
+  res.json({ stores, sellers, services, directoryRegions:directorySnapshot.unlinkedRegions.map(({name})=>name), departmentsByStore:localDepartmentsByStore(), today, stats, pushPublicKey:vapid.publicKey });
 });
 
 function localGoals(storeId,sellerId) {

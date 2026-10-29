@@ -7,6 +7,19 @@ import { departmentsForStore, sellerDepartmentId } from './departments';
 import { GoalForm, WorkdaysForm } from './Goals';
 import { normalizeWorkdays } from './goals.js';
 
+function directoryDate(value) {
+  const day=String(value||'').slice(0,10),parts=day.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return parts?`${parts[3]}/${parts[2]}/${parts[1]}`:'date inconnue';
+}
+function directoryStatus(sync) {
+  if(!sync)return 'État de l’annuaire indisponible.';
+  const checked=`Noms vérifiés le ${directoryDate(sync.verifiedAt)}.`;
+  if(sync.lastResult==='blocked')return `${checked} Fnac a refusé le dernier accès automatique (${directoryDate(sync.lastAttempt)}). La liste reste inchangée ; nouvelle tentative chaque mois.`;
+  if(['invalid','incomplete','ambiguous','unavailable'].includes(sync.lastResult))return `${checked} La dernière tentative n’a pas pu vérifier une liste complète. La liste est conservée ; nouvelle tentative chaque mois.`;
+  if(sync.lastResult==='review')return `${checked} Actualisation effectuée ; ${sync.reviewCount||0} correspondance(s) demandent une vérification.`;
+  return `${checked} Vérification automatique prévue le 1er de chaque mois.`;
+}
+
 function Modal({title,subtitle,onClose,children,wide=false}) {
   const dialog=useRef(null),close=useRef(onClose);
   close.current=onClose;
@@ -221,7 +234,7 @@ export default function Admin({onClose,data,session,onChanged}) {
       </>}
       {tab==='stores'&&<>
         <div className="admin-store-scope">
-          <label><span className="form-label">MAGASIN À GÉRER</span><select aria-label="Magasin à gérer" className="text-input" disabled={busy} value={adminStore} onChange={e=>changeStore(e.target.value)}><option value="">Choisir un magasin</option>{data.stores.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
+          <label><span className="form-label">MAGASIN À GÉRER</span><select aria-label="Magasin à gérer" className="text-input" disabled={busy} value={adminStore} onChange={e=>changeStore(e.target.value)}><option value="">Choisir un magasin</option>{[...data.stores].sort((a,b)=>a.name.localeCompare(b.name,'fr',{sensitivity:'base',numeric:true})).map(s=><option value={s.id} key={s.id}>{s.name}{s.directoryStatus==='historical'?' · ancien catalogue':''}</option>)}</select></label>
           <p>Ce choix s’applique aux ventes, objectifs, vendeurs, services et codes PIN de l’administration.</p>
         </div>
         <div className="admin-section-heading"><div><h3>Ajouter un magasin</h3><p>Un magasin absent de la liste ? Ajoutez-le à votre espace.</p></div></div>
@@ -230,7 +243,11 @@ export default function Admin({onClose,data,session,onChanged}) {
           <div className="admin-selects"><label><span className="form-label">Latitude <span className="optional">(facultatif)</span></span><input className="text-input" type="number" step="any" placeholder="44.8399" value={newStore.lat} onChange={e=>setNewStore(v=>({...v,lat:e.target.value}))}/></label><label><span className="form-label">Longitude <span className="optional">(facultatif)</span></span><input className="text-input" type="number" step="any" placeholder="−0.5740" value={newStore.lon} onChange={e=>setNewStore(v=>({...v,lon:e.target.value}))}/></label></div>
           <button className="primary-button" disabled={busy}><Plus size={16}/> Ajouter le magasin</button>
         </form>
-        <div className="admin-note"><Store size={15}/> Les coordonnées permettent de proposer ce magasin lors de la géolocalisation. Liste initiale issue d’OpenStreetMap, susceptible d’être incomplète.</div>
+        <div className="admin-note"><Store size={15}/> Noms issus de l’annuaire Fnac ; les coordonnées disponibles sont indicatives. Les magasins historiques et ceux ajoutés par l’administration restent conservés.</div>
+        {CLOUD&&<div className="directory-sync" role="status"><div><strong>Annuaire des magasins</strong><p>{directoryStatus(all.directorySync)}</p></div><button type="button" className="outline-button" disabled={busy||!allLoaded} onClick={()=>run(async()=>{
+          const result=await api('/api/admin/stores/sync',{method:'POST',token,body:{}});
+          if(!result.ok){await loadAll();throw Error(result.result==='blocked'?'Fnac refuse actuellement l’accès automatique. La liste précédente est conservée.':'La vérification n’a pas abouti. La liste précédente est conservée.');}
+        },'Annuaire vérifié et actualisé.')}>Vérifier maintenant</button></div>}
       </>}
       {CLOUD&&tab==='pins'&&adminStore&&<>
         <div className="admin-section-heading"><div><h3>Accès et codes PIN</h3><p>Chaque vendeur choisit son propre PIN lors de sa première connexion. Aucun code préalable n’est nécessaire.</p></div></div>
