@@ -9,7 +9,8 @@ import Admin, { Modal } from './Admin';
 import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
 import { CLOUD, observeVendor, sellerLogin, sellerLogout, listenStore, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
 import { parisToday } from './cloud-stats';
-import { sellersForStore, sellerStoreId } from './catalog';
+import { sellerStoreId } from './catalog';
+import { departmentsForStore, sellerDepartmentId, sellersForDepartment } from './departments';
 import { serviceIconKey } from './service-icons';
 import { THEME_KEY, readTheme, applyTheme } from './theme';
 import { GoalForm, GoalsPanel } from './Goals';
@@ -20,6 +21,7 @@ const APP_BASE = import.meta.env.BASE_URL;
 const SESSION_KEY = 'fnac-pulse-session-v1';
 const CACHE_KEY = 'fnac-pulse-last-view-v1';
 const GOALS_CACHE_KEY = 'fnac-pulse-personal-goals-v1';
+const SUMMARY_CACHE_KEY = 'fnac-pulse-summary-goals-v1';
 // Un marteau et une clé croisés, dans le même trait que les icônes Lucide.
 function ToolsIcon({size=24,strokeWidth=2}) {
   return <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -38,6 +40,10 @@ function getCachedGoals(owner) {
   try{const x=JSON.parse(localStorage.getItem(GOALS_CACHE_KEY));return goalData(x?.owner===owner?x:null);}catch{return goalData(null);}
 }
 function cacheGoals(owner,result) {try{localStorage.setItem(GOALS_CACHE_KEY,JSON.stringify({owner,...goalData(result)}));}catch{}}
+function getCachedSummary(key) {
+  try{const x=JSON.parse(localStorage.getItem(SUMMARY_CACHE_KEY));return x?.key===key?x.data:null;}catch{return null;}
+}
+function cacheSummary(key,data) {try{localStorage.setItem(SUMMARY_CACHE_KEY,JSON.stringify({key,data}));}catch{}}
 function initial(name) {return (name || '?').trim().slice(0,1).toUpperCase();}
 function Avatar({name,id,size='normal'}) {return <span className={`avatar avatar-${size}`} style={{backgroundColor:avatarColors[(Number(id)||0)%avatarColors.length]}}>{initial(name)}</span>}
 function Brand({compact=false}) {return <div className={`brand ${compact?'brand-compact':''}`}><img src={`${APP_BASE}fnac.svg`} alt="Fnac"/><div className="brand-word"><strong>pulse<span className="brand-period">.</span></strong>{!compact&&<span>ESPACE ÉQUIPE</span>}</div></div>}
@@ -49,14 +55,18 @@ function DateChip({today}) {
 
 function SessionForm({data,initialSession,onSubmit,modal=false,onNotify}) {
   const [store,setStore]=useState(initialSession?.storeId||'');
+  const initialPerson=data.sellers.find(s=>Number(s.id)===Number(initialSession?.sellerId)&&sellerStoreId(s)===initialSession?.storeId);
+  const [department,setDepartment]=useState(initialPerson?sellerDepartmentId(initialPerson):initialSession?.departmentId||'');
   const [seller,setSeller]=useState(String(initialSession?.sellerId||''));
   const [geoText,setGeoText]=useState('');
   const [geoBusy,setGeoBusy]=useState(false);
   const [pin,setPin]=useState('');
   const [formBusy,setFormBusy]=useState(false);
   const [formError,setFormError]=useState('');
-  const storeSellers=sellersForStore(data.sellers,store);
-  const changeStore=value=>{if(value!==store){setSeller('');setPin('');setFormError('');}setStore(value);};
+  const departments=store?departmentsForStore(data,store):[];
+  const storeSellers=department?sellersForDepartment(data.sellers,store,department):[];
+  const changeStore=value=>{if(value!==store){setDepartment('');setSeller('');setPin('');setFormError('');}setStore(value);};
+  const changeDepartment=value=>{if(value!==department){setSeller('');setPin('');setFormError('');}setDepartment(value);};
   const locate=()=>{
     if(!navigator.geolocation){setGeoText('La géolocalisation n’est pas disponible sur cet appareil.');return;}
     setGeoBusy(true);setGeoText('Recherche du magasin le plus proche…');
@@ -69,22 +79,23 @@ function SessionForm({data,initialSession,onSubmit,modal=false,onNotify}) {
     },err=>{setGeoBusy(false);setGeoText(err.code===1?'Géolocalisation refusée. Vous pouvez choisir votre magasin dans la liste.':'Position indisponible. Choisissez votre magasin dans la liste.');},
     {enableHighAccuracy:false,timeout:12000,maximumAge:300000});
   };
-  return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={async e=>{e.preventDefault();if(!store||!seller)return;setFormBusy(true);setFormError('');try{await onSubmit({storeId:store,sellerId:Number(seller)},pin);setPin('');}catch(error){setFormError(error.message);}finally{setFormBusy(false);}}}>
+  return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={async e=>{e.preventDefault();if(!store||!department||!seller)return;setFormBusy(true);setFormError('');try{await onSubmit({storeId:store,departmentId:department,sellerId:Number(seller)},pin);setPin('');}catch(error){setFormError(error.message);}finally{setFormBusy(false);}}}>
     <div className="session-fields">
       <label className="session-field store-field"><span>VOTRE MAGASIN</span><div className="select-wrap"><MapPin size={16}/><select aria-label="Votre magasin Fnac" value={store} onChange={e=>{changeStore(e.target.value);setGeoText('');}} required><option value="">Choisir un magasin</option>{data.stores.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
       <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver le magasin le plus proche" title="Trouver le magasin le plus proche" disabled={geoBusy}><Crosshair size={17}/></button>
-      <label className="session-field seller-field"><span>VOTRE PROFIL</span><div className="select-wrap"><UserRound size={16}/><select aria-label="Votre profil vendeur" value={seller} onChange={e=>setSeller(e.target.value)} disabled={!store||!storeSellers.length} required><option value="">{store&&!storeSellers.length?'Aucun vendeur pour ce magasin':'Choisir un vendeur'}</option>{storeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+      <label className="session-field department-field"><span>VOTRE DÉPARTEMENT</span><div className="select-wrap"><UsersRound size={16}/><select aria-label="Votre département" value={department} onChange={e=>changeDepartment(e.target.value)} disabled={!store||!departments.length} required><option value="">Choisir un département</option>{departments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+      <label className="session-field seller-field"><span>VOTRE PROFIL</span><div className="select-wrap"><UserRound size={16}/><select aria-label="Votre profil vendeur" value={seller} onChange={e=>{setSeller(e.target.value);setPin('');setFormError('');}} disabled={!department||!storeSellers.length} required><option value="">{department&&!storeSellers.length?'Aucun vendeur dans ce département':'Choisir un vendeur'}</option>{storeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
       {CLOUD&&<label className="session-field pin-field"><span>CODE PIN</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} placeholder="8 chiffres" required/></label>}
-      <button className="primary-button session-submit" type="submit" disabled={!store||!seller||formBusy||(CLOUD&&pin.length!==8)}>{formBusy?'Connexion…':modal?'Enregistrer':'C’est parti'} <ArrowRight size={16}/></button>
+      <button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==8)}>{formBusy?'Connexion…':modal?'Enregistrer':'C’est parti'} <ArrowRight size={16}/></button>
     </div>
-    {store&&!storeSellers.length&&<p className="no-store-sellers">Aucun vendeur dans ce magasin. Un administrateur peut en ajouter.</p>}
+    {department&&!storeSellers.length&&<p className="no-store-sellers">Aucun vendeur dans ce département. Un administrateur peut y affecter des profils.</p>}
     {formError&&<div className="form-error session-error" role="alert">{formError}</div>}
     {geoText&&<div className="geo-message" role="status"><MapPin size={13}/>{geoText}</div>}
   </form>;
 }
 function WelcomePanel({data,onSubmit}) {
   return <section className="welcome-panel" id="selection">
-    <div className="welcome-copy"><div className="welcome-icon"><Sparkles size={20}/></div><div><div className="micro-label">VOTRE ESPACE DE VENTE</div><h2>On se lance ?</h2><p>Choisissez votre magasin et votre profil.</p></div></div>
+    <div className="welcome-copy"><div className="welcome-icon"><Sparkles size={20}/></div><div><div className="micro-label">VOTRE ESPACE DE VENTE</div><h2>On se lance ?</h2><p>Choisissez votre magasin, votre département et votre profil.</p></div></div>
     <SessionForm data={data} onSubmit={onSubmit}/>
   </section>;
 }
@@ -135,15 +146,29 @@ function ActivityCard({activity,hasSession}) {
     {activity?.length>0?<div className="activity-list">{activity.map(item=><div className="activity-row" key={item.id}><Avatar name={item.sellerName} id={item.sellerId} size="small"/><div><p><strong>{item.sellerName}</strong> a ajouté <strong>{item.serviceName}</strong></p><span>Aujourd’hui · {timeLabel(item.createdAt)}</span></div><span className="activity-add">+1</span></div>)}</div>:<div className="activity-empty"><span><Activity size={19}/></span><p>{hasSession?'Les ventes de l’équipe apparaîtront ici en temps réel.':'L’activité de votre magasin apparaîtra ici.'}</p></div>}
   </section>;
 }
-function Summary({stats,hasSession}) {
+function Summary({stats,hasSession,storeId,departments,goals,goalsLoading,goalsError,onRetry}) {
   const [period,setPeriod]=useState('day');
+  const [scope,setScope]=useState('store');
+  useEffect(()=>setScope('store'),[storeId]);
   const labels={day:'Aujourd’hui',week:'Cette semaine',month:'Ce mois'};
-  const current=stats?.[period];
-  const max=Math.max(1,...(current?.byService||[]).map(s=>s.count));
-  return <section className="panel summary-panel" id="summary"><div className="summary-heading"><div><div className="section-kicker"><span className="kicker-line"/> PRENDRE DU RECUL</div><h2>Le récap’ des services</h2><p>Retrouvez les résultats de votre équipe en un coup d’œil.</p></div><div className="period-tabs" role="tablist" aria-label="Période du récapitulatif">{Object.entries(labels).map(([id,label])=><button role="tab" aria-selected={period===id} key={id} className={period===id?'selected':''} onClick={()=>setPeriod(id)}>{label}</button>)}</div></div>
-    <div className="summary-content"><div className="summary-total"><span className="summary-total-label">TOTAL ÉQUIPE</span><strong>{current?.total??'—'}</strong><span>{current?current.total>1?'services vendus':'service vendu':'Sélectionnez un magasin'}</span><div className="summary-date"><CalendarDays size={13} aria-hidden="true"/><span>{current?`${dateLabel(current.start,{day:'numeric',month:'short'})}${current.start!==current.end?` — ${dateLabel(current.end,{day:'numeric',month:'short'})}`:''}`:'En attente'}</span></div></div>
-      <div className="summary-breakdown">{current ? current.byService.map(s=><div className="breakdown-row" key={s.id}><div><span>{s.name}</span><strong>{s.count}</strong></div><div className="progress-track"><span style={{width:`${s.count?Math.max(3,s.count/max*100):0}%`}}/></div></div>) : <div className="summary-empty"><span className="summary-empty-icon"><ChartNoAxesCombined size={20}/></span><div><strong>Les chiffres arrivent bientôt.</strong><p>Choisissez votre magasin pour consulter son récapitulatif.</p></div></div>}</div>
+  const selected=scope==='store'?stats?.summary?.store:stats?.summary?.departments?.[scope];
+  const current=selected?.[period]||(scope==='store'&&!stats?.summary?stats?.[period]:null);
+  const goalScope=scope==='store'?goals?.store:goals?.departments?.[scope];
+  return <section className="panel summary-panel" id="summary"><div className="summary-heading"><div><div className="section-kicker"><span className="kicker-line"/> PRENDRE DU RECUL</div><h2>Le récap’ des services</h2><p>Comparez les ventes aux objectifs du périmètre choisi.</p></div><div className="period-tabs" role="tablist" aria-label="Période du récapitulatif">{Object.entries(labels).map(([id,label])=><button role="tab" aria-selected={period===id} key={id} className={period===id?'selected':''} onClick={()=>setPeriod(id)}>{label}</button>)}</div></div>
+    {hasSession&&<label className="summary-scope"><span>PÉRIMÈTRE DU RÉCAP’</span><div className="select-wrap"><UsersRound size={15}/><select aria-label="Périmètre du récapitulatif" value={scope} onChange={e=>setScope(e.target.value)}><option value="store">Tout le magasin</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}{d.active?'':' · archivé'}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>}
+    <div className="summary-content"><div className="summary-total"><span className="summary-total-label">TOTAL VENTES</span><strong>{current?.total??'—'}</strong><span>{current?current.total>1?'services vendus':'service vendu':'Sélectionnez un magasin'}</span><div className="summary-date"><CalendarDays size={13} aria-hidden="true"/><span>{current?`${dateLabel(current.start,{day:'numeric',month:'short'})}${current.start!==current.end?` — ${dateLabel(current.end,{day:'numeric',month:'short'})}`:''}`:'En attente'}</span></div></div>
+      <div className="summary-breakdown">{current ? current.byService.map(s=>{
+        const target=goalScope?.byService?.[`s${s.id}`]?.[period]??null;
+        const percent=target>0?Math.min(100,Math.round(s.count/target*100)):0;
+        return <div className="breakdown-row" key={s.id}><div><span>{s.name}</span><strong>{s.count} <span className="summary-target">/ {target??'—'}</span></strong></div>
+          <div className={`progress-track ${target===null?'is-unset':''} ${target>0&&s.count>=target?'is-reached':''}`}
+            role={target>0?'progressbar':undefined} aria-label={target>0?`${s.name} : ventes et objectif`:undefined}
+            aria-valuemin={target>0?0:undefined} aria-valuemax={target>0?target:undefined} aria-valuenow={target>0?Math.min(s.count,target):undefined}
+            aria-valuetext={target>0?`${s.count} sur ${target}`:undefined}><span style={{width:`${percent}%`}}/></div>
+        </div>;
+      }) : <div className="summary-empty"><span className="summary-empty-icon"><ChartNoAxesCombined size={20}/></span><div><strong>Les chiffres arrivent bientôt.</strong><p>Choisissez votre magasin pour consulter son récapitulatif.</p></div></div>}</div>
     </div>
+    {hasSession&&<div className="summary-caption"><span>{!goals?(goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles.'):'Ventes / objectif · Les objectifs mensuels sont répartis selon les jours travaillés ; les jours fériés sont inclus. Les objectifs non renseignés ne sont pas inclus.'}</span>{goalsError&&<span className="summary-warning">{goals?'Dernières cibles disponibles · ':''}{goalsError} <button type="button" onClick={onRetry}>Réessayer</button></span>}</div>}
   </section>;
 }
 function MobileNav({onNavigate,onSession,active}) {
@@ -167,16 +192,22 @@ export default function App() {
   const [themeModal,setThemeModal]=useState(false);
   const [goalModal,setGoalModal]=useState(null);
   const [goalState,setGoalState]=useState({owner:'',...goalData(null),loading:false,error:''});
+  const [summaryState,setSummaryState]=useState({key:'',data:null,loading:false,error:''});
   const [theme,setTheme]=useState(readTheme);
   const [installPrompt,setInstallPrompt]=useState(null);
   const [notificationsEnabled,setNotificationsEnabled]=useState(false);
   const [notificationBusy,setNotificationBusy]=useState(false);
   const [pending,setPending]=useState({});
   const [toast,setToast]=useState(null);
-  const requestNumber=useRef(0), goalRequest=useRef(0), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null);
-  const store=data?.stores?.find(s=>s.id===session?.storeId), seller=data?.sellers?.find(s=>s.id===session?.sellerId);
+  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null);
+  const store=data?.stores?.find(s=>s.id===session?.storeId), seller=data?.sellers?.find(s=>s.id===session?.sellerId&&sellerStoreId(s)===session?.storeId);
+  const activeDepartmentId=seller?sellerDepartmentId(seller):'';
+  const departments=session?departmentsForStore(data||{},session.storeId,{activeOnly:false}):[];
+  const department=departments.find(d=>d.id===activeDepartmentId);
   const owner=goalOwnerKey(session), ownerRef=useRef(owner);ownerRef.current=owner;
+  const summaryKey=owner?JSON.stringify([owner,cloudDay]):'',summaryKeyRef=useRef(summaryKey);summaryKeyRef.current=summaryKey;
   const currentGoals=goalState.owner===owner?goalState.goals:null;
+  const currentSummary=summaryState.key===summaryKey?summaryState.data:null;
 
   useEffect(()=>{
     applyTheme(theme);
@@ -234,6 +265,27 @@ export default function App() {
     loadGoals();
     return ()=>{goalRequest.current++;};
   },[owner,loadGoals]);
+  const loadSummaryGoals=useCallback(async()=>{
+    if(!session||!summaryKey)return;
+    const key=summaryKey,n=++summaryRequest.current;
+    setSummaryState(old=>old.key===key?{...old,loading:true,error:''}:{key,data:getCachedSummary(key),loading:true,error:''});
+    try {
+      const result=await api(`/api/summary-goals?storeId=${encodeURIComponent(session.storeId)}`);
+      if(n!==summaryRequest.current||summaryKeyRef.current!==key)return;
+      if(result?.date!==cloudDay||!result.store?.byService||!result.departments)throw new Error('Cibles du jour indisponibles. Vérifiez la date de l’appareil.');
+      setSummaryState({key,data:result,loading:false,error:''});cacheSummary(key,result);
+    } catch(e) {
+      if(n!==summaryRequest.current||summaryKeyRef.current!==key)return;
+      setSummaryState(old=>({key,data:old.key===key?old.data:getCachedSummary(key),loading:false,error:e.message||'Objectifs indisponibles.'}));
+    }
+  },[summaryKey,cloudDay]);
+  const queueSummary=useCallback(()=>{clearTimeout(summaryTimer.current);summaryTimer.current=setTimeout(loadSummaryGoals,200);},[loadSummaryGoals]);
+  useEffect(()=>{
+    summaryRequest.current++;clearTimeout(summaryTimer.current);
+    if(!summaryKey){setSummaryState({key:'',data:null,loading:false,error:''});return;}
+    setSummaryState({key:summaryKey,data:getCachedSummary(summaryKey),loading:true,error:''});queueSummary();
+    return ()=>{summaryRequest.current++;clearTimeout(summaryTimer.current);};
+  },[summaryKey,queueSummary]);
   useEffect(()=>{if(!CLOUD)return;return observeVendor(next=>{setSession(next);setAuthReady(true);if(!next)localStorage.removeItem(SESSION_KEY);});},[]);
   useEffect(()=>{refresh();},[refresh]);
   useEffect(()=>{
@@ -245,30 +297,35 @@ export default function App() {
       flash(saleMessage(sale.serviceName,sale.sellerName),{tone:'celebrate'});
     },error=>{
       setConnection('offline');
-      if(error?.code==='permission-denied'){sellerLogout().catch(()=>{});setSession(null);setData(d=>d?{...d,stats:null}:d);localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);flash('Votre accès a changé. Reconnectez-vous avec votre code PIN.',{tone:'warning'});}
+      if(error?.code==='permission-denied'){sellerLogout().catch(()=>{});setSession(null);setData(d=>d?{...d,stats:null}:d);localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);localStorage.removeItem(SUMMARY_CACHE_KEY);flash('Votre accès a changé. Reconnectez-vous avec votre code PIN.',{tone:'warning'});}
       else flash('Connexion interrompue. Les données seront actualisées au retour du réseau.',{tone:'warning'});
-    },()=>loadGoals());
-  },[session,authReady,cloudDay,flash,loadGoals]);
+    },()=>loadGoals(),queueSummary);
+  },[session,authReady,cloudDay,flash,loadGoals,queueSummary]);
   useEffect(()=>{
     if(CLOUD)return;
     if(!session){setConnection('waiting');return;}
     const source=new EventSource(`/api/events?storeId=${encodeURIComponent(session.storeId)}`);
-    source.addEventListener('ready',()=>{setConnection('live');refresh();});
+    source.addEventListener('ready',()=>{setConnection('live');refresh();queueSummary();});
     source.addEventListener('change',e=>{
-      try {const event=JSON.parse(e.data);if(event.kind==='sale'&&event.clientId!==clientId.current) flash(saleMessage(event.serviceName,event.sellerName),{tone:'celebrate'});if(event.kind==='goals'&&Number(event.sellerId)===Number(session.sellerId))loadGoals();} catch{}
+      try {
+        const event=JSON.parse(e.data);
+        if(event.kind==='sale'&&event.clientId!==clientId.current&&(event.departmentId||'tech')===activeDepartmentId)flash(saleMessage(event.serviceName,event.sellerName),{tone:'celebrate'});
+        if(event.kind==='goals'&&Number(event.sellerId)===Number(session.sellerId))loadGoals();
+        if(event.kind==='goals'||event.kind==='config')queueSummary();
+      } catch{}
       refresh();
     });
     source.onerror=()=>setConnection('offline');
     return ()=>source.close();
-  },[session,refresh,flash,loadGoals]);
+  },[session,refresh,flash,loadGoals,queueSummary,activeDepartmentId]);
   useEffect(()=>{
     const syncDay=()=>setCloudDay(parisToday());
-    const onOnline=()=>{syncDay();refresh();loadGoals();};
+    const onOnline=()=>{syncDay();refresh();loadGoals();queueSummary();};
     const onVisible=()=>{if(document.visibilityState==='visible'){syncDay();if(!CLOUD)refresh();}};
     window.addEventListener('online',onOnline);document.addEventListener('visibilitychange',onVisible);
     const timer=setInterval(()=>{syncDay();if(!CLOUD&&document.visibilityState==='visible')refresh();},60000);
     return ()=>{window.removeEventListener('online',onOnline);document.removeEventListener('visibilitychange',onVisible);clearInterval(timer);};
-  },[refresh,loadGoals]);
+  },[refresh,loadGoals,queueSummary]);
   useEffect(()=>{
     if('serviceWorker' in navigator) navigator.serviceWorker.register(`${APP_BASE}sw.js`, {scope:APP_BASE}).catch(()=>{});
     const handler=e=>{e.preventDefault();setInstallPrompt(e)};
@@ -301,7 +358,7 @@ export default function App() {
   async function logoutSeller(){
     let warning=false;
     if(CLOUD&&notificationsWanted())try{await unsubscribeFcm(api);}catch{warning=true;}
-    if(CLOUD)await sellerLogout();localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);setSession(null);setData(d=>d?{...d,stats:null}:null);setSessionModal(false);
+    if(CLOUD)await sellerLogout();localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);localStorage.removeItem(SUMMARY_CACHE_KEY);setSession(null);setData(d=>d?{...d,stats:null}:null);setSessionModal(false);
     flash(warning?'Déconnecté. Vérifiez les notifications de cet appareil lorsque la connexion revient.':'Vous êtes déconnecté.',warning?{tone:'warning'}:{});
   }
   function changeSession(){if(session)setSessionModal(true);else {document.getElementById('selection')?.scrollIntoView({behavior:'smooth',block:'center'});document.querySelector('[aria-label="Votre magasin Fnac"]')?.focus();}}
@@ -369,21 +426,21 @@ export default function App() {
       <main className="content" id="overview">
         {connection==='offline'&&session&&<div className="offline-banner"><WifiOff size={16}/><div><strong>Connexion interrompue.</strong> Les dernières données restent visibles, mais la saisie est suspendue jusqu’au retour de la connexion.</div><button onClick={refresh}>Réessayer</button></div>}
         <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><DateChip today={cloudDay}/></div>
-        {!session?<WelcomePanel data={data} onSubmit={selectSession}/>:<div className="session-strip"><div className="strip-icon"><Store size={18}/></div><div className="strip-copy"><span>VOTRE ESPACE DE VENTE</span><strong>{store?.name||'Votre magasin'}</strong></div><div className="strip-divider"/><div className="strip-user"><Avatar name={seller?.name} id={seller?.id} size="small"/><span>Connecté en tant que <strong>{seller?.name}</strong></span></div><button className="text-button" onClick={()=>setSessionModal(true)}>Changer <ArrowRight size={14}/></button></div>}
-        <div className="section-overline"><div><span className="kicker-line"/> EN UN COUP D’ŒIL</div><span>{session?'Les chiffres de votre magasin':'Choisissez votre espace pour démarrer'}</span></div>
+        {!session?<WelcomePanel data={data} onSubmit={selectSession}/>:<div className="session-strip"><div className="strip-icon"><Store size={18}/></div><div className="strip-copy"><span>VOTRE ESPACE DE VENTE</span><strong>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</strong></div><div className="strip-divider"/><div className="strip-user"><Avatar name={seller?.name} id={seller?.id} size="small"/><span>Connecté en tant que <strong>{seller?.name}</strong></span></div><button className="text-button" onClick={()=>setSessionModal(true)}>Changer <ArrowRight size={14}/></button></div>}
+        <div className="section-overline"><div><span className="kicker-line"/> EN UN COUP D’ŒIL</div><span>{session?'Les chiffres de votre département':'Choisissez votre espace pour démarrer'}</span></div>
         <section className="stats-grid" aria-label="Chiffres clés"><StatCard label="AUJOURD’HUI" value={stats?.day.total} detail="Ventes de l’équipe" Icon={Zap} tone="gold"/><StatCard label="MA JOURNÉE" value={stats?.mineTotal} detail="Mes services enregistrés" Icon={UserRound} tone="soft-blue"/></section>
         {session&&<GoalsPanel seller={seller} services={data.services} goals={currentGoals} workdays={goalState.workdays} workdaysDefault={!goalState.workdaysRevision} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
         <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> PLACE À L’ACTION</div><h2>Ajouter un service</h2><p>Une vente ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
-          <Summary stats={stats} hasSession={!!session}/>
+          <Summary stats={stats} hasSession={!!session} storeId={session?.storeId} departments={departments} goals={currentSummary} goalsLoading={summaryState.key===summaryKey&&summaryState.loading} goalsError={summaryState.key===summaryKey?summaryState.error:''} onRetry={loadSummaryGoals}/>
         </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/><div className="notification-card"><span className="notification-icon"><BellRing size={18}/></span><div><strong>{notificationsEnabled?'Vous êtes dans la boucle !':'Restez dans la boucle'}</strong><p>{notificationsEnabled?'Notifications activées sur cet appareil.':'Soyez prévenu des ventes de votre équipe.'}</p></div><button onClick={()=>setNotificationsModal(true)}>{notificationsEnabled?'Gérer':'Activer'} <ArrowRight size={13}/></button></div></div></div>
         <footer className="page-footer">Le service, c’est notre rayon. Les ventes aussi. 😉</footer>
       </main>
     </div>
     <MobileNav onNavigate={navigate} onSession={changeSession} active={activeNav}/>
-    {sessionModal&&<Modal title="Changer d’espace" subtitle="Sélectionnez votre magasin et votre profil vendeur." onClose={()=>setSessionModal(false)}><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/>{CLOUD&&<button className="logout-button" onClick={logoutSeller}>Se déconnecter</button>}<p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></Modal>}
+    {sessionModal&&<Modal title="Changer d’espace" subtitle="Sélectionnez votre magasin, votre département et votre profil vendeur." onClose={()=>setSessionModal(false)}><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/>{CLOUD&&<button className="logout-button" onClick={logoutSeller}>Se déconnecter</button>}<p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></Modal>}
     {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={()=>setGoalModal(null)}><GoalForm services={data.services} goals={currentGoals} workdays={goalState.workdays} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={()=>setGoalModal(null)} disabled={connection==='offline'}/></Modal>}
     {adminModal&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>}
-    {notificationsModal&&<Modal title="Notifications d’équipe" subtitle="Ne manquez aucune nouvelle vente de votre magasin." onClose={()=>setNotificationsModal(false)}><div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{notificationsEnabled?'Notifications activées':'Un petit signal, une belle dynamique.'}</strong><p>Chaque nouvelle vente peut vous être signalée sur cet appareil, même lorsque l’application est fermée.</p></div></div><div className="notification-details"><div><Check size={16}/> Une notification pour chaque nouvelle vente</div><div><Check size={16}/> Uniquement pour le magasin sélectionné</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div><div className="notification-device-note"><Info size={15}/><span>Sur iPhone et iPad, installez d’abord l’application sur l’écran d’accueil (iOS/iPadOS 16.4 ou plus). Une connexion HTTPS et un navigateur compatible sont nécessaires.</span></div><button className={notificationsEnabled?'outline-button full-button':'primary-button full-button'} disabled={notificationBusy} onClick={notificationsEnabled?disableNotifications:enableNotifications}>{notificationBusy?'Un instant…':notificationsEnabled?'Désactiver sur cet appareil':'Activer les notifications'} {notificationsEnabled?<BellOff size={16}/>:<Bell size={16}/>}</button></Modal>}
+    {notificationsModal&&<Modal title="Notifications d’équipe" subtitle="Ne manquez aucune nouvelle vente de votre département." onClose={()=>setNotificationsModal(false)}><div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{notificationsEnabled?'Notifications activées':'Un petit signal, une belle dynamique.'}</strong><p>Chaque nouvelle vente peut vous être signalée sur cet appareil, même lorsque l’application est fermée.</p></div></div><div className="notification-details"><div><Check size={16}/> Une notification pour chaque nouvelle vente</div><div><Check size={16}/> Uniquement pour votre magasin et votre département</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div><div className="notification-device-note"><Info size={15}/><span>Sur iPhone et iPad, installez d’abord l’application sur l’écran d’accueil (iOS/iPadOS 16.4 ou plus). Une connexion HTTPS et un navigateur compatible sont nécessaires.</span></div><button className={notificationsEnabled?'outline-button full-button':'primary-button full-button'} disabled={notificationBusy} onClick={notificationsEnabled?disableNotifications:enableNotifications}>{notificationBusy?'Un instant…':notificationsEnabled?'Désactiver sur cet appareil':'Activer les notifications'} {notificationsEnabled?<BellOff size={16}/>:<Bell size={16}/>}</button></Modal>}
     {themeModal&&<Modal title="Apparence" subtitle="Choisissez l’apparence de cet appareil." onClose={()=>setThemeModal(false)}>
       <div className="theme-options" role="radiogroup" aria-label="Thème de l’application">
         {[['system',Monitor,'Automatique','Suivre les réglages de l’appareil'],['light',Sun,'Clair','Toujours utiliser le thème clair'],['dark',Moon,'Sombre','Toujours utiliser le thème sombre']].map(([value,Icon,label,description])=><label key={value} className={`theme-option ${theme===value?'is-selected':''}`}>

@@ -23,15 +23,15 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
   const [notice,setNotice]=useState('');
   const current=goals?.[`s${service}`];
   const stale=!!service && (current?.revision||null)!==revision;
-  const numeric=/^\d+$/.test(amount)?Number(amount):0;
-  const preview=numeric>=1&&numeric<=GOAL_LIMIT?goalTargets({[basis]:numeric},date,workdays):null;
+  const numeric=/^\d+$/.test(amount)?Number(amount):null;
+  const preview=numeric!==null&&numeric>=0&&numeric<=GOAL_LIMIT?goalTargets({[basis]:numeric},date,workdays):null;
   function loadService(id) {
     const next=goals?.[`s${id}`],reference=formReference(next);
     setService(String(id));setBasis(reference.period);setAmount(reference.amount);setRevision(next?.revision||null);setError('');setNotice('');
   }
   function changeBasis(period) {
     const suggested=preview?.[period];
-    setBasis(period);setAmount(Number.isInteger(suggested)&&suggested>=1&&suggested<=GOAL_LIMIT?String(suggested):'');setError('');setNotice('');
+    setBasis(period);setAmount(Number.isInteger(suggested)&&suggested>=0&&suggested<=GOAL_LIMIT?String(suggested):'');setError('');setNotice('');
   }
   async function save(values,removed=false) {
     setBusy(true);
@@ -65,7 +65,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
       <label><span className="form-label">PÉRIODE DE RÉFÉRENCE</span><select className="text-input" aria-label="Période de référence" value={basis} onChange={e=>changeBasis(e.target.value)} disabled={busy||disabled||!service}>
         <option value="day">Par jour travaillé</option><option value="week">Par semaine</option><option value="month">Par mois</option>
       </select></label>
-      <label><span className="form-label">CIBLE À ATTEINDRE</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min="1" max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={busy||disabled||!service} onChange={e=>{setAmount(e.target.value);setNotice('');}} required/></label>
+      <label><span className="form-label">CIBLE À ATTEINDRE</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min="0" max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={busy||disabled||!service} onChange={e=>{setAmount(e.target.value);setNotice('');}} required/></label>
     </div>
     <div className="goal-preview" aria-live="polite"><span className="form-label">RÉPARTITION ACTUELLE</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{GOAL_LABELS[period]}</span><strong>{preview?preview[period]:'—'}</strong></div>)}</div></div>
     <p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Jours fériés inclus ; l’administrateur peut modifier ces jours. La répartition est entière et certains jours peuvent être à 0.</p>

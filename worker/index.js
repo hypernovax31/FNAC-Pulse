@@ -3,6 +3,8 @@ import { FirestoreRest, FirebaseError, googleAccessToken, verifyIdToken, makeCus
 import { LEGACY_STORE_ID, comparePeople, orderServices, sellerStoreId } from '../src/catalog.js';
 import { validGoalValues, GOAL_PERIODS, validWorkdays, normalizeWorkdays } from '../src/goals.js';
 import { saleMessage } from '../src/sale-message.js';
+import { departmentsForStore, sellerDepartmentId, saleDepartmentId, TECH_DEPARTMENT_ID } from '../src/departments.js';
+import { summaryGoals } from '../src/summary-goals.js';
 
 const SELLERS=['Morgan','Anthony','Cedric','Philippe','Fabien','Florent','Eric','Tamera','Ikram','Selenia','Johan','Alice'];
 const SERVICES=[['DMax','play'],['Assu Téléph','phone'],['Assu Multim','devices'],['Garantie','shield'],['FVD','package'],['FNAC +','badge'],['TRC','repeat'],['Reprise','refresh'],['Canal +','tv'],['Free','wifi'],['Autre','other']];
@@ -25,6 +27,10 @@ const today=()=>parisDate.format(new Date());
 const authHeader=req=>req.headers.get('Authorization')?.match(/^Bearer\s+(.+)$/i)?.[1]||'';
 const docPath=(store,id)=>`pulseStores/${store}/sales/${id}`;
 const guardPath=store=>`pulseStores/${store}/private/revision`;
+// Marqueur public du magasin dans la collection déjà lisible : aucun businessDate,
+// donc aucune requête de ventes ne le compte. Le '~' interdit toute collision
+// avec les identifiants de ventes acceptés par l'API. Aucune cible n'est stockée ici.
+const goalsMarkerPath=store=>`pulseStores/${store}/sales/~summary-goals~`;
 function withFlags(data) {
   return {...data,
     sellerFlags:Object.fromEntries(data.sellers.map(s=>[`s${s.id}`,!!s.active])),
@@ -44,8 +50,9 @@ function freshCatalog() {
   return scopedCatalog({sellers,services,stores,nextSellerId:sellers.length+1,nextServiceId:services.length+1});
 }
 const publicCatalog=(data,storeId)=>({
-  sellers:data.sellers.filter(s=>s.active).sort(comparePeople).map(({id,name,storeId})=>({id,name,storeId})),
+  sellers:data.sellers.filter(s=>s.active).sort(comparePeople).map(s=>({id:s.id,name:s.name,storeId:sellerStoreId(s),departmentId:sellerDepartmentId(s)})),
   services:orderServices(data.services.filter(s=>s.active),data.serviceOrders,storeId).map(({id,name,icon})=>({id,name,icon})),
+  departmentsByStore:data.departmentsByStore||{},
   stores:data.stores.filter(s=>s.active).map(({active,...s})=>s),today:today(),stats:null,
 });
 function validStore(data,id) {return typeof id==='string'&&STORE_ID.test(id)&&data.storeFlags[id]===true;}
@@ -155,7 +162,10 @@ export function createWorker(deps={}) {
     if(!limit.success)fail(429,'Trop de tentatives. Réessayez plus tard.');
     const [attempt,a,c]=await Promise.all([db.get(`pulseAttempts/${uid}`),db.get(`pulseAccess/${uid}`),catalog(db)]);
     if(attempt?.data?.lockUntil>Date.now())fail(429,'Trop de tentatives. Réessayez dans 15 minutes.');
-    if(!a?.data?.active||!validStore(c.data,storeId)||!sellerBy(c.data,sellerId,storeId)||!(await verifyPin(env,uid,proof,a.data.pinMac||''))) {
+    const selected=sellerBy(c.data,sellerId,storeId);
+    if(!a?.data?.active||!validStore(c.data,storeId)||!selected||
+      (body.departmentId!==undefined&&body.departmentId!==sellerDepartmentId(selected))||
+      !(await verifyPin(env,uid,proof,a.data.pinMac||''))) {
       await recordFailure(db,uid);fail(401,'Profil ou code PIN incorrect.');
     }
     await clearFailures(db,uid);
@@ -187,10 +197,18 @@ export function createWorker(deps={}) {
     const doc=await db.get(`pulseGoals/${owner.uid}`);
     return goalPayload(doc?.data);
   }
+  async function readSummaryGoals(db,session) {
+    const storeId=session.claims.storeId,c=session.catalog;
+    const members=c.sellers.filter(s=>s.active&&sellerStoreId(s)===storeId);
+    const paths=await Promise.all(members.map(async s=>`pulseGoals/${await sellerUid(storeId,s.id)}`));
+    const docs=db.getMany?await db.getMany(paths):await Promise.all(paths.map(path=>db.get(path)));
+    const people=members.map((member,index)=>({...member,goals:docs[index]?.data?.goals||{},workdays:docs[index]?.data?.workdays}));
+    return summaryGoals(people,c.services,departmentsForStore(c,storeId,{activeOnly:false}),today());
+  }
   async function saveGoals(db,owner,body,accessVersion=null) {
     const serviceId=Number(body.serviceId), values=body.values, expected=body.revision;
     if(!isId(serviceId)||!serviceBy(owner.catalog,serviceId))fail(400,'Choisissez un service actif.');
-    if(!validGoalValues(values))fail(400,'Les objectifs doivent être des entiers entre 1 et 9 999, ou être laissés vides.');
+    if(!validGoalValues(values))fail(400,'Les objectifs doivent être des entiers entre 0 et 9 999, ou être laissés vides.');
     if(expected!==null&&(typeof expected!=='string'||!SAFE_ID.test(expected)))fail(400,'Actualisez les objectifs avant de les modifier.');
     const goalPath=`pulseGoals/${owner.uid}`,statusPath=`pulseStatus/${owner.uid}`,key=`s${serviceId}`;
     for(let attempt=0;attempt<8;attempt++) {
@@ -202,7 +220,7 @@ export function createWorker(deps={}) {
       const entry={...Object.fromEntries(GOAL_PERIODS.map(period=>[period,values[period]])),revision:crypto.randomUUID()};
       // Préserver le planning personnel et les autres champs lors d'une cible.
       const next={...(goalDoc?.data||{}),storeId:owner.storeId,sellerId:owner.sellerId,goals:{...(goalDoc?.data?.goals||{}),[key]:entry}};
-      const writes=[db.write(goalPath,next,precondition(goalDoc))];
+      const writes=[db.write(goalPath,next,precondition(goalDoc)),db.write(goalsMarkerPath(owner.storeId),{revision:crypto.randomUUID()})];
       if(statusDoc)writes.push(db.write(statusPath,{...statusDoc.data,goalsRevision:crypto.randomUUID()},precondition(statusDoc)));
       // Si le PIN est créé en parallèle, recommencer avec le statut apparu afin de
       // notifier le vendeur. Supprimer un document absent sous précondition ne le crée pas.
@@ -224,7 +242,7 @@ export function createWorker(deps={}) {
       if((goalDoc?.data?.workdaysRevision||null)!==expected)fail(409,'Les jours travaillés ont changé. Rechargez-les avant de recommencer.');
       const next={...(goalDoc?.data||{}),storeId:owner.storeId,sellerId:owner.sellerId,
         goals:goalDoc?.data?.goals||{},workdays:normalizeWorkdays(workdays),workdaysRevision:crypto.randomUUID()};
-      const writes=[db.write(goalPath,next,precondition(goalDoc))];
+      const writes=[db.write(goalPath,next,precondition(goalDoc)),db.write(goalsMarkerPath(owner.storeId),{revision:crypto.randomUUID()})];
       if(statusDoc)writes.push(db.write(statusPath,{...statusDoc.data,goalsRevision:crypto.randomUUID()},precondition(statusDoc)));
       else writes.push(db.delete(statusPath,{exists:false}));
       try {await db.commit(writes);return goalPayload(next);}
@@ -242,20 +260,52 @@ export function createWorker(deps={}) {
       const name=cleanName(body.name);if(!name)fail(400,'Saisissez un nom valide.');
       if(list.length>=(kind==='sellers'?1000:200))fail(400,'Nombre maximal atteint.');
       if(kind==='sellers'&&!validStore(d,body.storeId))fail(400,'Choisissez d’abord un magasin valide.');
+      const departmentId=body.departmentId||TECH_DEPARTMENT_ID;
+      if(kind==='sellers'&&!departmentsForStore(d,body.storeId).some(x=>x.id===departmentId))fail(400,'Choisissez un département actif de ce magasin.');
       const row={name,...(kind==='sellers'?{storeId:body.storeId}:{})};
       if(duplicate(row,name))fail(409,'Ce nom existe déjà dans cette liste.');
       const next=kind==='sellers'?'nextSellerId':'nextServiceId', newId=d[next]++;
-      list.push({id:newId,name,active:true,...(kind==='services'?{icon:'other'}:{storeId:body.storeId})});id=newId;
+      list.push({id:newId,name,active:true,...(kind==='services'?{icon:'other'}:{storeId:body.storeId,departmentId})});id=newId;
     } else {
       const row=list.find(x=>x.id===Number(id));if(!row)fail(404,'Élément introuvable.');
       if(kind==='sellers'&&body.storeId!==undefined&&body.storeId!==sellerStoreId(row))fail(400,'Ce vendeur appartient à un autre magasin.');
       if(typeof body.name==='string') {const name=cleanName(body.name);if(!name)fail(400,'Saisissez un nom valide.');row.name=name;}
+      if(kind==='sellers'&&body.departmentId!==undefined) {
+        if(!departmentsForStore(d,sellerStoreId(row)).some(x=>x.id===body.departmentId))fail(400,'Choisissez un département actif de ce magasin.');
+        row.departmentId=body.departmentId;
+      }
       if(typeof body.active==='boolean')row.active=body.active;
+      if(kind==='sellers'&&row.active&&!departmentsForStore(d,sellerStoreId(row)).some(x=>x.id===sellerDepartmentId(row)))fail(409,'Réaffectez ce vendeur à un département actif.');
       if(row.active&&duplicate(row,row.name))fail(409,'Ce nom existe déjà dans cette liste.');
     }
     try{await db.commit([db.write('pulse/catalog',withFlags(d),{updateTime:c.updateTime})]);}
     catch(e){if(conflict(e))fail(409,'Une modification simultanée a eu lieu. Réessayez.');throw e;}
     return {id:Number(id),ok:true};
+  }
+  async function mutateDepartment(db,id,body,method) {
+    const c=await catalog(db),d=structuredClone(c.data),storeId=body.storeId;
+    if(!validStore(d,storeId))fail(400,'Choisissez d’abord un magasin valide.');
+    const list=structuredClone(departmentsForStore(d,storeId,{activeOnly:false}));
+    if(method==='POST') {
+      const name=cleanName(body.name);if(!name)fail(400,'Saisissez le nom du département.');
+      if(list.length>=30)fail(400,'Nombre maximal de départements atteint.');
+      id=`dep-${crypto.randomUUID()}`;list.push({id,name,active:true});
+    } else {
+      if(!STORE_ID.test(id||''))fail(400,'Département invalide.');
+      const row=list.find(x=>x.id===id);if(!row)fail(404,'Département introuvable.');
+      if(typeof body.name==='string'){const name=cleanName(body.name);if(!name)fail(400,'Saisissez le nom du département.');row.name=name;}
+      if(typeof body.active==='boolean') {
+        if(!body.active&&d.sellers.some(s=>s.active&&sellerStoreId(s)===storeId&&sellerDepartmentId(s)===id))fail(409,'Réaffectez les vendeurs actifs avant d’archiver ce département.');
+        if(!body.active&&list.filter(x=>x.active).length<=1)fail(409,'Conservez au moins un département actif.');
+        row.active=body.active;
+      }
+    }
+    const changed=list.find(x=>x.id===id);
+    if(changed.active&&list.some(x=>x.id!==id&&x.active&&x.name.localeCompare(changed.name,'fr',{sensitivity:'base'})===0))fail(409,'Ce département existe déjà dans ce magasin.');
+    d.departmentsByStore={...(d.departmentsByStore||{}),[storeId]:list};
+    try{await db.commit([db.write('pulse/catalog',withFlags(d),{updateTime:c.updateTime})]);}
+    catch(e){if(conflict(e))fail(409,'Une modification simultanée a eu lieu. Réessayez.');throw e;}
+    return {id,ok:true};
   }
   async function saveServiceOrder(db,body) {
     const c=await catalog(db),d=structuredClone(c.data),ids=body.serviceIds;
@@ -287,9 +337,9 @@ export function createWorker(deps={}) {
   async function addSale(req,env,db,ctx,body) {
     const s=await seller(req,env,db),service=serviceBy(s.catalog,body.serviceId),requestId=body.requestId;
     if(!service||!SAFE_ID.test(requestId||''))fail(400,'Service ou identifiant de vente invalide.');
-    const storeId=s.claims.storeId,sellerId=Number(s.claims.sellerId),name=sellerBy(s.catalog,sellerId,storeId).name;
-    const data={id:requestId,storeId,sellerId,serviceId:service.id,createdAt:new Date().toISOString(),businessDate:today(),deletedAt:null,source:'sale',clientId:typeof body.clientId==='string'?body.clientId.slice(0,80):'',ownerUid:s.claims.sub};
-    const outbox={saleId:requestId,storeId,sellerName:name,serviceName:service.name,status:'pending',createdAt:Date.now(),leaseUntil:0};
+    const storeId=s.claims.storeId,sellerId=Number(s.claims.sellerId),person=sellerBy(s.catalog,sellerId,storeId),departmentId=sellerDepartmentId(person);
+    const data={id:requestId,storeId,sellerId,departmentId,serviceId:service.id,createdAt:new Date().toISOString(),businessDate:today(),deletedAt:null,source:'sale',clientId:typeof body.clientId==='string'?body.clientId.slice(0,80):'',ownerUid:s.claims.sub};
+    const outbox={saleId:requestId,storeId,departmentId,sellerName:person.name,serviceName:service.name,status:'pending',createdAt:Date.now(),leaseUntil:0};
     try {await db.commit([db.write(docPath(storeId,requestId),data,{exists:false}),db.write(`pulseOutbox/${requestId}`,outbox,{exists:false}),db.write(guardPath(storeId),{revision:crypto.randomUUID()})]);}
     catch(e) {
       if(!conflict(e))throw e;
@@ -309,7 +359,8 @@ export function createWorker(deps={}) {
   }
   async function removeLatest(req,env,db,body) {
     const s=await seller(req,env,db);if(!serviceBy(s.catalog,body.serviceId))fail(400,'Service invalide.');
-    const rows=(await findToday(db,s.claims.storeId)).filter(x=>x.data.ownerUid===s.claims.sub&&x.data.serviceId===Number(body.serviceId)&&!x.data.deletedAt)
+    const departmentId=sellerDepartmentId(sellerBy(s.catalog,s.claims.sellerId,s.claims.storeId));
+    const rows=(await findToday(db,s.claims.storeId)).filter(x=>x.data.ownerUid===s.claims.sub&&saleDepartmentId(x.data)===departmentId&&x.data.serviceId===Number(body.serviceId)&&!x.data.deletedAt)
       .sort((a,b)=>b.data.createdAt.localeCompare(a.data.createdAt)||b.id.localeCompare(a.id));
     if(!rows.length)fail(409,'Aucune vente à retirer pour ce service aujourd’hui.');
     return deleteSale(req,env,db,rows[0].id);
@@ -324,7 +375,7 @@ export function createWorker(deps={}) {
     const writes=[db.write(guardPath(storeId),{revision:crypto.randomUUID()},precondition(guard))];
     if(delta<0)for(const d of rows.slice(0,-delta))writes.push(db.write(docPath(storeId,d.id),{...d.data,deletedAt:new Date().toISOString()},{updateTime:d.updateTime}));
     if(delta>0)for(let i=0;i<delta;i++) {
-      const id=crypto.randomUUID();writes.push(db.write(docPath(storeId,id),{id,storeId,sellerId:Number(sellerId),serviceId:Number(serviceId),createdAt:new Date().toISOString(),businessDate:today(),deletedAt:null,source:'adjustment',clientId:'',ownerUid:await sellerUid(storeId,Number(sellerId))},{exists:false}));
+      const id=crypto.randomUUID();writes.push(db.write(docPath(storeId,id),{id,storeId,sellerId:Number(sellerId),departmentId:sellerDepartmentId(sellerBy(c.data,sellerId,storeId)),serviceId:Number(serviceId),createdAt:new Date().toISOString(),businessDate:today(),deletedAt:null,source:'adjustment',clientId:'',ownerUid:await sellerUid(storeId,Number(sellerId))},{exists:false}));
     }
     try{await db.commit(writes);}catch(e){if(conflict(e))fail(409,'Les ventes ont changé pendant la correction. Réessayez.');throw e;}
     return {ok:true};
@@ -354,7 +405,17 @@ export function createWorker(deps={}) {
     try {
       const tokens=await db.query('pulseTokens','storeId','EQUAL',item.data.storeId,1001);
       if(tokens.length>1000)throw new Error('Trop d’appareils pour ce magasin');
-      for(let i=0;i<tokens.length;i+=100)await env.PULSE_QUEUE.sendBatch(tokens.slice(i,i+100).map(t=>({body:{saleId:id,tokenId:t.id,storeId:item.data.storeId}})));
+      // Ne mettre en file que les appareils du département concerné. Les accès
+      // sont lus par lots pour rester sous les limites de sous-requêtes du Worker.
+      const paths=[...new Set(tokens.map(t=>`pulseAccess/${t.data.uid}`))];
+      const [c,accesses]=await Promise.all([catalog(db),db.getMany?db.getMany(paths):Promise.all(paths.map(p=>db.get(p)))]);
+      const byPath=new Map(paths.map((p,i)=>[p,accesses[i]?.data]));
+      const eligible=tokens.filter(t=>{
+        const a=byPath.get(`pulseAccess/${t.data.uid}`),recipient=a&&sellerBy(c.data,a.sellerId,item.data.storeId);
+        return a?.active&&a.version===t.data.accessVersion&&a.storeId===item.data.storeId&&recipient&&validStore(c.data,item.data.storeId)&&
+          sellerDepartmentId(recipient)===saleDepartmentId(item.data);
+      });
+      for(let i=0;i<eligible.length;i+=100)await env.PULSE_QUEUE.sendBatch(eligible.slice(i,i+100).map(t=>({body:{saleId:id,tokenId:t.id,storeId:item.data.storeId}})));
       const current=await db.get(path);
       if(current?.data.status==='dispatching')await db.commit([db.write(path,{...current.data,status:'queued',leaseUntil:0},precondition(current))]);
     } catch(e) {
@@ -368,17 +429,20 @@ export function createWorker(deps={}) {
     const {saleId,tokenId,storeId}=msg.body||{};
     if(!SAFE_ID.test(saleId||'')||!PROOF.test(tokenId||'')||!STORE_ID.test(storeId||'')){msg.ack();return;}
     const path=`pulseDeliveries/${saleId}_${tokenId}`,prior=await db.get(path),now=Date.now();
-    if(prior?.data.status==='sent'){msg.ack();return;}
+    if(prior?.data.status==='sent'||prior?.data.status==='skipped'){msg.ack();return;}
     if(prior?.data.status==='sending'&&prior.data.leaseUntil>now){msg.retry({delaySeconds:30});return;}
     const claim={status:'sending',leaseUntil:now+60000};
     try{await db.commit([db.write(path,claim,precondition(prior))]);}catch(e){if(conflict(e)){msg.retry({delaySeconds:30});return;}throw e;}
     let stage='load';
     try {
+      const skip=async()=>{const current=await db.get(path);if(current)await db.commit([db.write(path,{status:'skipped',leaseUntil:0},precondition(current))]);msg.ack();};
       const [tokenDoc,outbox]=await Promise.all([db.get(`pulseTokens/${tokenId}`),db.get(`pulseOutbox/${saleId}`)]);
-      if(!tokenDoc || !outbox || tokenDoc.data.storeId!==storeId || outbox.data.storeId!==storeId || Date.now()-outbox.data.createdAt>60*60*1000) {msg.ack();return;}
+      if(!tokenDoc || !outbox || tokenDoc.data.storeId!==storeId || outbox.data.storeId!==storeId || Date.now()-outbox.data.createdAt>60*60*1000) {await skip();return;}
       stage='authorize';
       const [a,c]=await Promise.all([db.get(`pulseAccess/${tokenDoc.data.uid}`),catalog(db)]);
-      if(!a?.data.active||a.data.version!==tokenDoc.data.accessVersion||a.data.storeId!==storeId||!sellerBy(c.data,a.data.sellerId,storeId)||!validStore(c.data,storeId)){msg.ack();return;}
+      const recipient=a?.data&&sellerBy(c.data,a.data.sellerId,storeId);
+      if(!a?.data.active||a.data.version!==tokenDoc.data.accessVersion||a.data.storeId!==storeId||!recipient||!validStore(c.data,storeId)||
+         sellerDepartmentId(recipient)!==saleDepartmentId(outbox.data)){await skip();return;}
       stage='fcm';await send(env,tokenDoc.data.token,outbox.data);
       stage='mark';const current=await db.get(path);if(current)await db.commit([db.write(path,{status:'sent',leaseUntil:0,sentAt:Date.now()},precondition(current))]);
       msg.ack();
@@ -404,6 +468,11 @@ export function createWorker(deps={}) {
          (Object.hasOwn(selection,'sellerId')&&Number(selection.sellerId)!==owner.sellerId))fail(403,'Votre profil a changé. Reconnectez-vous.');
       return method==='GET'?readGoals(db,owner):saveGoals(db,owner,selection,s.claims.accessVersion);
     }
+    if(method==='GET'&&path==='/api/summary-goals') {
+      const s=await seller(req,env,db),requested=url.searchParams.get('storeId');
+      if(requested&&requested!==s.claims.storeId)fail(403,'Accès à ce magasin refusé.');
+      return readSummaryGoals(db,s);
+    }
     if(method==='POST'&&path==='/api/sales')return addSale(req,env,db,ctx,await readBody(req));
     if(method==='POST'&&path==='/api/sales/remove')return removeLatest(req,env,db,await readBody(req));
     const sale=path.match(/^\/api\/sales\/([A-Za-z0-9_-]+)$/);
@@ -411,7 +480,9 @@ export function createWorker(deps={}) {
     if((method==='POST'||method==='DELETE')&&path==='/api/push/subscribe')return tokenSubscribe(req,env,db,await readBody(req),method);
     if(path.startsWith('/api/admin/')) {
       await admin(req,env);
-      if(method==='GET'&&path==='/api/admin/all'){const d=(await catalog(db)).data;return {sellers:d.sellers,services:d.services,serviceOrders:d.serviceOrders||{}};}
+      if(method==='GET'&&path==='/api/admin/all'){const d=(await catalog(db)).data;return {sellers:d.sellers,services:d.services,serviceOrders:d.serviceOrders||{},departmentsByStore:d.departmentsByStore||{}};}
+      const department=path.match(/^\/api\/admin\/departments(?:\/([A-Za-z0-9_-]+))?$/);
+      if(department&&((method==='POST'&&!department[1])||(method==='PATCH'&&department[1])))return mutateDepartment(db,department[1],await readBody(req),method);
       if(method==='POST'&&path==='/api/admin/pin')return savePin(env,db,await readBody(req));
       if(method==='GET'&&path==='/api/admin/goals')return readGoals(db,await goalOwner(db,url.searchParams.get('storeId'),url.searchParams.get('sellerId')));
       if(method==='POST'&&path==='/api/admin/goals') {

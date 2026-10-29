@@ -46,3 +46,17 @@ test('Firebase : signature des jetons, OAuth, PIN et requête FCM',async()=>{
     assert.equal(oauthCalls,1);assert.equal(fcmCalls,2);
   } finally {globalThis.fetch=original;}
 });
+
+test('Firestore BatchGet : lots, documents absents et résultats dans le désordre',async()=>{
+  const {FirestoreRest}=await import('../worker/firebase.js');
+  const db=new FirestoreRest({FIREBASE_PROJECT_ID:'demo-fnac'},{token:async()=> 'test'}),calls=[];
+  db.request=async(path,options)=>{
+    assert.equal(path,':batchGet');assert.equal(options.method,'POST');
+    const names=options.body.documents;calls.push(names.length);
+    return [...names].reverse().map(name=>name.endsWith('/s103')?{missing:name}:{found:{name,fields:{value:{integerValue:name.split('/s').at(-1)}},updateTime:'version'}});
+  };
+  const paths=Array.from({length:203},(_,i)=>`pulseGoals/s${i}`),rows=await db.getMany(paths);
+  assert.deepEqual(calls,[100,100,3]);assert.equal(rows.length,203);
+  assert.equal(rows[0].data.value,0);assert.equal(rows[102].data.value,102);assert.equal(rows[103],null);assert.equal(rows[202].data.value,202);
+  assert.deepEqual(await db.getMany([]),[]);assert.deepEqual(calls,[100,100,3]);
+});

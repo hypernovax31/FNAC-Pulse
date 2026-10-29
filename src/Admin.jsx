@@ -4,6 +4,7 @@ import { api } from './api';
 import { CLOUD, adminLogin, adminLogout, changeAdminPassword, setPin } from './cloud';
 import { randomPin } from './pin';
 import { sellersForStore, orderServices } from './catalog';
+import { departmentsForStore, sellerDepartmentId } from './departments';
 import { GoalForm, WorkdaysForm } from './Goals';
 import { normalizeWorkdays } from './goals';
 
@@ -42,7 +43,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [notice,setNotice]=useState('');
   const [busy,setBusy]=useState(false);
   const [tab,setTab]=useState(()=>session?.storeId?'sales':'stores');
-  const [all,setAll]=useState({sellers:[],services:[],serviceOrders:{}});
+  const [all,setAll]=useState({sellers:[],services:[],serviceOrders:{},departmentsByStore:{}});
   const [adminStore,setAdminStore]=useState(session?.storeId||'');
   const [adminSeller,setAdminSeller]=useState(session?.sellerId?String(session.sellerId):'');
   const [allLoaded,setAllLoaded]=useState(false);
@@ -56,6 +57,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [goalsLoading,setGoalsLoading]=useState(false);
   const goalScope=useRef('');goalScope.current=`${adminStore}:${adminSeller}:${tab}`;
   const [name,setName]=useState('');
+  const [newSellerDepartment,setNewSellerDepartment]=useState('');
   const [editing,setEditing]=useState(null);
   const [editName,setEditName]=useState('');
   const [newStore,setNewStore]=useState({name:'',lat:'',lon:''});
@@ -136,13 +138,16 @@ export default function Admin({onClose,data,session,onChanged}) {
     catch(e){setError(e.message);} finally{setBusy(false);}
   }
   function switchTab(next){setTab(next);setCountsFor('');setError('');setNotice('');setEditing(null);setName('');}
-  function changeStore(value){setAdminStore(value);setAdminSeller('');setCounts({});setCountsFor('');setEditing(null);setSellerPin('');setError('');setNotice('');}
+  function changeStore(value){setAdminStore(value);setAdminSeller('');setCounts({});setCountsFor('');setEditing(null);setNewSellerDepartment('');setSellerPin('');setError('');setNotice('');}
   const activeSellers=sellersForStore(all.sellers,adminStore);
   const storeSellers=sellersForStore(all.sellers,adminStore,{activeOnly:false});
+  const storeDepartments=adminStore?departmentsForStore(all,adminStore,{activeOnly:false}):[];
+  const activeDepartments=storeDepartments.filter(d=>d.active);
+  const departmentForNewSeller=activeDepartments.some(d=>d.id===newSellerDepartment)?newSellerDepartment:activeDepartments[0]?.id||'';
   const orderedServices=orderServices(all.services,all.serviceOrders,adminStore);
   const activeServices=orderedServices.filter(s=>s.active);
   const adminStoreName=data.stores.find(s=>s.id===adminStore)?.name||'';
-  const needsStore=['sales','goals','sellers','services','pins'].includes(tab);
+  const needsStore=['sales','goals','departments','sellers','services','pins'].includes(tab);
   function moveService(index,offset) {
     const ids=orderedServices.map(s=>s.id),target=index+offset;
     if(target<0||target>=ids.length)return;
@@ -164,7 +169,7 @@ export default function Admin({onClose,data,session,onChanged}) {
 
   return <Modal title="Administration" subtitle={adminStoreName?`Magasin sélectionné : ${adminStoreName}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={onClose} wide>
     <div className="admin-tabs" role="tablist" aria-label="Rubriques administration">
-      {[['sales','Ventes'],['goals','Objectifs'],['sellers','Vendeurs'],['services','Services'],['stores','Magasins'],...(CLOUD?[['pins','Codes PIN']]:[]),['security','Sécurité']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} disabled={busy} onClick={()=>switchTab(key)} className={tab===key?'active':''}>{label}</button>)}
+      {[['sales','Ventes'],['goals','Objectifs'],['departments','Départements'],['sellers','Vendeurs'],['services','Services'],['stores','Magasins'],...(CLOUD?[['pins','Codes PIN']]:[]),['security','Sécurité']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} disabled={busy} onClick={()=>switchTab(key)} className={tab===key?'active':''}>{label}</button>)}
     </div>
     {error&&<div className="admin-alert error" role="alert">{error}</div>}
     {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
@@ -190,15 +195,27 @@ export default function Admin({onClose,data,session,onChanged}) {
         </React.Fragment> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un vendeur pour gérer ses objectifs.</div>}
         <div className="admin-note"><Info size={15}/> Les objectifs se répètent et toute modification s’applique aux périodes suivantes.</div>
       </>}
+      {tab==='departments'&&adminStore&&<>
+        <div className="admin-section-heading"><div><h3>Départements du magasin</h3><p>Renommez, ajoutez ou archivez les départements de ce magasin. Réaffectez les vendeurs actifs avant d’archiver leur département.</p></div></div>
+        <form className="add-entity" onSubmit={e=>{e.preventDefault();if(!name.trim())return;run(async()=>{await api('/api/admin/departments',{method:'POST',token,body:{storeId:adminStore,name}});setName('');},'Département ajouté.');}}>
+          <input className="text-input" aria-label="Nom du département" placeholder="Nom du département" value={name} onChange={e=>setName(e.target.value)} required maxLength={60}/>
+          <button className="primary-button" disabled={busy}><Plus size={16}/> Ajouter</button>
+        </form>
+        <div className="entity-list">{storeDepartments.map(item=><div className={`entity-row ${!item.active?'is-archived':''}`} key={item.id}>
+          {editing===item.id?<form className="edit-entity" onSubmit={e=>{e.preventDefault();run(async()=>{await api(`/api/admin/departments/${item.id}`,{method:'PATCH',token,body:{storeId:adminStore,name:editName}});setEditing(null);},'Département renommé.');}}><input className="text-input" aria-label={`Nouveau nom de ${item.name}`} value={editName} onChange={e=>setEditName(e.target.value)} autoFocus maxLength={60} required/><button className="icon-button" aria-label="Enregistrer le nom" title="Enregistrer" disabled={busy}><Check size={17}/></button><button className="icon-button" type="button" aria-label="Annuler la modification" onClick={()=>setEditing(null)}><X size={17}/></button></form>:<><div className="entity-name"><strong>{item.name}</strong>{!item.active&&<span className="archived-label">Archivé</span>}</div><div className="entity-actions"><button className="icon-button" aria-label={`Modifier ${item.name}`} title="Modifier" disabled={busy} onClick={()=>{setEditing(item.id);setEditName(item.name)}}><Pencil size={15}/></button><button className="icon-button" aria-label={`${item.active?'Archiver':'Restaurer'} ${item.name}`} title={item.active?'Archiver':'Restaurer'} disabled={busy} onClick={()=>{if(item.active&&!window.confirm(`Archiver « ${item.name} » ? Son historique sera conservé.`))return;run(()=>api(`/api/admin/departments/${item.id}`,{method:'PATCH',token,body:{storeId:adminStore,active:!item.active}}),item.active?'Département archivé.':'Département restauré.');}}>{item.active?<Archive size={15}/>:<RotateCcw size={15}/>}</button></div></>}
+        </div>)}</div>
+        <div className="admin-note"><Info size={15}/> Les ventes déjà enregistrées restent attachées à leur département d’origine.</div>
+      </>}
       {(tab==='sellers'||tab==='services')&&adminStore&&<>
         <div className="admin-section-heading"><div><h3>{tab==='sellers'?'Votre équipe':'Vos services'}</h3><p>{tab==='sellers'?'Les vendeurs sont propres à ce magasin et affichés par ordre alphabétique.':'Utilisez les flèches pour choisir l’ordre de ce magasin. Les noms et l’activation des services sont communs à tous les magasins.'} L’historique est conservé.</p></div></div>
         {!adminStore?<div className="empty-admin">Choisissez d’abord le magasin à gérer.</div>:<>
-          <form className="add-entity" onSubmit={e=>{e.preventDefault();if(!name.trim())return;run(async()=>{await api(`/api/admin/entities/${tab}`,{method:'POST',token,body:{name,...(tab==='sellers'?{storeId:adminStore}:{})}});setName('');},tab==='sellers'?'Vendeur ajouté dans ce magasin.':'Service ajouté dans tous les magasins.');}}>
+          <form className={`add-entity ${tab==='sellers'?'add-seller':''}`} onSubmit={e=>{e.preventDefault();if(!name.trim())return;run(async()=>{await api(`/api/admin/entities/${tab}`,{method:'POST',token,body:{name,...(tab==='sellers'?{storeId:adminStore,departmentId:departmentForNewSeller}:{})}});setName('');},tab==='sellers'?'Vendeur ajouté dans ce magasin.':'Service ajouté dans tous les magasins.');}}>
             <input className="text-input" aria-label={tab==='sellers'?'Nom du vendeur':'Nom du service'} placeholder={tab==='sellers'?'Prénom du vendeur':'Intitulé du service'} value={name} onChange={e=>setName(e.target.value)} required maxLength={60}/>
-            <button className="primary-button" disabled={busy}><Plus size={16}/> Ajouter</button>
+            {tab==='sellers'&&<select className="text-input" aria-label="Département du nouveau vendeur" value={departmentForNewSeller} onChange={e=>setNewSellerDepartment(e.target.value)} disabled={busy||!activeDepartments.length} required>{activeDepartments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select>}
+            <button className="primary-button" disabled={busy||(tab==='sellers'&&!departmentForNewSeller)}><Plus size={16}/> Ajouter</button>
           </form>
-          {(tab==='sellers'?storeSellers:orderedServices).length===0?<div className="empty-admin">{tab==='sellers'?'Aucun vendeur dans ce magasin. Ajoutez le premier prénom ci-dessus.':'Aucun service pour le moment.'}</div>:<div className="entity-list">{(tab==='sellers'?storeSellers:orderedServices).map((item,index)=><div className={`entity-row ${!item.active?'is-archived':''}`} key={item.id}>
-            {editing===item.id ? <form className="edit-entity" onSubmit={e=>{e.preventDefault();run(async()=>{await api(`/api/admin/entities/${tab}/${item.id}`,{method:'PATCH',token,body:{name:editName,...(tab==='sellers'?{storeId:adminStore}:{})}});setEditing(null);},'Nom modifié.')}}><input className="text-input" aria-label={`Nouveau nom de ${item.name}`} value={editName} onChange={e=>setEditName(e.target.value)} autoFocus maxLength={60} required/><button className="icon-button" aria-label="Enregistrer le nom" title="Enregistrer" disabled={busy}><Check size={17}/></button><button className="icon-button" type="button" aria-label="Annuler la modification" title="Annuler" onClick={()=>setEditing(null)}><X size={17}/></button></form> : <><div className="entity-name"><strong>{item.name}</strong>{!item.active&&<span className="archived-label">Archivé</span>}</div><div className="entity-actions">
+          {(tab==='sellers'?storeSellers:orderedServices).length===0?<div className="empty-admin">{tab==='sellers'?'Aucun vendeur dans ce magasin. Ajoutez le premier prénom ci-dessus.':'Aucun service pour le moment.'}</div>:<div className="entity-list">{(tab==='sellers'?storeSellers:orderedServices).map((item,index)=><div className={`entity-row ${tab==='sellers'?'seller-entity-row':''} ${!item.active?'is-archived':''}`} key={item.id}>
+            {editing===item.id ? <form className="edit-entity" onSubmit={e=>{e.preventDefault();run(async()=>{await api(`/api/admin/entities/${tab}/${item.id}`,{method:'PATCH',token,body:{name:editName,...(tab==='sellers'?{storeId:adminStore}:{})}});setEditing(null);},'Nom modifié.')}}><input className="text-input" aria-label={`Nouveau nom de ${item.name}`} value={editName} onChange={e=>setEditName(e.target.value)} autoFocus maxLength={60} required/><button className="icon-button" aria-label="Enregistrer le nom" title="Enregistrer" disabled={busy}><Check size={17}/></button><button className="icon-button" type="button" aria-label="Annuler la modification" title="Annuler" onClick={()=>setEditing(null)}><X size={17}/></button></form> : <><div className="entity-name"><strong>{item.name}</strong>{!item.active&&<span className="archived-label">Archivé</span>}</div>{tab==='sellers'&&<label className="entity-department"><span className="sr-only">Département de {item.name}</span><select className="text-input" aria-label={`Département de ${item.name}`} value={sellerDepartmentId(item)} disabled={busy} onChange={e=>{const departmentId=e.target.value;run(()=>api(`/api/admin/entities/sellers/${item.id}`,{method:'PATCH',token,body:{storeId:adminStore,departmentId}}),'Vendeur réaffecté. Les ventes passées restent dans leur département d’origine.');}}>{storeDepartments.filter(d=>d.active||d.id===sellerDepartmentId(item)).map(d=><option value={d.id} key={d.id}>{d.name}{d.active?'':' · archivé'}</option>)}</select></label>}<div className="entity-actions">
               {tab==='services'&&<><button className="icon-button order-button" aria-label={`Monter ${item.name}`} title="Monter" disabled={busy||index===0} onClick={()=>moveService(index,-1)}><ArrowUp size={16}/></button><button className="icon-button order-button" aria-label={`Descendre ${item.name}`} title="Descendre" disabled={busy||index===orderedServices.length-1} onClick={()=>moveService(index,1)}><ArrowDown size={16}/></button></>}
               <button className="icon-button" aria-label={`Modifier ${item.name}`} title="Modifier" disabled={busy} onClick={()=>{setEditing(item.id);setEditName(item.name)}}><Pencil size={15}/></button><button className="icon-button" aria-label={`${item.active?'Archiver':'Restaurer'} ${item.name}`} title={item.active?'Archiver':'Restaurer'} disabled={busy} onClick={()=>{if(item.active&&!window.confirm(`Archiver « ${item.name} » ? Son historique sera conservé.`))return;run(()=>api(`/api/admin/entities/${tab}/${item.id}`,{method:'PATCH',token,body:{active:!item.active,...(tab==='sellers'?{storeId:adminStore}:{})}}),item.active?'Élément archivé.':'Élément restauré.')}}>{item.active?<Archive size={15}/>:<RotateCcw size={15}/>}</button></div></>}
           </div>)}</div>}

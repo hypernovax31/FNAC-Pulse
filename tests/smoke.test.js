@@ -64,7 +64,7 @@ test('API Fnac Pulse : saisie, isolation, administration, push et persistance',a
     const target={storeId:store.id,sellerId:s1,serviceId:service,values:{day:2,week:8,month:30},revision:null};
     let goal=await request('/api/admin/goals','POST',target,token);assert.equal(goal.status,200);
     const revision=goal.value.goals[`s${service}`].revision;
-    assert.equal((await request('/api/goals','POST',{...target,values:{day:0,week:8,month:30},revision})).status,400);
+    assert.equal((await request('/api/goals','POST',{...target,values:{day:-1,week:8,month:30},revision})).status,400);
     assert.equal((await request('/api/goals','POST',target)).status,409);
     goal=await request('/api/goals','POST',{...target,values:{day:3,week:null,month:30},revision});assert.equal(goal.status,200);
     assert.equal(goal.value.goals[`s${service}`].day,3);
@@ -129,7 +129,50 @@ test('SQLite historique : migration des vendeurs sans perdre les ventes',async()
   try {
     server=await start(port,folder);
     const result=await (await fetch(`http://127.0.0.1:${port}/api/bootstrap?storeId=${LEGACY_STORE_ID}&sellerId=7`)).json();
-    assert.deepEqual(result.sellers,[{id:7,name:'Éric',storeId:LEGACY_STORE_ID}]);
+    assert.deepEqual(result.sellers,[{id:7,name:'Éric',storeId:LEGACY_STORE_ID,departmentId:'tech'}]);
     assert.equal(result.stats.day.total,1);assert.equal(result.stats.mineTotal,1);
+  } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
+});
+
+test('SQLite départements : isolation, objectifs agrégés, transfert et persistance',async()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'fnac-pulse-depts-')),port=await freePort(),url=`http://127.0.0.1:${port}`;let server;
+  const request=async(route,method='GET',body,token)=>{const r=await fetch(url+route,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,body:await r.json()};};
+  try {
+    server=await start(port,folder);
+    const first=(await request('/api/bootstrap')).body,store=LEGACY_STORE_ID,other=first.stores.find(s=>s.name==='Fnac Bordeaux').id;
+    const [one,two]=first.sellers.slice(0,2).map(s=>s.id),service=first.services[0].id;
+    assert(first.sellers.every(s=>s.departmentId==='tech'));
+    const token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
+    assert.equal((await request('/api/admin/departments','POST',{storeId:store,name:'Photo'})).status,401);
+    const created=await request('/api/admin/departments','POST',{storeId:store,name:'Photo'},token);assert.equal(created.status,201);
+    assert.equal((await request(`/api/admin/departments/${created.body.id}`,'PATCH',{storeId:store,name:'Image'},token)).status,200);
+    assert.equal((await request('/api/admin/departments','POST',{storeId:store,name:'image'},token)).status,409);
+    assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:store,departmentId:'editorial'},token)).status,200);
+    assert.equal((await request('/api/admin/departments/editorial','PATCH',{storeId:store,active:false},token)).status,409);
+    assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:other,departmentId:'cash'},token)).status,400);
+    for(const [sellerId,month] of [[one,12],[two,24]])assert.equal((await request('/api/admin/goals','POST',{storeId:store,sellerId,serviceId:service,values:{day:null,week:null,month},revision:null},token)).status,200);
+    let goals=(await request(`/api/summary-goals?storeId=${store}`)).body;
+    assert.equal(goals.store.byService[`s${service}`].month,36);assert.equal(goals.departments.tech.byService[`s${service}`].month,12);assert.equal(goals.departments.editorial.byService[`s${service}`].month,24);
+    assert(!JSON.stringify(goals).includes('workdays'));assert(!JSON.stringify(goals).includes(first.sellers[0].name));
+    const a=await request('/api/sales','POST',{storeId:store,sellerId:one,serviceId:service,requestId:'local-tech-sale-0001'});
+    const b=await request('/api/sales','POST',{storeId:store,sellerId:two,serviceId:service,requestId:'local-editorial-sale-1'});
+    assert.equal(a.status,201);assert.equal(b.status,201);
+    let tech=(await request(`/api/bootstrap?storeId=${store}&sellerId=${one}`)).body.stats;
+    let editorial=(await request(`/api/bootstrap?storeId=${store}&sellerId=${two}`)).body.stats;
+    assert.equal(tech.day.total,1);assert.equal(editorial.day.total,1);assert.equal(tech.summary.store.day.total,2);
+    assert.equal(tech.activity[0].sellerId,one);assert.equal(editorial.activity[0].sellerId,two);
+    assert.equal((await request(`/api/admin/entities/sellers/${one}`,'PATCH',{storeId:store,departmentId:'editorial'},token)).status,200);
+    assert.equal((await request('/api/sales/remove','POST',{storeId:store,sellerId:one,serviceId:service})).status,409);
+    assert.equal((await request('/api/sales','POST',{storeId:store,sellerId:one,serviceId:service,requestId:'local-moved-sale-001'})).status,201);
+    editorial=(await request(`/api/bootstrap?storeId=${store}&sellerId=${one}`)).body.stats;
+    assert.equal(editorial.day.total,2);assert.equal(editorial.mineTotal,1);assert.equal(editorial.day.mineByService.find(x=>x.serviceId===service).count,2);
+    assert.equal(editorial.summary.store.day.total,3);assert.equal(editorial.summary.departments.tech.day.total,1);assert.equal(editorial.summary.departments.editorial.day.total,2);
+    goals=(await request(`/api/summary-goals?storeId=${store}`)).body;
+    assert.equal(goals.departments.editorial.byService[`s${service}`].month,36);assert.equal(goals.departments.tech.byService[`s${service}`].month,null);
+    await stop(server);server=await start(port,folder);
+    const restored=(await request(`/api/bootstrap?storeId=${store}&sellerId=${one}`)).body;
+    assert.equal(restored.stats.summary.store.day.total,3);assert.equal(restored.stats.summary.departments.tech.day.total,1);
+    assert.equal(restored.sellers.find(s=>s.id===one).departmentId,'editorial');assert.equal(restored.departmentsByStore[store].find(d=>d.id===created.body.id).name,'Image');
+    assert.equal(restored.departmentsByStore[other],undefined);
   } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
 });

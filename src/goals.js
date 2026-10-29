@@ -18,7 +18,7 @@ export function workdaysLabel(days) {
 
 export function validGoalValues(values) {
   return !!values && typeof values==='object' && !Array.isArray(values) && GOAL_PERIODS.every(period =>
-    Object.hasOwn(values,period) && (values[period]===null || (Number.isInteger(values[period]) && values[period]>=1 && values[period]<=GOAL_LIMIT))
+    Object.hasOwn(values,period) && (values[period]===null || (Number.isInteger(values[period]) && values[period]>=0 && values[period]<=GOAL_LIMIT))
   );
 }
 export function parseGoalInputs(inputs) {
@@ -26,13 +26,13 @@ export function parseGoalInputs(inputs) {
   for(const period of GOAL_PERIODS) {
     const raw=String(inputs?.[period]??'').trim();
     if(!raw){result[period]=null;continue;}
-    if(!/^\d+$/.test(raw)){throw new Error(`Saisissez un nombre entier entre 1 et ${GOAL_LIMIT}, ou laissez le champ vide.`);}
+    if(!/^\d+$/.test(raw)){throw new Error(`Saisissez un nombre entier entre 0 et ${GOAL_LIMIT}, ou laissez le champ vide.`);}
     result[period]=Number(raw);
   }
-  if(!validGoalValues(result))throw new Error(`Saisissez un nombre entier entre 1 et ${GOAL_LIMIT}, ou laissez le champ vide.`);
+  if(!validGoalValues(result))throw new Error(`Saisissez un nombre entier entre 0 et ${GOAL_LIMIT}, ou laissez le champ vide.`);
   return result;
 }
-export function hasGoal(entry) {return GOAL_PERIODS.some(period=>Number.isInteger(entry?.[period])&&entry[period]>0);}
+export function hasGoal(entry) {return GOAL_PERIODS.some(period=>Number.isInteger(entry?.[period])&&entry[period]>=0&&entry[period]<=GOAL_LIMIT);}
 
 // Les anciens objectifs pouvaient contenir trois valeurs indépendantes : le
 // mensuel est conservé en priorité, puis l'hebdomadaire, puis le quotidien.
@@ -40,7 +40,7 @@ export function hasGoal(entry) {return GOAL_PERIODS.some(period=>Number.isIntege
 export function goalReference(entry) {
   for(const period of ['month','week','day']) {
     const amount=entry?.[period];
-    if(Number.isInteger(amount)&&amount>=1&&amount<=GOAL_LIMIT)return {period,amount};
+    if(Number.isInteger(amount)&&amount>=0&&amount<=GOAL_LIMIT)return {period,amount};
   }
   return null;
 }
@@ -78,6 +78,18 @@ function plannedForDate(reference,date,workdays) {
   const slots=workedThrough(year,month,length,workdays),index=workedThrough(year,month,date.getUTCDate(),workdays);
   return distributed(reference.amount,slots,index);
 }
+// Calcul direct du mensuel équivalent à la somme des jours, sans parcourir
+// chaque jour pour chaque vendeur/service lors d'un récapitulatif magasin.
+function monthTotal(reference,date,workdays) {
+  if(reference.period==='month')return reference.amount;
+  const year=date.getUTCFullYear(),month=date.getUTCMonth(),length=monthDays(date);
+  if(reference.period==='day')return reference.amount*workedThrough(year,month,length,workdays);
+  return workdays.reduce((sum,weekday,index)=>sum+workedThrough(year,month,length,[weekday])*distributed(reference.amount,workdays.length,index+1),0);
+}
+export function monthlyGoalTotal(entry,isoDate,days=DEFAULT_WORKDAYS) {
+  const reference=goalReference(entry),date=parseDate(isoDate);
+  return reference&&date?monthTotal(reference,date,normalizeWorkdays(days)):null;
+}
 
 // Les semaines vont du lundi au dimanche ; une semaine à cheval sur deux mois
 // additionne les quotas des deux mois. Les jours habituels sont propres au
@@ -86,13 +98,9 @@ export function goalTargets(entry,isoDate,days=DEFAULT_WORKDAYS) {
   const reference=goalReference(entry),date=parseDate(isoDate),workdays=normalizeWorkdays(days);
   if(!reference||!date)return null;
   const start=offsetDate(date,-((date.getUTCDay()+6)%7));
-  let week=0,month=0;
+  let week=0;
   for(let i=0;i<7;i++)week+=plannedForDate(reference,offsetDate(start,i),workdays);
-  for(let day=1;day<=monthDays(date);day++) {
-    const item=new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),day,12));
-    month+=plannedForDate(reference,item,workdays);
-  }
-  return {day:plannedForDate(reference,date,workdays),week,month};
+  return {day:plannedForDate(reference,date,workdays),week,month:monthTotal(reference,date,workdays)};
 }
 export function progressFor(count,target) {
   if(!Number.isInteger(target)||target<1)return null;

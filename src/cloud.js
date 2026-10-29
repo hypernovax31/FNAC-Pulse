@@ -7,6 +7,7 @@ import { pinProof } from './pin';
 import { earliestDate, parisToday, summarize } from './cloud-stats';
 import { comparePeople, orderServices, sellerStoreId } from './catalog';
 import { createSaleAnnouncer } from './live-sales';
+import { sellerDepartmentId, saleDepartmentId } from './departments';
 
 export const CLOUD=import.meta.env.VITE_BACKEND==='cloud';
 export const WORKER_URL=(import.meta.env.VITE_WORKER_URL||'').replace(/\/$/,'');
@@ -56,16 +57,20 @@ export async function setPin(api,token,storeId,sellerId,pin) {
 function presentation(catalog,storeId) {
   return {
     stores:catalog.stores.filter(x=>x.active).map(({active,...x})=>x),
-    sellers:catalog.sellers.filter(x=>x.active).sort(comparePeople).map(x=>({id:x.id,name:x.name,storeId:sellerStoreId(x)})),
+    sellers:catalog.sellers.filter(x=>x.active).sort(comparePeople).map(x=>({id:x.id,name:x.name,storeId:sellerStoreId(x),departmentId:sellerDepartmentId(x)})),
+    departmentsByStore:catalog.departmentsByStore||{},
     services:orderServices(catalog.services.filter(x=>x.active),catalog.serviceOrders,storeId).map(({id,name,icon})=>({id,name,icon})),
   };
 }
-export function listenStore(session,day,clientId,onChange,onSale,onError,onGoalsChanged=()=>{}) {
+export function listenStore(session,day,clientId,onChange,onSale,onError,onGoalsChanged=()=>{},onSummaryChanged=()=>{}) {
   let catalog=null,sales=[],catalogReady=false,salesReady=false,catalogCache=true,salesCache=true,initial=true;
-  const announcer=createSaleAnnouncer(onSale);
-  let goalRevision=Symbol('premier chargement');
+  const announcer=createSaleAnnouncer(sale=>{
+    const self=catalog?.sellers.find(s=>Number(s.id)===Number(session.sellerId)&&sellerStoreId(s)===session.storeId);
+    if(self&&saleDepartmentId(sale)===sellerDepartmentId(self))onSale(sale);
+  });
+  let goalRevision=Symbol('premier chargement'),summaryRevision=Symbol('premier chargement'),catalogSignature='';
   const emit=()=>{if(catalogReady&&salesReady){const scoped={...catalog,services:orderServices(catalog.services,catalog.serviceOrders,session.storeId)};onChange({...presentation(scoped,session.storeId),today:day,stats:summarize(scoped,sales,session.sellerId,day)},!(catalogCache||salesCache));}};
-  const stopAccess=onSnapshot(doc(db,'pulseStatus',session.uid),snap=>{
+  const stopAccess=onSnapshot(doc(db,'pulseStatus',session.uid),{includeMetadataChanges:true},snap=>{
     if(snap.metadata.fromCache)return;
     const access=snap.data();
     if(!snap.exists()||!access.active||access.version!==session.accessVersion||access.storeId!==session.storeId||access.sellerId!==session.sellerId){const error=new Error('Accès modifié. Reconnectez-vous.');error.code='permission-denied';onError(error);return;}
@@ -74,7 +79,15 @@ export function listenStore(session,day,clientId,onChange,onSale,onError,onGoals
   },onError);
   const stopCatalog=onSnapshot(doc(db,'pulse','catalog'),{includeMetadataChanges:true},snap=>{
     if(!snap.exists()){onError(new Error('Catalogue indisponible.'));return;}
-    catalog=snap.data();catalogCache=snap.metadata.fromCache;catalogReady=true;announcer.setCatalog(catalog);emit();
+    catalog=snap.data();catalogCache=snap.metadata.fromCache;catalogReady=true;
+    const signature=JSON.stringify({sellers:catalog.sellers.filter(s=>sellerStoreId(s)===session.storeId).map(s=>[s.id,s.active,sellerDepartmentId(s)]),services:catalog.services.map(s=>[s.id,s.active]),departments:catalog.departmentsByStore?.[session.storeId]||null});
+    if(!snap.metadata.fromCache&&signature!==catalogSignature){catalogSignature=signature;onSummaryChanged();}
+    announcer.setCatalog(catalog);emit();
+  },onError);
+  const stopSummary=onSnapshot(doc(db,'pulseStores',session.storeId,'sales','~summary-goals~'),{includeMetadataChanges:true},snap=>{
+    if(snap.metadata.fromCache)return;
+    const revision=snap.data()?.revision||null;
+    if(revision!==summaryRevision){summaryRevision=revision;onSummaryChanged();}
   },onError);
   const q=query(collection(db,'pulseStores',session.storeId,'sales'),where('businessDate','>=',earliestDate(day)));
   const stopSales=onSnapshot(q,{includeMetadataChanges:true},snap=>{
@@ -83,7 +96,7 @@ export function listenStore(session,day,clientId,onChange,onSale,onError,onGoals
     }
     initial=false;sales=snap.docs.map(x=>x.data());salesCache=snap.metadata.fromCache;salesReady=true;emit();
   },onError);
-  return ()=>{stopAccess();stopCatalog();stopSales();};
+  return ()=>{stopAccess();stopCatalog();stopSummary();stopSales();};
 }
 async function messaging() {
   if(!VAPID||VAPID==='cle-publique-web-push-firebase')throw new Error('La clé publique Web Push Firebase reste à configurer.');

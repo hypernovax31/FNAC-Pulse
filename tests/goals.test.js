@@ -1,11 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {DEFAULT_WORKDAYS, goalReference, goalTargets, hasGoal, normalizeWorkdays, parseGoalInputs, progressFor, validGoalValues, validWorkdays, workdaysLabel} from '../src/goals.js';
+import {DEFAULT_WORKDAYS, goalReference, goalTargets, monthlyGoalTotal, hasGoal, normalizeWorkdays, parseGoalInputs, progressFor, validGoalValues, validWorkdays, workdaysLabel} from '../src/goals.js';
 import {summarize,periodStarts} from '../src/cloud-stats.js';
 
 test('Objectifs : quantité entière, valeur absente et dépassement',()=>{
   assert.deepEqual(parseGoalInputs({day:'3',week:'',month:'40'}),{day:3,week:null,month:40});
-  for(const input of ['0','-1','1.5','10000','1e3','abc'])assert.throws(()=>parseGoalInputs({day:input,week:'',month:''}));
+  assert.deepEqual(parseGoalInputs({day:'',week:'',month:'0'}),{day:null,week:null,month:0});
+  assert.equal(hasGoal({month:0}),true);
+  assert.deepEqual(goalTargets({month:0},'2026-10-28'),{day:0,week:0,month:0});
+  for(const input of ['-1','1.5','10000','1e3','abc'])assert.throws(()=>parseGoalInputs({day:input,week:'',month:''}));
   assert.equal(validGoalValues({day:1,week:2,month:null}),true);
   assert.equal(validGoalValues({day:1,week:2}),false);
   assert.equal(hasGoal({day:null,week:null,month:null}),false);
@@ -177,4 +180,20 @@ test('Tous les 127 plannings possibles répartissent exactement les objectifs',(
       }
     }
   }
+});
+
+test('Calcul mensuel direct : équivalent aux jours pour tous les plannings',()=>{
+  const weekdays=[1,2,3,4,5,6,0];
+  for(let mask=1;mask<128;mask++) {
+    const days=weekdays.filter((_,bit)=>mask&(1<<bit));
+    for(const [year,month] of [[2026,10],[2026,11],[2028,2],[2029,4]]) {
+      const dates=isoDates(year,month);
+      for(const entry of [{day:3},{week:11},{month:37},{month:0}]) {
+        const sum=dates.reduce((n,d)=>n+goalTargets(entry,d,days).day,0);
+        assert.equal(monthlyGoalTotal(entry,dates[0],days),sum,`${year}-${month}, ${days}, ${JSON.stringify(entry)}`);
+      }
+    }
+  }
+  assert.equal(monthlyGoalTotal({},'2026-10-01'),null);
+  assert.equal(monthlyGoalTotal({month:10},'2026-02-30'),null);
 });

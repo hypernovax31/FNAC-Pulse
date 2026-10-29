@@ -6,8 +6,8 @@ export async function api(path, { method = 'GET', body, token, signal } = {}) {
     if(worker.protocol!=='https:')throw new Error('Le Worker doit utiliser HTTPS.');
     destination=new URL(path,WORKER_URL+'/').href;
     if(token===ADMIN_SESSION)auth=await adminToken();
-    else if(!token && (/^\/api\/(sales|push|goals)/.test(path)))auth=await vendorToken();
-    if((token===ADMIN_SESSION||/^\/api\/(sales|push|goals)/.test(path))&&!auth)throw new Error('Session expirée. Reconnectez-vous.');
+    else if(!token && (/^\/api\/(sales|push|goals|summary-goals)/.test(path)))auth=await vendorToken();
+    if((token===ADMIN_SESSION||/^\/api\/(sales|push|goals|summary-goals)/.test(path))&&!auth)throw new Error('Session expirée. Reconnectez-vous.');
   }
   const options={
     method,signal,headers:{...(body!==undefined?{'Content-Type':'application/json'}:{}),...(auth?{Authorization:`Bearer ${auth}`}:{})},

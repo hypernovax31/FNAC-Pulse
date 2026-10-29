@@ -85,6 +85,19 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     await assert.rejects(setDoc(doc(db,'pulseGoals',seller.uid),{goals:{}}),/permission|insufficient/i);
     assert.equal((await call('/api/goals','GET',undefined,idToken)).json.goals.s1.day,2);
     assert.deepEqual((await call('/api/goals','GET',undefined,idToken)).json.workdays,[1,2,3,4,5]);
+    // BatchGet must preserve requested order, even for missing documents.
+    const batch=await storeDb.getMany(['pulseGoals/missing-seller',`pulseGoals/${seller.uid}`]);
+    assert.equal(batch[0],null);assert.equal(batch[1].data.goals.s1.month,30);
+    const aggregate=await call(`/api/summary-goals?storeId=${store}`,'GET',undefined,idToken);
+    assert.equal(aggregate.status,200);assert.equal(aggregate.json.store.byService.s1.month,30);
+    assert.equal(aggregate.json.departments.tech.byService.s1.month,30);
+    assert(!JSON.stringify(aggregate.json).includes('workdays'));assert(!JSON.stringify(aggregate.json).includes('Morgan'));
+    assert.equal((await call(`/api/summary-goals?storeId=${other}`,'GET',undefined,idToken)).status,403);
+    const markerRef=doc(db,'pulseStores',store,'sales','~summary-goals~');
+    const markerBefore=(await getDocFromServer(markerRef)).data();assert.deepEqual(Object.keys(markerBefore),['revision']);
+    await storeDb.commit([storeDb.delete(`pulseStores/${store}/sales/~summary-goals~`)]);
+    assert.equal((await getDocFromServer(markerRef)).exists(),false); // Premier magasin sans objectif.
+    await assert.rejects(getDocFromServer(doc(db,'pulseStores',other,'sales','~summary-goals~')),/permission|insufficient/i);
     const workdays={storeId:store,sellerId:1,workdays:[0,2,6],revision:null};
     assert.equal((await call('/api/admin/workdays','POST',workdays,idToken)).status,403);
     const setDays=await call('/api/admin/workdays','POST',workdays,adminToken);assert.equal(setDays.status,200);
@@ -94,10 +107,16 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     assert.equal('workdays' in privateStatus,false);assert.equal('goals' in privateStatus,false);
     let goalEventResolve;const goalEvent=new Promise(r=>{goalEventResolve=r});
     const stopGoal=onSnapshot(doc(db,'pulseStatus',seller.uid),snap=>{if(snap.data()?.goalsRevision&&snap.data().goalsRevision!==privateStatus.goalsRevision)goalEventResolve(snap.data());});
+    const markerOld=(await getDocFromServer(markerRef)).data().revision;
+    let markerEventResolve;const markerEvent=new Promise(r=>{markerEventResolve=r});
+    const stopMarker=onSnapshot(markerRef,snap=>{if(snap.data()?.revision&&snap.data().revision!==markerOld)markerEventResolve(snap.data());});
     const updated=await call('/api/goals','POST',{serviceId:1,values:{day:3,week:10,month:40},revision:initialGoals.json.goals.s1.revision},idToken);
     assert.equal(updated.status,200);assert.deepEqual(updated.json.workdays,[2,6,0]);
     const statusAfter=await Promise.race([goalEvent,new Promise((_,reject)=>setTimeout(()=>reject(Error('Notification de mise à jour des objectifs indisponible')),5000))]);
     assert.equal('goals' in statusAfter,false);assert.equal('pinMac' in statusAfter,false);stopGoal();
+    const markerAfter=await Promise.race([markerEvent,new Promise((_,reject)=>setTimeout(()=>reject(Error('Marqueur récap indisponible')),5000))]);
+    assert.deepEqual(Object.keys(markerAfter),['revision']);assert.notEqual(markerAfter.revision,markerOld);stopMarker();
+    assert.equal((await getDocs(salesQuery)).size,2); // Le marqueur ne rentre pas dans les ventes.
     assert.equal((await call('/api/goals','POST',{serviceId:1,values:{day:4,week:10,month:40},revision:initialGoals.json.goals.s1.revision},idToken)).status,409);
     await assert.rejects(getDoc(doc(db,'pulseStatus','some-other-seller')),/permission|insufficient/i);
     await assert.rejects(getDoc(doc(db,'pulseAccess',seller.uid)),/permission|insufficient/i);

@@ -118,6 +118,18 @@ export class FirestoreRest {
     try {return readDocument(await this.request('/'+path.split('/').map(encodeURIComponent).join('/')));}
     catch(e) {if(e.status===404)return null;throw e;}
   }
+  // BatchGet réduit les sous-requêtes Worker tout en gardant les documents privés
+  // côté serveur. Firestore peut renvoyer les documents dans un ordre différent.
+  async getMany(paths) {
+    const found=new Map();
+    for(let i=0;i<paths.length;i+=100) {
+      const names=paths.slice(i,i+100).map(path=>this.name(path));
+      const rows=await this.request(':batchGet',{method:'POST',body:{documents:names}});
+      if(!Array.isArray(rows))throw new Error('Réponse BatchGet Firestore invalide');
+      for(const row of rows)if(row.found)found.set(row.found.name,readDocument(row.found));
+    }
+    return paths.map(path=>found.get(this.name(path))||null);
+  }
   async query(collectionPath, field, op, value, limit=1000) {
     const parts=collectionPath.split('/'),collection=parts.pop();
     const parent=parts.length?'/'+parts.map(encodeURIComponent).join('/'):'';
