@@ -755,6 +755,7 @@ p,h1,h2,h3 { margin:0; }
 .pin-setup-code,.pin-setup-fields label { display:flex; flex-direction:column; gap:7px; min-width:0; }
 .pin-setup-code { margin-bottom:12px; }
 .pin-setup-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+.pin-setup-fields .form-label { min-height:20px; display:flex; align-items:flex-end; line-height:1.1; }
 .pin-setup input { width:100%; min-width:0; font-size:14px; font-variant-numeric:tabular-nums; }
 .pin-setup-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; margin-top:13px; }
 .pin-setup-actions .outline-button { padding:0 14px; }
@@ -774,3 +775,19 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .startup-sound-setting { background:#292d27; border-color:#41473d; }
 [data-theme='dark'] .startup-sound-setting strong { color:#eff1e9; }
 [data-theme='dark'] .startup-sound-setting small { color:#b7bcae; }
+
+/* Le profil mémorisé ne contient que des identifiants d'affichage, jamais le PIN. */
+.remembered-profile,.account-profile { display:flex; align-items:center; gap:10px; min-width:0; margin-bottom:14px; }
+.remembered-profile > div,.account-profile > div { display:flex; flex-direction:column; min-width:0; gap:3px; }
+.remembered-profile span { color:#898b82; font-size:9px; letter-spacing:.7px; font-weight:800; }
+.remembered-profile strong,.account-profile strong { color:#383b34; font-size:12px; overflow-wrap:anywhere; }
+.remembered-profile small,.account-profile span { color:#92958a; font-size:10px; line-height:1.4; overflow-wrap:anywhere; }
+.pin-status,.pin-help { margin-top:10px; color:#8a8d80; font-size:10px; line-height:1.45; }
+.profile-status-error { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; margin-top:10px; color:#a65347; font-size:11px; line-height:1.45; }
+.profile-status-error .text-button { font-size:11px; padding:5px 0; }
+.account-help,.profile-unavailable p { margin:0 0 14px; color:#85897e; font-size:11px; line-height:1.5; }
+.account-logout { min-height:40px; }
+.profile-unavailable .outline-button { min-height:40px; }
+[data-theme='dark'] .remembered-profile strong,[data-theme='dark'] .account-profile strong { color:#eff1e9; }
+[data-theme='dark'] .remembered-profile span,[data-theme='dark'] .remembered-profile small,[data-theme='dark'] .account-profile span,[data-theme='dark'] .account-help,[data-theme='dark'] .profile-unavailable p,[data-theme='dark'] .pin-status,[data-theme='dark'] .pin-help { color:#b7bcae; }
+[data-theme='dark'] .profile-status-error { color:#f2b6ad; }

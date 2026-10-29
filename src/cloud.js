@@ -39,17 +39,12 @@ async function completeSellerLogin(result,session,pinJustSaved=false) {
 }
 export async function sellerLogin(api,session,pin) {
   const proof=await pinProof(firebaseConfig.projectId,session.storeId,session.sellerId,pin);
-  const result=await api('/api/auth/login',{method:'POST',body:{...session,proof,personalPinFlow:true}});
-  // Le dérivé n'existe qu'en mémoire pendant le choix du nouveau code.
-  if(result.choosePersonalPin===true)return {choosePersonalPin:true,currentProof:proof};
+  const result=await api('/api/auth/login',{method:'POST',body:{...session,openPinFlow:true,proof}});
   return completeSellerLogin(result,session);
 }
-export async function sellerChoosePin(api,session,pin,{currentProof,activationCode}={}) {
+export async function sellerChoosePin(api,session,pin) {
   const newProof=await pinProof(firebaseConfig.projectId,session.storeId,session.sellerId,pin);
-  const migration=!!currentProof;
-  const result=await api(migration?'/api/auth/personal-pin':'/api/auth/activate',{
-    method:'POST',body:{...session,newProof,...(migration?{currentProof}:{activationCode})},
-  });
+  const result=await api('/api/auth/claim',{method:'POST',body:{...session,newProof}});
   return completeSellerLogin(result,session,true);
 }
 export async function sellerLogout() {await signOut(auth);}

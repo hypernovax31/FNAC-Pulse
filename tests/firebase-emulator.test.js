@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocFromServer, collection, getDocs, query, where, setDoc, onSnapshot } from 'firebase/firestore';
-import { FirestoreRest } from '../worker/firebase.js';
+import { FirestoreRest, digestBase64, pinMac } from '../worker/firebase.js';
 import { createWorker } from '../worker/index.js';
 import { pinProof } from '../src/pin.js';
 import { LEGACY_STORE_ID } from '../src/catalog.js';
@@ -62,8 +62,16 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     const initialGoals=await call('/api/admin/goals','POST',{storeId:store,sellerId:1,serviceId:1,values:{day:2,week:8,month:30},revision:null},adminToken);
     assert.equal(initialGoals.status,200);
     const proof=await pinProof(project,store,1,'73628519');
-    const invitation=await call('/api/admin/pin-activation','POST',{storeId:store,sellerId:1},adminToken);assert.equal(invitation.status,200);
-    assert.equal((await call('/api/auth/activate','POST',{storeId:store,sellerId:1,newProof:proof,activationCode:invitation.json.activationCode})).status,200);
+    const uid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`,oldVersion='old-real-session';
+    await storeDb.commit([storeDb.write(`pulseAccess/${uid}`,{active:true,storeId:store,sellerId:1,sellerKey:'s1',version:oldVersion,pinPersonal:true,pinMac:await pinMac(env,uid,proof)}),
+      storeDb.write(`pulseStatus/${uid}`,{active:true,storeId:store,sellerId:1,sellerKey:'s1',version:oldVersion,goalsRevision:'goals-before-reset'})]);
+    const oldUser=(await signInWithCustomToken(auth,fakeCustomToken(env,uid,{role:'seller',storeId:store,sellerId:1,sellerKey:'s1',accessVersion:oldVersion}))).user;
+    const oldToken=await oldUser.getIdToken();assert.equal((await getDocFromServer(doc(db,'pulse','catalog'))).exists(),true);
+    assert.deepEqual((await call('/api/auth/status','POST',{storeId:store,sellerId:1})).json,{needsPin:true});
+    await assert.rejects(getDocFromServer(doc(db,'pulse','catalog')),/permission|insufficient/i);
+    assert.equal((await call('/api/goals','GET',undefined,oldToken)).status,403);
+    assert.equal((await storeDb.get(`pulseStatus/${uid}`)).data.goalsRevision,'goals-before-reset');
+    assert.equal((await call('/api/auth/claim','POST',{storeId:store,sellerId:1,newProof:proof})).status,200);
     const login=await call('/api/auth/login','POST',{storeId:store,sellerId:1,proof});assert.equal(login.status,200);
     const seller=(await signInWithCustomToken(auth,login.json.customToken)).user;
     const idToken=await seller.getIdToken();
@@ -132,7 +140,7 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     stop=onSnapshot(salesQuery,snapshot=>{if(snapshot.size===3)initialResolve();},error=>deniedResolve(error));
     await Promise.race([initial,new Promise((_,reject)=>setTimeout(()=>reject(Error('Écoute temps réel indisponible')),5000))]);
     const changed=await pinProof(project,store,1,'82467913');
-    const reset=await call('/api/admin/pin-activation','POST',{storeId:store,sellerId:1},adminToken);assert.equal(reset.status,200);
+    const reset=await call('/api/admin/pin-reset','POST',{storeId:store,sellerId:1},adminToken);assert.equal(reset.status,200);
     // Une nouvelle vente force une réévaluation serveur d'une écoute existante.
     await storeDb.commit([storeDb.write(`pulseStores/${store}/sales/after-revocation`,{id:'after-revocation',businessDate:'2026-10-26',sellerId:1,serviceId:1,createdAt:'2026-10-26T12:00:00Z',deletedAt:null})]);
     const deniedError=await Promise.race([denied,new Promise((_,reject)=>setTimeout(()=>reject(Error('Écoute révoquée toujours active')),5000))]);
@@ -140,7 +148,7 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     await assert.rejects(getDoc(doc(db,'pulse','catalog')),/permission|insufficient/i);
     assert.equal((await call('/api/sales','POST',{serviceId:1,requestId:'emulator-sale-000002'},idToken)).status,403);
     assert.equal((await call('/api/goals','GET',undefined,idToken)).status,403);
-    assert.equal((await call('/api/auth/activate','POST',{storeId:store,sellerId:1,newProof:changed,activationCode:reset.json.activationCode})).status,200);
+    assert.equal((await call('/api/auth/claim','POST',{storeId:store,sellerId:1,newProof:changed})).status,200);
     const reauth=await call('/api/auth/login','POST',{storeId:store,sellerId:1,proof:changed});
     const renewed=(await signInWithCustomToken(auth,reauth.json.customToken)).user;
     assert.equal((await call('/api/goals','GET',undefined,await renewed.getIdToken())).json.goals.s1.day,3);

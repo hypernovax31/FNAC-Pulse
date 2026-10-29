@@ -37,7 +37,6 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [token,setToken]=useState(()=>sessionStorage.getItem('pulse-admin-token')||'');
   const [password,setPassword]=useState('');
   const [email,setEmail]=useState('');
-  const [activation,setActivation]=useState(null);
   const [error,setError]=useState('');
   const [notice,setNotice]=useState('');
   const [busy,setBusy]=useState(false);
@@ -136,8 +135,8 @@ export default function Admin({onClose,data,session,onChanged}) {
     try {await work();if(success)setNotice(success);await loadAll();onChanged();}
     catch(e){setError(e.message);} finally{setBusy(false);}
   }
-  function switchTab(next){setTab(next);setCountsFor('');setError('');setNotice('');setEditing(null);setName('');setActivation(null);}
-  function changeStore(value){setAdminStore(value);setAdminSeller('');setCounts({});setCountsFor('');setEditing(null);setNewSellerDepartment('');setActivation(null);setError('');setNotice('');}
+  function switchTab(next){setTab(next);setCountsFor('');setError('');setNotice('');setEditing(null);setName('');}
+  function changeStore(value){setAdminStore(value);setAdminSeller('');setCounts({});setCountsFor('');setEditing(null);setNewSellerDepartment('');setError('');setNotice('');}
   const activeSellers=sellersForStore(all.sellers,adminStore);
   const storeSellers=sellersForStore(all.sellers,adminStore,{activeOnly:false});
   const storeDepartments=adminStore?departmentsForStore(all,adminStore,{activeOnly:false}):[];
@@ -234,20 +233,18 @@ export default function Admin({onClose,data,session,onChanged}) {
         <div className="admin-note"><Store size={15}/> Les coordonnées permettent de proposer ce magasin lors de la géolocalisation. Liste initiale issue d’OpenStreetMap, susceptible d’être incomplète.</div>
       </>}
       {CLOUD&&tab==='pins'&&adminStore&&<>
-        <div className="admin-section-heading"><div><h3>Activation du code PIN</h3><p>Chaque vendeur choisit lui-même son PIN personnel. L’administration ne connaît pas son code actuel.</p></div></div>
+        <div className="admin-section-heading"><div><h3>Accès et codes PIN</h3><p>Chaque vendeur choisit son propre PIN lors de sa première connexion. Aucun code préalable n’est nécessaire.</p></div></div>
         <div className="admin-selects admin-selects-single">
-          <label><span className="form-label">Vendeur</span><select aria-label="Vendeur à activer" className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>{setAdminSeller(e.target.value);setActivation(null);setNotice('');}}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
+          <label><span className="form-label">Vendeur</span><select aria-label="Vendeur à réinitialiser" className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>{setAdminSeller(e.target.value);setNotice('');}}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
         </div>
-        <div className="activation-admin"><p>Pour une première connexion ou un PIN oublié, générez un code d’activation et transmettez-le en privé au vendeur concerné.</p>
+        <div className="activation-admin"><p>Si un vendeur oublie son PIN, réinitialisez son accès, puis prévenez-le immédiatement pour qu’il choisisse un nouveau code sur son téléphone.</p>
           <button type="button" className="primary-button" disabled={busy||!adminSeller} onClick={()=>{
             const person=activeSellers.find(s=>String(s.id)===String(adminSeller));
-            if(!window.confirm(`Créer un code d’activation pour ${person?.name||'ce vendeur'} ? Son ancien PIN et ses sessions éventuelles seront immédiatement désactivés.`))return;
-            setActivation(null);
-            run(async()=>{const result=await api('/api/admin/pin-activation',{method:'POST',token,body:{storeId:adminStore,sellerId:Number(adminSeller)}});setActivation({...result,name:person?.name||'ce vendeur'});},'Code d’activation créé.');
-          }}>Générer / réinitialiser l’accès <ArrowRight size={15}/></button>
+            if(!window.confirm(`Réinitialiser l’accès de ${person?.name||'ce vendeur'} ? Son PIN et ses sessions seront immédiatement désactivés. La première personne à choisir ce profil pourra créer un nouveau PIN.`))return;
+            run(()=>api('/api/admin/pin-reset',{method:'POST',token,body:{storeId:adminStore,sellerId:Number(adminSeller)}}),'Accès réinitialisé. Prévenez le vendeur pour qu’il choisisse son nouveau PIN.');
+          }}>Réinitialiser l’accès <ArrowRight size={15}/></button>
         </div>
-        {activation&&<div className="activation-result" role="status"><span className="form-label">CODE À TRANSMETTRE À {activation.name.toLocaleUpperCase('fr-FR')}</span><strong aria-label={`Code d’activation ${activation.activationCode}`}>{activation.activationCode.match(/.{1,4}/g)?.join(' ')}</strong><p>Valable 24 h et utilisable une seule fois. Notez-le maintenant : il ne sera plus affiché après fermeture ou changement de vendeur.</p></div>}
-        <div className="admin-note"><ShieldCheck size={15}/> Le vendeur utilise ce code sur son appareil pour choisir son PIN secret. Un nouveau code annule immédiatement le précédent et déconnecte ses anciennes sessions.</div>
+        <div className="admin-note"><ShieldCheck size={15}/> Tant qu’aucun PIN n’a été créé après une réinitialisation, la première personne à sélectionner ce profil peut le définir. L’administrateur ne voit pas le PIN.</div>
       </>}
       {tab==='security'&&<>
         <div className="admin-section-heading"><div><h3>Mot de passe administrateur</h3><p>Choisissez un mot de passe unique d’au moins 12 caractères.</p></div></div>

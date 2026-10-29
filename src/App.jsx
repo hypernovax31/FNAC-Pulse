@@ -14,6 +14,7 @@ import { departmentsForStore, sellerDepartmentId, sellersForDepartment } from '.
 import { serviceIconKey } from './service-icons';
 import { THEME_KEY, readTheme, applyTheme } from './theme';
 import { startupSoundEnabled, saveStartupSound } from './startup-sound';
+import { readDeviceProfile, saveDeviceProfile, clearDeviceProfile } from './device-profile';
 import { GoalForm, GoalsPanel } from './Goals';
 import { normalizeWorkdays } from './goals';
 import { saleMessage } from './sale-message';
@@ -54,23 +55,43 @@ function DateChip({today}) {
   return <div className="date-chip" title={fullDate}><span className="date-icon" role="img" aria-label={`Date du jour : ${fullDate}`}><Calendar size={24} strokeWidth={1.6} aria-hidden="true"/><span className="date-icon-day" aria-hidden="true">{day}</span></span><div><span>AUJOURD’HUI</span><strong>{fullDate}</strong></div></div>;
 }
 
-function SessionForm({data,initialSession,onSubmit,modal=false}) {
-  const [store,setStore]=useState(initialSession?.storeId||'');
-  const initialPerson=data.sellers.find(s=>Number(s.id)===Number(initialSession?.sellerId)&&sellerStoreId(s)===initialSession?.storeId);
-  const [department,setDepartment]=useState(initialPerson?sellerDepartmentId(initialPerson):initialSession?.departmentId||'');
-  const [seller,setSeller]=useState(String(initialSession?.sellerId||''));
+function SessionForm({data,initialSession,initialProfile,onSubmit,onForgetProfile,onRefreshProfile,modal=false}) {
+  const rememberedPerson=initialProfile&&data.sellers.find(s=>Number(s.id)===Number(initialProfile.sellerId)&&sellerStoreId(s)===initialProfile.storeId);
+  const rememberedStore=initialProfile&&data.stores.find(s=>s.id===initialProfile.storeId);
+  const fixed=!!(CLOUD&&rememberedPerson&&rememberedStore);
+  const unavailable=!!(CLOUD&&initialProfile&&!fixed);
+  const start=initialProfile||initialSession;
+  const initialPerson=data.sellers.find(s=>Number(s.id)===Number(start?.sellerId)&&sellerStoreId(s)===start?.storeId);
+  const [store,setStore]=useState(start?.storeId||'');
+  const [department,setDepartment]=useState(initialPerson?sellerDepartmentId(initialPerson):start?.departmentId||'');
+  const [seller,setSeller]=useState(String(start?.sellerId||''));
   const [geoText,setGeoText]=useState(''),[geoBusy,setGeoBusy]=useState(false);
-  const [mode,setMode]=useState('login');
-  const [pin,setPin]=useState(''),[activationCode,setActivationCode]=useState(''),[newPin,setNewPin]=useState(''),[confirmPin,setConfirmPin]=useState('');
+  const [pinMode,setPinMode]=useState(CLOUD?'idle':'login'),[statusError,setStatusError]=useState(''),[statusRetry,setStatusRetry]=useState(0);
+  const [pin,setPin]=useState(''),[newPin,setNewPin]=useState(''),[confirmPin,setConfirmPin]=useState('');
   const [formBusy,setFormBusy]=useState(false),[formError,setFormError]=useState('');
-  const currentProof=useRef(''),geoRequest=useRef(0);
+  const geoRequest=useRef(0);
   useEffect(()=>()=>{geoRequest.current++;},[]);
+  useEffect(()=>{if(fixed&&rememberedPerson)setDepartment(sellerDepartmentId(rememberedPerson));},[fixed,rememberedPerson?.departmentId]);
+  useEffect(()=>{
+    if(!CLOUD)return;
+    if(unavailable||!store||!department||!seller){setPinMode('idle');setStatusError('');return;}
+    const controller=new AbortController();let cancelled=false,timer,retries=0;
+    setPinMode('loading');setStatusError('');setFormError('');
+    const check=()=>api('/api/auth/status',{method:'POST',body:{storeId:store,departmentId:department,sellerId:Number(seller)},signal:controller.signal}).then(result=>{
+      if(cancelled)return;
+      if(typeof result?.needsPin!=='boolean')throw new Error('Vérification du profil impossible. Réessayez.');
+      setPinMode(result.needsPin?'setup':'login');
+    }).catch(error=>{
+      if(cancelled)return;
+      if(error.status===503&&retries++<8){timer=setTimeout(check,750);return;}
+      setPinMode('error');setStatusError(error.message||'Vérification du profil impossible. Réessayez.');
+    });
+    check();return ()=>{cancelled=true;clearTimeout(timer);controller.abort();};
+  },[store,department,seller,statusRetry,unavailable]);
   const departments=store?departmentsForStore(data,store):[];
   const storeSellers=department?sellersForDepartment(data.sellers,store,department):[];
-  const locked=mode==='personal'||formBusy;
-  function clearSecrets(){setPin('');setActivationCode('');setNewPin('');setConfirmPin('');currentProof.current='';setFormError('');}
+  function clearSecrets(){setPin('');setNewPin('');setConfirmPin('');setFormError('');}
   function cancelLocate(){geoRequest.current++;setGeoBusy(false);setGeoText('');}
-  function switchMode(next){cancelLocate();clearSecrets();setMode(next);}
   const changeStore=value=>{if(value!==store){setDepartment('');setSeller('');clearSecrets();}setStore(value);};
   const changeDepartment=value=>{if(value!==department){setSeller('');clearSecrets();}setDepartment(value);};
   const locate=()=>{
@@ -88,47 +109,58 @@ function SessionForm({data,initialSession,onSubmit,modal=false}) {
     {enableHighAccuracy:false,timeout:12000,maximumAge:300000});
   };
   async function submit(event) {
-    event.preventDefault();if(!store||!department||!seller)return;
-    cancelLocate();
-    if(mode!=='login'&&newPin!==confirmPin){setFormError('Les deux codes PIN ne correspondent pas.');return;}
+    event.preventDefault();if(!store||!department||!seller||formBusy)return;
+    cancelLocate();const first=CLOUD&&pinMode==='setup';
+    if(CLOUD&&!['setup','login'].includes(pinMode))return;
+    if(first&&newPin!==confirmPin){setFormError('Les deux codes PIN ne correspondent pas.');return;}
     setFormBusy(true);setFormError('');
+    const selection={storeId:store,departmentId:department,sellerId:Number(seller)};
     try {
-      const selection={storeId:store,departmentId:department,sellerId:Number(seller)};
-      const result=mode==='login'?await onSubmit(selection,pin):await onSubmit(selection,newPin,{currentProof:currentProof.current,activationCode});
-      if(result?.choosePersonalPin) {
-        currentProof.current=result.currentProof;setPin('');setNewPin('');setConfirmPin('');setMode('personal');
-      } else clearSecrets();
+      await onSubmit(selection,first?newPin:pin,first?{firstTime:true}:null);
+      clearSecrets();
     } catch(error){
-      // Une réponse peut être perdue après l'enregistrement à usage unique.
-      // Le vendeur peut alors se connecter avec le PIN qu'il vient de choisir.
-      setFormError(mode!=='login'&&(!error.status||error.status>=500)?'Connexion interrompue. Si votre PIN a été enregistré, revenez à la connexion et essayez-le.':error.message);
+      if(first&&error.status===409){setPinMode('error');setStatusError(`${error.message} Vérifiez le profil avant de continuer.`);}
+      else if(first&&(!error.status||error.status>=500)){
+        setPinMode('error');setStatusError('Connexion interrompue. Vérifiez le profil : si votre PIN a été enregistré, reconnectez-vous avec ce code.');
+      } else if(CLOUD&&!first&&error.status===401){
+        // L'administrateur a peut-être réinitialisé l'accès pendant l'affichage du formulaire.
+        try {const status=await api('/api/auth/status',{method:'POST',body:selection});
+          if(status.needsPin){setPin('');setPinMode('setup');setFormError('Votre accès a été réinitialisé. Choisissez votre nouveau PIN.');}
+          else setFormError(error.message);
+        } catch {setFormError(error.message);}
+      } else setFormError(error.message);
     }finally{setFormBusy(false);}
   }
+  if(unavailable)return <div className="profile-unavailable" role="alert"><p>Le profil enregistré sur cet appareil n’est plus disponible. Contactez votre responsable.</p><button type="button" className="outline-button" onClick={onForgetProfile}>Retirer le profil de cet appareil</button></div>;
   return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={submit}>
+    {fixed&&<div className="remembered-profile"><Avatar name={rememberedPerson.name} id={rememberedPerson.id}/><div><span>VOTRE PROFIL SUR CET APPAREIL</span><strong>{rememberedPerson.name}</strong><small>{rememberedStore.name} · {departments.find(d=>d.id===department)?.name||'Votre département'}</small></div></div>}
     <div className="session-fields">
-      <label className="session-field store-field"><span>VOTRE MAGASIN</span><div className="select-wrap"><MapPin size={16}/><select aria-label="Votre magasin Fnac" value={store} onChange={e=>{cancelLocate();changeStore(e.target.value);}} disabled={locked} required><option value="">Choisir un magasin</option>{data.stores.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
-      <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver le magasin le plus proche" title="Trouver le magasin le plus proche" disabled={geoBusy||locked}><Crosshair size={17}/></button>
-      <label className="session-field department-field"><span>VOTRE DÉPARTEMENT</span><div className="select-wrap"><UsersRound size={16}/><select aria-label="Votre département" value={department} onChange={e=>{cancelLocate();changeDepartment(e.target.value);}} disabled={locked||!store||!departments.length} required><option value="">Choisir un département</option>{departments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
-      <label className="session-field seller-field"><span>VOTRE PROFIL</span><div className="select-wrap"><UserRound size={16}/><select aria-label="Votre profil vendeur" value={seller} onChange={e=>{cancelLocate();setSeller(e.target.value);clearSecrets();}} disabled={locked||!department||!storeSellers.length} required><option value="">{department&&!storeSellers.length?'Aucun vendeur dans ce département':'Choisir un vendeur'}</option>{storeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
-      {CLOUD&&mode==='login'&&<label className="session-field pin-field"><span>CODE PIN</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} placeholder="8 chiffres" required/></label>}
-      {mode==='login'&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==8)}>{formBusy?'Connexion…':modal?'Enregistrer':'C’est parti'} <ArrowRight size={16}/></button>}
+      {!fixed&&<>
+        <label className="session-field store-field"><span>VOTRE MAGASIN</span><div className="select-wrap"><MapPin size={16}/><select aria-label="Votre magasin Fnac" value={store} onChange={e=>{cancelLocate();changeStore(e.target.value);}} disabled={formBusy} required><option value="">Choisir un magasin</option>{data.stores.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+        <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver le magasin le plus proche" title="Trouver le magasin le plus proche" disabled={geoBusy||formBusy}><Crosshair size={17}/></button>
+        <label className="session-field department-field"><span>VOTRE DÉPARTEMENT</span><div className="select-wrap"><UsersRound size={16}/><select aria-label="Votre département" value={department} onChange={e=>{cancelLocate();changeDepartment(e.target.value);}} disabled={formBusy||!store||!departments.length} required><option value="">Choisir un département</option>{departments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+        <label className="session-field seller-field"><span>VOTRE PROFIL</span><div className="select-wrap"><UserRound size={16}/><select aria-label="Votre profil vendeur" value={seller} onChange={e=>{cancelLocate();setSeller(e.target.value);clearSecrets();}} disabled={formBusy||!department||!storeSellers.length} required><option value="">{department&&!storeSellers.length?'Aucun vendeur dans ce département':'Choisir un vendeur'}</option>{storeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+      </>}
+      {CLOUD&&pinMode==='login'&&<label className="session-field pin-field"><span>CODE PIN PERSONNEL</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} placeholder="8 chiffres" disabled={formBusy} required/></label>}
+      {(!CLOUD||pinMode==='login')&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==8)}>{formBusy?'Connexion…':modal?'Enregistrer':'Se connecter'} <ArrowRight size={16}/></button>}
     </div>
-    {CLOUD&&mode==='login'&&<button type="button" className="pin-setup-link" onClick={()=>switchMode('activation')}>Première connexion ou PIN oublié ? <ArrowRight size={13}/></button>}
-    {CLOUD&&mode!=='login'&&<div className="pin-setup">
-      <div className="pin-setup-intro"><ShieldCheck size={19}/><div><strong>{mode==='personal'?'Choisissez votre PIN personnel':'Activez votre profil'}</strong><p>{mode==='personal'?'Votre ancien code a été vérifié. Choisissez maintenant un nouveau PIN que vous seul connaissez.':'Demandez un code d’activation à votre responsable. Il est valable 24 h et ne peut servir qu’une fois.'}</p></div></div>
-      {mode==='activation'&&<label className="pin-setup-code"><span className="form-label">CODE D’ACTIVATION</span><input className="text-input" aria-label="Code d’activation" type="text" inputMode="numeric" autoComplete="off" pattern="[0-9]{12}" maxLength={12} placeholder="12 chiffres" value={activationCode} onChange={e=>setActivationCode(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label>}
-      <div className="pin-setup-fields"><label><span className="form-label">VOTRE NOUVEAU PIN</span><input className="text-input" aria-label="Votre nouveau code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label><label><span className="form-label">CONFIRMER LE PIN</span><input className="text-input" aria-label="Confirmer votre code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={confirmPin} onChange={e=>setConfirmPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label></div>
-      <div className="pin-setup-actions"><button type="button" className="outline-button" onClick={()=>switchMode('login')} disabled={formBusy}>Retour</button><button className="primary-button" type="submit" disabled={!store||!department||!seller||formBusy||newPin.length!==8||confirmPin.length!==8||(mode==='activation'&&activationCode.length!==12)}>{formBusy?'Enregistrement…':'Enregistrer mon PIN'} <ArrowRight size={15}/></button></div>
+    {CLOUD&&pinMode==='loading'&&<p className="pin-status" role="status">Vérification de votre profil…</p>}
+    {CLOUD&&pinMode==='error'&&<div className="profile-status-error" role="alert"><span>{statusError}</span><button type="button" className="text-button" onClick={()=>{clearSecrets();onRefreshProfile?.();setStatusRetry(x=>x+1);}}>Vérifier à nouveau</button></div>}
+    {CLOUD&&pinMode==='setup'&&<div className="pin-setup">
+      <div className="pin-setup-intro"><ShieldCheck size={19}/><div><strong>Première connexion : choisissez votre PIN</strong><p>Choisissez un code personnel de 8 chiffres et gardez-le secret. Il sera demandé après une déconnexion.</p></div></div>
+      <div className="pin-setup-fields"><label><span className="form-label">VOTRE CODE PIN</span><input className="text-input" aria-label="Votre nouveau code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label><label><span className="form-label">CONFIRMER LE PIN</span><input className="text-input" aria-label="Confirmer votre code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={confirmPin} onChange={e=>setConfirmPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label></div>
+      <div className="pin-setup-actions"><button className="primary-button" type="submit" disabled={!store||!department||!seller||formBusy||newPin.length!==8||confirmPin.length!==8}>{formBusy?'Enregistrement…':'Enregistrer mon PIN'} <ArrowRight size={15}/></button></div>
     </div>}
-    {department&&!storeSellers.length&&<p className="no-store-sellers">Aucun vendeur dans ce département. Un administrateur peut y affecter des profils.</p>}
+    {CLOUD&&pinMode==='login'&&<p className="pin-help">PIN oublié ? Demandez à votre responsable de réinitialiser votre accès.</p>}
+    {department&&!storeSellers.length&&!fixed&&<p className="no-store-sellers">Aucun vendeur dans ce département. Un administrateur peut y affecter des profils.</p>}
     {formError&&<div className="form-error session-error" role="alert">{formError}</div>}
     {geoText&&<div className="geo-message" role="status"><MapPin size={13}/>{geoText}</div>}
   </form>;
 }
-function WelcomePanel({data,onSubmit}) {
+function WelcomePanel({data,onSubmit,deviceProfile,onForgetProfile,onRefreshProfile}) {
   return <section className="welcome-panel" id="selection">
-    <div className="welcome-copy"><div className="welcome-icon"><Sparkles size={20}/></div><div><div className="micro-label">VOTRE ESPACE DE VENTE</div><h2>On se lance ?</h2><p>Choisissez votre magasin, votre département et votre profil.</p></div></div>
-    <SessionForm data={data} onSubmit={onSubmit}/>
+    <div className="welcome-copy"><div className="welcome-icon"><Sparkles size={20}/></div><div><div className="micro-label">VOTRE ESPACE DE VENTE</div><h2>On se lance ?</h2><p>{deviceProfile?'Retrouvez votre profil sur cet appareil.':'Choisissez votre magasin, votre département et votre profil.'}</p></div></div>
+    <SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'nouvel-appareil'} data={data} initialProfile={deviceProfile} onSubmit={onSubmit} onForgetProfile={onForgetProfile} onRefreshProfile={onRefreshProfile}/>
   </section>;
 }
 function Sidebar({onNavigate,onAdmin,onSession,onInstall,activeNav}) {
@@ -152,7 +184,7 @@ function Header({session,seller,store,connected,onBell,onSession,onAdmin,onTheme
       <span className="topbar-divider"/>
       <button className="icon-button theme-trigger" title="Apparence et son" aria-label="Apparence et son" onClick={onTheme}><SunMoon size={19}/></button>
       <button className="icon-button top-bell" title="Notifications" aria-label="Notifications" onClick={onBell}><Bell size={19}/><span className="bell-marker"/></button>
-      <button className="profile-trigger" onClick={onSession} aria-label={session?`Changer de profil, ${seller?.name||''}`:'Choisir mon profil'}>
+      <button className="profile-trigger" onClick={onSession} aria-label={session?`Mon profil, ${seller?.name||''}`:'Choisir mon profil'}>
         {seller?<Avatar name={seller.name} id={seller.id}/>:<span className="avatar avatar-blank"><UserRound size={17}/></span>}
         <span className="profile-text"><strong>{seller?.name||'Mon profil'}</strong><small>{store?.name||'Choisir mon espace'}</small></span><ChevronDown size={15}/>
       </button>
@@ -210,6 +242,7 @@ function urlBase64ToUint8Array(base64) {const padding='='.repeat((4-base64.lengt
 
 export default function App() {
   const [session,setSession]=useState(()=>CLOUD?null:getSession());
+  const [deviceProfile,setDeviceProfile]=useState(()=>CLOUD?readDeviceProfile(undefined,getSession()):null);
   const [data,setData]=useState(()=>{if(CLOUD)return null;const cached=getCached();return cached&&JSON.stringify(cached.session)===JSON.stringify(getSession())?cached.data:null;});
   const [authReady,setAuthReady]=useState(!CLOUD);
   const [cloudDay,setCloudDay]=useState(parisToday);
@@ -319,7 +352,20 @@ export default function App() {
     setSummaryState({key:summaryKey,data:getCachedSummary(summaryKey),loading:true,error:''});queueSummary();
     return ()=>{summaryRequest.current++;clearTimeout(summaryTimer.current);};
   },[summaryKey,queueSummary]);
-  useEffect(()=>{if(!CLOUD)return;return observeVendor(next=>{setSession(next);setAuthReady(true);if(!next)localStorage.removeItem(SESSION_KEY);});},[]);
+  useEffect(()=>{
+    if(!CLOUD)return;
+    let cancelled=false,timer,delay=1000;
+    const initialize=async()=>{
+      if(cancelled)return;
+      try {await api('/api/auth/initialize',{method:'POST',body:{}});}
+      catch {if(!cancelled){timer=setTimeout(initialize,delay);delay=Math.min(delay*2,30000);}}
+    };
+    initialize();return ()=>{cancelled=true;clearTimeout(timer);};
+  },[]);
+  useEffect(()=>{if(!CLOUD)return;return observeVendor(next=>{
+    if(next){const profile=saveDeviceProfile(next);if(profile)setDeviceProfile(profile);}
+    setSession(next);setAuthReady(true);if(!next)localStorage.removeItem(SESSION_KEY);
+  });},[]);
   useEffect(()=>{refresh();},[refresh]);
   useEffect(()=>{
     if(!CLOUD||!session||!authReady)return;
@@ -382,18 +428,24 @@ export default function App() {
   useEffect(()=>()=>clearTimeout(toastTimer.current),[]);
 
   async function selectSession(next,pin,setup=null){
-    const authenticated=CLOUD?(setup?await sellerChoosePin(api,next,pin,setup):await sellerLogin(api,next,pin)):next;
-    if(authenticated.choosePersonalPin)return authenticated;
+    const authenticated=CLOUD?(setup?.firstTime?await sellerChoosePin(api,next,pin):await sellerLogin(api,next,pin)):next;
+    if(CLOUD){const profile=saveDeviceProfile(authenticated);if(profile)setDeviceProfile(profile);}
     localStorage.setItem(SESSION_KEY,JSON.stringify(authenticated));
     setData(d=>d?{...d,stats:null}:d);setSession(authenticated);setSessionModal(false);setActiveNav('overview');
     window.scrollTo({top:0,behavior:'smooth'});
     const person=data?.sellers.find(s=>s.id===next.sellerId);flash(`Bienvenue${person?`, ${person.name}`:''} ! Votre espace est prêt.`);
   }
-  async function logoutSeller(){
+  function forgetDeviceProfile(){clearDeviceProfile();setDeviceProfile(null);}
+  async function logoutSeller(forget=false){
     let warning=false;
     if(CLOUD&&notificationsWanted())try{await unsubscribeFcm(api);}catch{warning=true;}
-    if(CLOUD)await sellerLogout();localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);localStorage.removeItem(SUMMARY_CACHE_KEY);setSession(null);setData(d=>d?{...d,stats:null}:null);setSessionModal(false);
+    if(CLOUD)await sellerLogout();
+    if(forget)forgetDeviceProfile();
+    localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);localStorage.removeItem(SUMMARY_CACHE_KEY);setSession(null);setData(d=>d?{...d,stats:null}:null);setSessionModal(false);
     flash(warning?'Déconnecté. Vérifiez les notifications de cet appareil lorsque la connexion revient.':'Vous êtes déconnecté.',warning?{tone:'warning'}:{});
+  }
+  async function releaseDevice(){
+    if(window.confirm('Retirer votre profil de cet appareil et vous déconnecter ? La sélection des vendeurs sera de nouveau proposée.'))await logoutSeller(true);
   }
   function changeSession(){if(session)setSessionModal(true);else {document.getElementById('selection')?.scrollIntoView({behavior:'smooth',block:'center'});document.querySelector('[aria-label="Votre magasin Fnac"]')?.focus();}}
   function navigate(id){setActiveNav(id);document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});}
@@ -460,7 +512,7 @@ export default function App() {
       <main className="content" id="overview">
         {connection==='offline'&&session&&<div className="offline-banner"><WifiOff size={16}/><div><strong>Connexion interrompue.</strong> Les dernières données restent visibles, mais la saisie est suspendue jusqu’au retour de la connexion.</div><button onClick={refresh}>Réessayer</button></div>}
         <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><DateChip today={cloudDay}/></div>
-        {!session?<WelcomePanel data={data} onSubmit={selectSession}/>:<div className="session-strip"><div className="strip-icon"><Store size={18}/></div><div className="strip-copy"><span>VOTRE ESPACE DE VENTE</span><strong>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</strong></div><div className="strip-divider"/><div className="strip-user"><Avatar name={seller?.name} id={seller?.id} size="small"/><span>Connecté en tant que <strong>{seller?.name}</strong></span></div><button className="text-button" onClick={()=>setSessionModal(true)}>Changer <ArrowRight size={14}/></button></div>}
+        {!session?<WelcomePanel data={data} onSubmit={selectSession} deviceProfile={deviceProfile} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>:<div className="session-strip"><div className="strip-icon"><Store size={18}/></div><div className="strip-copy"><span>VOTRE ESPACE DE VENTE</span><strong>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</strong></div><div className="strip-divider"/><div className="strip-user"><Avatar name={seller?.name} id={seller?.id} size="small"/><span>Connecté en tant que <strong>{seller?.name}</strong></span></div><button className="text-button" onClick={()=>setSessionModal(true)}>{CLOUD?'Mon profil':'Changer'} <ArrowRight size={14}/></button></div>}
         <div className="section-overline"><div><span className="kicker-line"/> EN UN COUP D’ŒIL</div><span>{session?'Les chiffres de votre département':'Choisissez votre espace pour démarrer'}</span></div>
         <section className="stats-grid" aria-label="Chiffres clés"><StatCard label="AUJOURD’HUI" value={stats?.day.total} detail="Ventes de l’équipe" Icon={Zap} tone="gold"/><StatCard label="MA JOURNÉE" value={stats?.mineTotal} detail="Mes services enregistrés" Icon={UserRound} tone="soft-blue"/></section>
         {session&&<GoalsPanel seller={seller} services={data.services} goals={currentGoals} workdays={goalState.workdays} workdaysDefault={!goalState.workdaysRevision} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
@@ -471,7 +523,9 @@ export default function App() {
       </main>
     </div>
     <MobileNav onNavigate={navigate} onSession={changeSession} active={activeNav}/>
-    {sessionModal&&<Modal title="Changer d’espace" subtitle="Sélectionnez votre magasin, votre département et votre profil vendeur." onClose={()=>setSessionModal(false)}><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/>{CLOUD&&<button className="logout-button" onClick={logoutSeller}>Se déconnecter</button>}<p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></Modal>}
+    {sessionModal&&<Modal title={CLOUD?'Mon profil':'Changer d’espace'} subtitle={CLOUD?'Votre espace sur cet appareil.':'Sélectionnez votre magasin, votre département et votre profil vendeur.'} onClose={()=>setSessionModal(false)}>
+      {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button><button type="button" className="logout-button" onClick={releaseDevice}>Retirer ce profil de l’appareil</button></>:<><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/><p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></>}
+    </Modal>}
     {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={()=>setGoalModal(null)}><GoalForm services={data.services} goals={currentGoals} workdays={goalState.workdays} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={()=>setGoalModal(null)} disabled={connection==='offline'}/></Modal>}
     {adminModal&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>}
     {notificationsModal&&<Modal title="Notifications d’équipe" subtitle="Ne manquez aucune nouvelle vente de votre département." onClose={()=>setNotificationsModal(false)}><div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{notificationsEnabled?'Notifications activées':'Un petit signal, une belle dynamique.'}</strong><p>Chaque nouvelle vente peut vous être signalée sur cet appareil, même lorsque l’application est fermée.</p></div></div><div className="notification-details"><div><Check size={16}/> Une notification pour chaque nouvelle vente</div><div><Check size={16}/> Uniquement pour votre magasin et votre département</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div><div className="notification-device-note"><Info size={15}/><span>Sur iPhone et iPad, installez d’abord l’application sur l’écran d’accueil (iOS/iPadOS 16.4 ou plus). Une connexion HTTPS et un navigateur compatible sont nécessaires.</span></div><button className={notificationsEnabled?'outline-button full-button':'primary-button full-button'} disabled={notificationBusy} onClick={notificationsEnabled?disableNotifications:enableNotifications}>{notificationBusy?'Un instant…':notificationsEnabled?'Désactiver sur cet appareil':'Activer les notifications'} {notificationsEnabled?<BellOff size={16}/>:<Bell size={16}/>}</button></Modal>}
