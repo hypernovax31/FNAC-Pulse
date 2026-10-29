@@ -111,19 +111,33 @@ async function messaging() {
   if(!(await isSupported()))throw new Error('Notifications non prises en charge sur cet appareil.');
   return getMessaging(app);
 }
-export async function subscribeFcm(api) {
-  const m=await messaging(),registration=await navigator.serviceWorker.ready;
+function requireNotificationPermission() {
+  // Firebase peut appeler requestPermission tout seul si l'état est « default ».
+  // Seul le bouton explicite de l'interface doit pouvoir lancer cette demande.
+  if(typeof Notification==='undefined'||Notification.permission!=='granted')throw new Error('Autorisation de notification non accordée.');
+}
+function requireActiveCheck(signal) {
+  if(signal?.aborted){const error=new Error('Vérification des notifications annulée.');error.name='AbortError';throw error;}
+}
+export async function subscribeFcm(api,{signal}={}) {
+  requireActiveCheck(signal);
+  const m=await messaging();requireActiveCheck(signal);
+  const registration=await navigator.serviceWorker.ready;requireActiveCheck(signal);
+  requireNotificationPermission();
   const token=await getToken(m,{vapidKey:VAPID,serviceWorkerRegistration:registration});
+  requireActiveCheck(signal);
   if(!token)throw new Error('Impossible de créer l’abonnement aux notifications.');
-  await api('/api/push/subscribe',{method:'POST',body:{token}});
+  await api('/api/push/subscribe',{method:'POST',body:{token},signal});
+  requireActiveCheck(signal);
   localStorage.setItem('fnac-pulse-fcm-enabled','1');
 }
 export async function unsubscribeFcm(api) {
   const m=await messaging(),registration=await navigator.serviceWorker.ready;
+  requireNotificationPermission();
   const token=await getToken(m,{vapidKey:VAPID,serviceWorkerRegistration:registration});
   let failure=null;
   try {if(token)await api('/api/push/subscribe',{method:'DELETE',body:{token}});} catch(e) {failure=e;}
   try {await deleteToken(m);} finally {localStorage.removeItem('fnac-pulse-fcm-enabled');}
   if(failure)throw failure;
 }
-export function notificationsWanted() {return localStorage.getItem('fnac-pulse-fcm-enabled')==='1';}
+export function notificationsWanted() {try{return localStorage.getItem('fnac-pulse-fcm-enabled')==='1';}catch{return false;}}

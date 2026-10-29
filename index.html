@@ -13,6 +13,16 @@
     <link rel="icon" type="image/png" href="%BASE_URL%icons/icon-192-v3.png" />
     <link rel="apple-touch-icon" href="%BASE_URL%icons/apple-touch-icon-v3.png" />
     <script>
+      // Conserver l’invitation native même si le navigateur l’émet avant React.
+      window.__fnacInstallPrompt = null;
+      window.addEventListener('beforeinstallprompt', function (event) {
+        event.preventDefault();
+        window.__fnacInstallPrompt = event;
+        window.dispatchEvent(new Event('fnac-install-ready'));
+      });
+      window.addEventListener('appinstalled', function () { window.__fnacInstallPrompt = null; });
+    </script>
+    <script>
       // Évite un flash clair au démarrage lorsque le thème sombre est choisi.
       try {
         const theme = localStorage.getItem('fnac-pulse-theme-v1') || 'system';

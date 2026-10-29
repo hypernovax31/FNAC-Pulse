@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Target, Zap, Trophy, ChartNoAxesCombined, Settings2, MapPin, ChevronDown, ChevronRight, ArrowRight,
-  Activity, Bell, BellRing, BellOff, Plus, Minus, UserRound, UsersRound, Sparkles, Crosshair, CalendarDays,
+  Activity, Bell, BellOff, Plus, Minus, UserRound, UsersRound, Sparkles, Crosshair, CalendarDays,
   Check, MoreHorizontal, Play, Smartphone, MonitorSmartphone, Shield, ShieldCheck, HardHat, IdCard, DollarSign, PackageCheck, BadgePlus,
   Repeat2, RefreshCw, Tv, Wifi, Clock3, X, Download, Store, WifiOff, Info, CircleCheck, ArrowUpRight, SunMoon, Sun, Moon, Monitor, Volume2, VolumeX
 } from 'lucide-react';
@@ -20,6 +20,8 @@ import { readDeviceProfile, saveDeviceProfile, clearDeviceProfile } from './devi
 import { GoalForm, GoalsPanel } from './Goals';
 import { normalizeWorkdays } from './goals.js';
 import { saleMessage } from './sale-message';
+import { isStandalone, installPlatform, notificationBanner } from './install.js';
+import { InstallDialog, NotificationsDialog } from './PwaDialogs';
 
 const APP_BASE = import.meta.env.BASE_URL;
 const SESSION_KEY = 'fnac-pulse-session-v1';
@@ -169,7 +171,7 @@ function WelcomePanel({data,onSubmit,deviceProfile,onForgetProfile,onRefreshProf
     <SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'nouvel-appareil'} data={data} initialProfile={deviceProfile} onSubmit={onSubmit} onForgetProfile={onForgetProfile} onRefreshProfile={onRefreshProfile}/>
   </section>;
 }
-function Sidebar({onNavigate,onAdmin,onSession,onInstall,activeNav}) {
+function Sidebar({onNavigate,onAdmin,onSession,onInstall,showInstall,activeNav}) {
   const items=[['objectifs',Target,'Objectifs'],['services',Zap,'Mes services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Récapitulatifs']];
   return <aside className="sidebar">
     <div className="sidebar-brand"><Brand/></div>
@@ -178,12 +180,12 @@ function Sidebar({onNavigate,onAdmin,onSession,onInstall,activeNav}) {
     <div className="sidebar-separator"/>
     <div className="sidebar-group-label">MON COMPTE</div>
     <nav className="side-nav"><button className="side-link" onClick={onSession}><UsersRound size={18} strokeWidth={1.8}/><span>Équipe & magasin</span></button><button className="side-link" onClick={onAdmin}><Settings2 size={18} strokeWidth={1.8}/><span>Administration</span></button></nav>
-    <div className="sidebar-bottom"><div className="sidebar-tip"><div className="sidebar-tip-icon"><Zap size={16} fill="currentColor"/></div><strong>Chaque service compte.</strong><p>Ensemble, faisons la différence au quotidien.</p><span>À VOUS DE JOUER <ArrowUpRight size={12}/></span></div><button className="install-link" onClick={onInstall}><Download size={16}/> Installer l’application <ChevronRight size={14}/></button><div className="sidebar-copyright">FNAC PULSE <span>•</span> ESPACE ÉQUIPE</div></div>
+    <div className="sidebar-bottom"><div className="sidebar-tip"><div className="sidebar-tip-icon"><Zap size={16} fill="currentColor"/></div><strong>Chaque service compte.</strong><p>Ensemble, faisons la différence au quotidien.</p><span>À VOUS DE JOUER <ArrowUpRight size={12}/></span></div>{showInstall&&<button className="install-link" onClick={onInstall}><Download size={16}/> Installer l’application <ChevronRight size={14}/></button>}<div className="sidebar-copyright">FNAC PULSE <span>•</span> ESPACE ÉQUIPE</div></div>
   </aside>;
 }
-function Header({session,seller,store,connected,notificationsEnabled,soundEnabled,onBell,onSound,onSession,onAdmin,onTheme}) {
+function Header({session,seller,store,connected,notificationsEnabled,notificationError,notificationUnconfirmed,soundEnabled,onBell,onSound,onSession,onAdmin,onTheme,onInstall,showInstall}) {
   const soundLabel=soundEnabled?'Couper le son des ventes':'Activer le son des ventes';
-  const bellLabel=notificationsEnabled?'Notifications activées':'Notifications non activées';
+  const bellLabel=notificationError?'État des notifications indisponible':notificationsEnabled===null?'Vérification des notifications':notificationUnconfirmed?'Activation des notifications à confirmer':notificationsEnabled?'Notifications activées':'Notifications non activées';
   return <header className="topbar">
     <div className="mobile-brand"><Brand compact/></div>
     <div className="breadcrumbs"><span>Espace équipe</span><ChevronRight size={14}/><strong>Vue d’ensemble</strong></div>
@@ -192,7 +194,8 @@ function Header({session,seller,store,connected,notificationsEnabled,soundEnable
       <span className="topbar-divider"/>
       <button className="icon-button theme-trigger" title="Apparence" aria-label="Apparence" onClick={onTheme}><SunMoon size={19}/></button>
       <button className="icon-button sound-trigger" title={soundLabel} aria-label={soundLabel} aria-pressed={soundEnabled} onClick={onSound}>{soundEnabled?<Volume2 size={19}/>:<VolumeX size={19}/>}</button>
-      <button className="icon-button top-bell" title={bellLabel} aria-label={bellLabel} onClick={onBell}>{notificationsEnabled?<Bell size={19}/>:<BellOff size={19}/>}</button>
+      <button className="icon-button top-bell" title={bellLabel} aria-label={bellLabel} onClick={onBell}>{notificationsEnabled===true||notificationsEnabled===null?<Bell size={19}/>:<BellOff size={19}/>}</button>
+      {showInstall&&<button className="icon-button install-trigger" title="Installer Fnac Pulse" aria-label="Installer Fnac Pulse" onClick={onInstall}><Download size={19}/></button>}
       <button className="profile-trigger" onClick={onSession} aria-label={session?`Mon profil, ${seller?.name||''}`:'Choisir mon profil'}>
         {seller?<Avatar name={seller.name} id={seller.id}/>:<span className="avatar avatar-blank"><UserRound size={17}/></span>}
         <span className="profile-text"><strong>{seller?.name||'Mon profil'}</strong><small>{store?.name||'Choisir mon espace'}</small></span><ChevronDown size={15}/>
@@ -272,20 +275,32 @@ export default function App() {
   const [sessionModal,setSessionModal]=useState(false);
   const [adminModal,setAdminModal]=useState(false);
   const [notificationsModal,setNotificationsModal]=useState(false);
-  const [installModal,setInstallModal]=useState(false);
+  const [installed,setInstalled]=useState(isStandalone);
+  const [platform]=useState(installPlatform);
+  const [installModal,setInstallModal]=useState(()=>typeof window!=='undefined'&&!isStandalone());
+  const [installError,setInstallError]=useState('');
   const [themeModal,setThemeModal]=useState(false);
   const [goalModal,setGoalModal]=useState(null);
   const [goalState,setGoalState]=useState({owner:'',...goalData(null),loading:false,error:''});
   const [summaryState,setSummaryState]=useState({key:'',data:null,loading:false,error:''});
   const [theme,setTheme]=useState(readTheme);
   const [soundEnabled,setSoundEnabled]=useState(saleSoundEnabled);
-  const [installPrompt,setInstallPrompt]=useState(null);
+  const [installPrompt,setInstallPrompt]=useState(()=>typeof window==='undefined'?null:window.__fnacInstallPrompt||null);
   const [notificationPermission,setNotificationPermission]=useState(readNotificationPermission);
   const [notificationsEnabled,setNotificationsEnabled]=useState(()=>readNotificationPermission()==='granted'?null:false);
+  const [notificationError,setNotificationError]=useState('');
+  const [notificationUnconfirmed,setNotificationUnconfirmed]=useState(false);
+  const [notificationCheck,setNotificationCheck]=useState(0);
+  const [notificationCheckedKey,setNotificationCheckedKey]=useState('');
   const [notificationBusy,setNotificationBusy]=useState(false);
   const [pending,setPending]=useState({});
   const [toast,setToast]=useState(null);
-  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), sound=useRef(null), notificationPrompted=useRef(false);
+  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), sound=useRef(null), notificationPrompted=useRef(false), notificationAbort=useRef(null);
+  const pushAvailable=typeof window!=='undefined'&&!(platform.os==='ios'&&!installed)&&window.isSecureContext&&'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
+  const notificationKey=JSON.stringify([session?.storeId,session?.sellerId,session?.uid,session?.accessVersion,authReady,notificationPermission,pushAvailable,notificationCheck]);
+  const checkingCurrent=notificationCheckedKey!==notificationKey;
+  const displayedEnabled=checkingCurrent?(notificationPermission==='granted'?null:false):notificationsEnabled,displayedError=checkingCurrent?'':notificationError,displayedUnconfirmed=!checkingCurrent&&notificationUnconfirmed;
+  const notificationNotice=notificationBanner({permission:notificationPermission,enabled:displayedEnabled,hasSession:!!session,platform,installed,error:displayedError,unconfirmed:displayedUnconfirmed,pushAvailable});
   const store=data?.stores?.find(s=>s.id===session?.storeId), seller=data?.sellers?.find(s=>s.id===session?.sellerId&&sellerStoreId(s)===session?.storeId);
   const activeDepartmentId=seller?sellerDepartmentId(seller):'';
   const departments=session?departmentsForStore(data||{},session.storeId,{activeOnly:false}):[];
@@ -311,10 +326,21 @@ export default function App() {
     return ()=>{window.removeEventListener('storage',sync);player.dispose();if(sound.current===player)sound.current=null;};
   },[]);
   useEffect(()=>{
-    const sync=()=>setNotificationPermission(readNotificationPermission());
+    let timer,permissionStatus,cancelled=false;
+    const sync=()=>{
+      setNotificationPermission(readNotificationPermission());
+      clearTimeout(timer);timer=setTimeout(()=>setNotificationCheck(n=>n+1),120);
+    };
     const visible=()=>{if(document.visibilityState==='visible')sync();};
-    window.addEventListener('focus',sync);document.addEventListener('visibilitychange',visible);
-    return ()=>{window.removeEventListener('focus',sync);document.removeEventListener('visibilitychange',visible);};
+    window.addEventListener('focus',sync);window.addEventListener('online',sync);document.addEventListener('visibilitychange',visible);
+    try {navigator.permissions?.query?.({name:'notifications'}).then(status=>{
+      if(cancelled)return;permissionStatus=status;
+      if(status.addEventListener)status.addEventListener('change',sync);else status.onchange=sync;
+    }).catch(()=>{});} catch {}
+    return ()=>{
+      cancelled=true;clearTimeout(timer);window.removeEventListener('focus',sync);window.removeEventListener('online',sync);document.removeEventListener('visibilitychange',visible);
+      if(permissionStatus?.removeEventListener)permissionStatus.removeEventListener('change',sync);else if(permissionStatus)permissionStatus.onchange=null;
+    };
   },[]);
 
   const flash=useCallback((message,options={})=>{clearTimeout(toastTimer.current);setToast({message,...options});toastTimer.current=setTimeout(()=>setToast(null),options.duration||5500);},[]);
@@ -440,32 +466,45 @@ export default function App() {
   },[refresh,loadGoals,queueSummary]);
   useEffect(()=>{
     if('serviceWorker' in navigator) navigator.serviceWorker.register(`${APP_BASE}sw.js`, {scope:APP_BASE}).catch(()=>{});
-    const handler=e=>{e.preventDefault();setInstallPrompt(e)};
-    window.addEventListener('beforeinstallprompt',handler);return ()=>window.removeEventListener('beforeinstallprompt',handler);
+    const promptReady=()=>setInstallPrompt(window.__fnacInstallPrompt||null);
+    const onInstalled=()=>{setInstalled(true);setInstallPrompt(null);setInstallError('');setInstallModal(false);};
+    const displayChanged=()=>{if(isStandalone())onInstalled();};
+    const media=['standalone','fullscreen','minimal-ui','window-controls-overlay'].map(mode=>window.matchMedia?.(`(display-mode: ${mode})`)).filter(Boolean);
+    window.addEventListener('fnac-install-ready',promptReady);window.addEventListener('appinstalled',onInstalled);
+    for(const item of media){if(item.addEventListener)item.addEventListener('change',displayChanged);else item.addListener?.(displayChanged);}
+    promptReady();displayChanged();
+    return ()=>{
+      window.removeEventListener('fnac-install-ready',promptReady);window.removeEventListener('appinstalled',onInstalled);
+      for(const item of media){if(item.removeEventListener)item.removeEventListener('change',displayChanged);else item.removeListener?.(displayChanged);}
+    };
   },[]);
   useEffect(()=>{
-    if(!session||!('serviceWorker' in navigator)||!('PushManager' in window)||notificationPermission!=='granted'){setNotificationsEnabled(false);return;}
-    let cancelled=false;
-    if(CLOUD){
-      if(!notificationsWanted()){setNotificationsEnabled(false);return;}
-      setNotificationsEnabled(null);
-      subscribeFcm(api).then(()=>{if(!cancelled)setNotificationsEnabled(true);}).catch(()=>{if(!cancelled)setNotificationsEnabled(false);});
-    } else {
-      setNotificationsEnabled(null);
-      navigator.serviceWorker.ready.then(reg=>reg.pushManager.getSubscription()).then(async sub=>{
-        if(!sub){if(!cancelled)setNotificationsEnabled(false);return;}
-        await api('/api/push/subscribe',{method:'POST',body:{storeId:session.storeId,sellerId:session.sellerId,subscription:sub.toJSON()}});
-        if(!cancelled)setNotificationsEnabled(true);
-      }).catch(()=>{if(!cancelled)setNotificationsEnabled(false)});
-    }
-    return ()=>{cancelled=true};
-  },[session,notificationPermission]);
+    if(notificationBusy)return;
+    if(!authReady){setNotificationError('');setNotificationUnconfirmed(false);setNotificationsEnabled(null);setNotificationCheckedKey('');return;}
+    if(!session||!pushAvailable||notificationPermission!=='granted'){setNotificationError('');setNotificationUnconfirmed(false);setNotificationsEnabled(false);setNotificationCheckedKey(notificationKey);return;}
+    let cancelled=false;const controller=new AbortController();notificationAbort.current=controller;
+    setNotificationError('');setNotificationUnconfirmed(false);setNotificationsEnabled(null);setNotificationCheckedKey('');
+    const timer=setTimeout(()=>{if(!cancelled){setNotificationError('timeout');setNotificationCheckedKey(notificationKey);}},12000);
+    // Sans préférence d'activation enregistrée, ne pas réabonner silencieusement.
+    // Une souscription navigateur existante seule ne prouve pas qu'elle est reliée
+    // au profil Fnac Pulse : proposer une confirmation plutôt qu'affirmer son état.
+    const check=CLOUD?(notificationsWanted()?subscribeFcm(api,{signal:controller.signal}).then(()=>({active:true})):navigator.serviceWorker.ready.then(reg=>reg.pushManager.getSubscription()).then(sub=>({active:false,unconfirmed:!!sub}))):navigator.serviceWorker.ready.then(reg=>reg.pushManager.getSubscription()).then(async sub=>{
+      if(!sub||controller.signal.aborted)return {active:false};
+      await api('/api/push/subscribe',{method:'POST',body:{storeId:session.storeId,sellerId:session.sellerId,subscription:sub.toJSON()},signal:controller.signal});
+      return {active:true};
+    });
+    check.then(({active,unconfirmed})=>{if(!cancelled){setNotificationError('');setNotificationUnconfirmed(!!unconfirmed);setNotificationsEnabled(active);setNotificationCheckedKey(notificationKey);}})
+      .catch(()=>{if(!cancelled&&!controller.signal.aborted){const currentPermission=readNotificationPermission();if(currentPermission!==notificationPermission){setNotificationPermission(currentPermission);return;}setNotificationError('unavailable');setNotificationsEnabled(null);setNotificationCheckedKey(notificationKey);}})
+      .finally(()=>clearTimeout(timer));
+    return ()=>{cancelled=true;controller.abort();if(notificationAbort.current===controller)notificationAbort.current=null;clearTimeout(timer);};
+  },[session,authReady,pushAvailable,notificationPermission,notificationBusy,notificationCheck,notificationKey]);
   useEffect(()=>{
-    // Les navigateurs exigent un geste pour ouvrir leur demande système. On
-    // propose donc l'activation au lancement, sans demander la permission seul.
-    if(!session||!authReady||notificationsEnabled!==false||notificationPermission!=='default'||notificationPrompted.current||!window.isSecureContext||!('serviceWorker' in navigator)||!('PushManager' in window))return;
+    // Une permission système ne peut pas être demandée sans geste utilisateur.
+    // L'installation et l'activation ne doivent jamais ouvrir deux modales ensemble.
+    if(!data||!session||!authReady||installModal||sessionModal||adminModal||themeModal||goalModal||notificationsModal||notificationBusy||notificationCheckedKey!==notificationKey||notificationsEnabled!==false||notificationPrompted.current)return;
+    if(platform.os==='ios'&&!installed)return;
     notificationPrompted.current=true;setNotificationsModal(true);
-  },[session,authReady,notificationsEnabled,notificationPermission]);
+  },[data,session,authReady,installModal,sessionModal,adminModal,themeModal,goalModal,notificationsModal,notificationBusy,notificationsEnabled,notificationCheckedKey,notificationKey,platform,installed,pushAvailable]);
   useEffect(()=>()=>clearTimeout(toastTimer.current),[]);
 
   async function selectSession(next,pin,setup=null){
@@ -478,11 +517,14 @@ export default function App() {
   }
   function forgetDeviceProfile(){clearDeviceProfile();setDeviceProfile(null);}
   async function logoutSeller(){
-    let warning=false;
-    if(CLOUD&&notificationsWanted())try{await unsubscribeFcm(api);}catch{warning=true;}
-    if(CLOUD)await sellerLogout();
-    localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);localStorage.removeItem(SUMMARY_CACHE_KEY);setSession(null);setData(d=>d?{...d,stats:null}:null);setSessionModal(false);
-    flash(warning?'Déconnecté. Vérifiez les notifications de cet appareil lorsque la connexion revient.':'Vous êtes déconnecté.',warning?{tone:'warning'}:{});
+    notificationAbort.current?.abort();setNotificationBusy(true);
+    try {
+      let warning=false;
+      if(CLOUD&&notificationsWanted())try{await unsubscribeFcm(api);}catch{warning=true;}
+      if(CLOUD)await sellerLogout();
+      localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);localStorage.removeItem(SUMMARY_CACHE_KEY);setSession(null);setData(d=>d?{...d,stats:null}:null);setSessionModal(false);
+      flash(warning?'Déconnecté. Vérifiez les notifications de cet appareil lorsque la connexion revient.':'Vous êtes déconnecté.',warning?{tone:'warning'}:{});
+    } finally {setNotificationBusy(false);}
   }
   function changeSession(){if(session)setSessionModal(true);else {document.getElementById('selection')?.scrollIntoView({behavior:'smooth',block:'center'});document.querySelector('[aria-label="Votre magasin Fnac"]')?.focus();}}
   function navigate(id){setActiveNav(id);if(id==='objectifs'&&!session){changeSession();return;}document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});}
@@ -526,7 +568,7 @@ export default function App() {
   async function enableNotifications(){
     if(!session){setNotificationsModal(false);flash('Choisissez d’abord votre magasin et votre profil.',{tone:'warning'});changeSession();return;}
     if(!window.isSecureContext||!('serviceWorker' in navigator)||!('PushManager' in window)||!('Notification' in window)) {flash('Notifications indisponibles ici : utilisez une connexion HTTPS et un navigateur compatible.',{tone:'warning',duration:8000});return;}
-    setNotificationBusy(true);
+    notificationAbort.current?.abort();setNotificationBusy(true);
     try {
       const permission=await Notification.requestPermission();
       setNotificationPermission(permission);
@@ -541,20 +583,33 @@ export default function App() {
     finally{setNotificationBusy(false);}
   }
   async function disableNotifications(){
-    setNotificationBusy(true);
+    notificationAbort.current?.abort();setNotificationBusy(true);
     try {if(CLOUD)await unsubscribeFcm(api);else {const registration=await navigator.serviceWorker.ready;const sub=await registration.pushManager.getSubscription();if(sub){await api('/api/push/subscribe',{method:'DELETE',body:{endpoint:sub.endpoint}});await sub.unsubscribe();}}setNotificationsEnabled(false);setNotificationsModal(false);flash('Notifications désactivées sur cet appareil.');}
     catch(e){flash('Impossible de désactiver les notifications.',{tone:'warning'});}finally{setNotificationBusy(false);}
   }
-  async function installApp(){if(installPrompt){installPrompt.prompt();await installPrompt.userChoice;setInstallPrompt(null);setInstallModal(false);}else setInstallModal(true);}
-
-  if(!data)return <div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>;
+  function openNotifications(){notificationPrompted.current=true;setNotificationsModal(true);}
+  function retryNotifications(){setNotificationError('');setNotificationCheck(n=>n+1);}
+  function openInstall(){setInstallError('');setNotificationsModal(false);setInstallModal(true);}
+  async function installApp(){
+    const prompt=installPrompt;if(!prompt)return;
+    setInstallPrompt(null);setInstallError('');
+    if(window.__fnacInstallPrompt===prompt)window.__fnacInstallPrompt=null;
+    try {
+      const result=await prompt.prompt();
+      const choice=prompt.userChoice?await prompt.userChoice:result;
+      if(choice?.outcome==='accepted')setInstallModal(false);
+      else if(choice?.outcome==='dismissed')setInstallError('Installation annulée. Vous pouvez aussi utiliser le menu du navigateur.');
+    } catch {setInstallError('Le navigateur n’a pas ouvert l’installation. Utilisez le menu indiqué ci-dessus.');}
+  }
+  const installationDialog=installModal&&<InstallDialog platform={platform} base={APP_BASE} promptAvailable={!!installPrompt} installError={installError} onInstall={installApp} onClose={()=>setInstallModal(false)}/>;
+  if(!data)return <><div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>{installationDialog}</>;
   const stats=data.stats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
-  return <div className="app-shell">
-    <Sidebar onNavigate={navigate} onAdmin={()=>setAdminModal(true)} onSession={changeSession} onInstall={installApp} activeNav={activeNav}/>
-    <div className="main-shell"><Header session={session} seller={seller} store={store} connected={connection} notificationsEnabled={notificationsEnabled===true} soundEnabled={soundEnabled} onBell={()=>setNotificationsModal(true)} onSound={toggleSound} onSession={changeSession} onAdmin={()=>setAdminModal(true)} onTheme={()=>setThemeModal(true)}/>
+  return <><div className="app-shell">
+    <Sidebar onNavigate={navigate} onAdmin={()=>setAdminModal(true)} onSession={changeSession} onInstall={openInstall} showInstall={!installed} activeNav={activeNav}/>
+    <div className="main-shell"><Header session={session} seller={seller} store={store} connected={connection} notificationsEnabled={displayedEnabled} notificationError={displayedError} notificationUnconfirmed={displayedUnconfirmed} soundEnabled={soundEnabled} onBell={openNotifications} onSound={toggleSound} onSession={changeSession} onAdmin={()=>setAdminModal(true)} onTheme={()=>setThemeModal(true)} onInstall={openInstall} showInstall={!installed}/>
       <main className="content" id="overview">
         {connection==='offline'&&session&&<div className="offline-banner"><WifiOff size={16}/><div><strong>Connexion interrompue.</strong> Les dernières données restent visibles, mais la saisie est suspendue jusqu’au retour de la connexion.</div><button onClick={refresh}>Réessayer</button></div>}
-        {notificationsEnabled===false&&<section className="notification-card notification-prompt" aria-label="Activation des notifications"><span className="notification-icon"><BellOff size={18}/></span><div><strong>Restez informés</strong><p>{notificationPermission==='denied'?'Notifications bloquées : autorisez-les dans les réglages de votre appareil.':'Activez les notifications pour suivre les ventes de votre équipe.'}</p></div><button onClick={()=>setNotificationsModal(true)}>{notificationPermission==='denied'?'En savoir plus':'Activer'} <ArrowRight size={13}/></button></section>}
+        {notificationNotice&&<section className="notification-card notification-prompt" aria-label="Activation des notifications"><span className="notification-icon"><BellOff size={18}/></span><div><strong>Restez informés</strong><p>{notificationNotice.message}</p></div><button onClick={notificationNotice.action==='install'?openInstall:notificationNotice.action==='retry'?retryNotifications:openNotifications}>{notificationNotice.label} <ArrowRight size={13}/></button></section>}
         <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><DateChip today={cloudDay}/></div>
         {!session?<WelcomePanel data={data} onSubmit={selectSession} deviceProfile={deviceProfile} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>:<div className="session-strip"><div className="strip-icon"><Store size={18}/></div><div className="strip-copy"><span>VOTRE ESPACE DE VENTE</span><strong>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</strong></div><div className="strip-divider"/><div className="strip-user"><Avatar name={seller?.name} id={seller?.id} size="small"/><span>Connecté en tant que <strong>{seller?.name}</strong></span></div><button className="text-button" onClick={()=>setSessionModal(true)}>{CLOUD?'Mon profil':'Changer'} <ArrowRight size={14}/></button></div>}
         <div className="section-overline"><div><span className="kicker-line"/> EN UN COUP D’ŒIL</div><span>{session?'Les chiffres de votre département':'Choisissez votre espace pour démarrer'}</span></div>
@@ -572,13 +627,7 @@ export default function App() {
     </Modal>}
     {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={()=>setGoalModal(null)}><GoalForm services={data.services} goals={currentGoals} workdays={goalState.workdays} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={()=>setGoalModal(null)} disabled={connection==='offline'}/></Modal>}
     {adminModal&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>}
-    {notificationsModal&&<Modal title="Notifications d’équipe" subtitle="Ne manquez aucune nouvelle vente de votre département." onClose={()=>setNotificationsModal(false)}>
-      <div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{notificationsEnabled?'Notifications activées':'Restez informés'}</strong><p>Chaque nouvelle vente peut vous être signalée sur cet appareil, même lorsque l’application est fermée.</p></div></div>
-      <div className="notification-details"><div><Check size={16}/> Une notification pour chaque nouvelle vente</div><div><Check size={16}/> Uniquement pour votre magasin et votre département</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div>
-      <div className="notification-device-note"><Info size={15}/><span>{notificationPermission==='denied'?'Les notifications sont bloquées. Autorisez-les dans les réglages de cet appareil ou de votre navigateur, puis revenez ici.':'Sur iPhone et iPad, installez d’abord l’application sur l’écran d’accueil (iOS/iPadOS 16.4 ou plus). Une connexion HTTPS et un navigateur compatible sont nécessaires.'}</span></div>
-      <button className={notificationsEnabled?'outline-button full-button':'primary-button full-button'} disabled={notificationBusy||(!notificationsEnabled&&notificationPermission==='denied')} onClick={notificationsEnabled?disableNotifications:enableNotifications}>{notificationBusy?'Un instant…':notificationsEnabled?'Désactiver sur cet appareil':notificationPermission==='denied'?'Notifications bloquées':'Activer les notifications'} {notificationsEnabled?<BellOff size={16}/>:<Bell size={16}/>}</button>
-      {!notificationsEnabled&&<button className="notification-later" onClick={()=>setNotificationsModal(false)}>Plus tard</button>}
-    </Modal>}
+    {notificationsModal&&<NotificationsDialog permission={notificationPermission} enabled={displayedEnabled} checkError={displayedError} unconfirmed={displayedUnconfirmed} pushAvailable={pushAvailable} platform={platform} installed={installed} hasSession={!!session} busy={notificationBusy} onClose={()=>setNotificationsModal(false)} onEnable={enableNotifications} onDisable={disableNotifications} onRetry={retryNotifications} onInstall={openInstall} onSelectProfile={()=>{setNotificationsModal(false);changeSession();}}/>}
     {themeModal&&<Modal title="Apparence" subtitle="Vos préférences sur cet appareil." onClose={()=>setThemeModal(false)}>
       <div className="theme-options" role="radiogroup" aria-label="Thème de l’application">
         {[['system',Monitor,'Automatique','Suivre les réglages de l’appareil'],['light',Sun,'Clair','Toujours utiliser le thème clair'],['dark',Moon,'Sombre','Toujours utiliser le thème sombre']].map(([value,Icon,label,description])=><label key={value} className={`theme-option ${theme===value?'is-selected':''}`}>
@@ -586,7 +635,6 @@ export default function App() {
         </label>)}
       </div>
     </Modal>}
-    {installModal&&<Modal title="Installer Fnac Pulse" subtitle="Votre espace d’équipe toujours à portée de main." onClose={()=>setInstallModal(false)}><div className="install-steps"><div><span>1</span><p><strong>Sur iPhone ou iPad</strong><br/>Dans Safari, touchez Partager, puis « Sur l’écran d’accueil ».</p></div><div><span>2</span><p><strong>Sur Android ou ordinateur</strong><br/>Ouvrez le menu du navigateur, puis choisissez « Installer l’application » ou « Ajouter à l’écran d’accueil ».</p></div></div><p className="modal-hint"><Info size={14}/> L’installation et les notifications nécessitent une adresse HTTPS et un navigateur compatible.</p><button className="primary-button full-button" onClick={()=>setInstallModal(false)}>J’ai compris <Check size={16}/></button></Modal>}
     {toast&&<div className={`toast toast-${toast.tone||'default'}`} role="status"><span className="toast-icon">{toast.tone==='warning'?<Info size={17}/>:<CircleCheck size={17}/>}</span><span>{toast.message}</span>{toast.action&&<button onClick={()=>{const action=toast.action;setToast(null);action();}}>{toast.actionLabel}</button>}<button className="toast-close" aria-label="Fermer" onClick={()=>setToast(null)}><X size={16}/></button></div>}
-  </div>;
+  </div>{installationDialog}</>;
 }

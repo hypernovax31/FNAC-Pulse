@@ -6,6 +6,12 @@ Ce guide configure **GitHub Pages + Firebase Spark + Cloudflare Workers/Queues F
 >
 > Ne partagez jamais ici ou dans Git de mot de passe, PIN, fichier JSON de compte de service, clé privée VAPID, `PIN_PEPPER` ou jeton d'accès. La configuration Web Firebase, l'URL Worker et la **clé VAPID publique** ne sont pas des secrets. Les règles Firestore et les contrôles du Worker, et non la confidentialité de la configuration Web, protègent les données.
 
+## Mise à jour : installation et notifications au démarrage
+
+Publier l’interface GitHub Pages : cette mise à jour ne change ni le Worker ni les règles Firestore, et ne réinitialise aucun PIN ou session. À l’ouverture dans un navigateur, une fenêtre propose l’installation ; si la PWA est déjà ouverte en mode autonome, elle ne s’affiche pas. Si l’icône existe déjà, l’ouvrir directement : un simple onglet ne peut pas toujours détecter cette installation.
+
+Sur iPhone et iPad, toucher **Partager → Sur l’écran d’accueil → Ajouter**, puis ouvrir l’icône. Sur Android, le navigateur peut proposer un bouton d’installation ; sinon utiliser son menu. La permission de notification est lue dès l’ouverture et l’abonnement est vérifié après connexion du profil ; si les notifications ne sont pas actives, une fenêtre propose l’action appropriée. La demande système ne peut s’ouvrir qu’après un appui. En cas de blocage, autoriser les notifications dans les réglages ; en cas d’échec réseau, réessayer la vérification. Les permissions et les abonnements sont propres à chaque appareil et peuvent différer entre le navigateur et la PWA installée.
+
 ## Mise à jour : annuaire des magasins
 
 1. Déployer le Worker et son `wrangler.toml` avec les secrets et la Queue existants, puis publier l’interface Pages. Les règles Firestore ne changent pas. Au premier accès au catalogue, une fusion atomique crée `pulseBackups/catalog-before-fnac-directory-v1` et conserve les clés des magasins, les profils, PIN, sessions, ventes, objectifs, plannings et ajouts administrateur. Cette copie ne remplace pas une sauvegarde complète.
