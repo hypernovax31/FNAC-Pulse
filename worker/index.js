@@ -9,6 +9,8 @@ import { summaryGoals } from '../src/summary-goals.js';
 const SELLERS=['Morgan','Anthony','Cedric','Philippe','Fabien','Florent','Eric','Tamera','Ikram','Selenia','Johan','Alice'];
 const SERVICES=[['DMax','play'],['Assu Téléph','phone'],['Assu Multim','devices'],['Garantie','shield'],['FVD','package'],['FNAC +','badge'],['TRC','repeat'],['Reprise','refresh'],['Canal +','tv'],['Free','wifi'],['Autre','other']];
 const PROOF=/^[A-Za-z0-9_-]{43}$/;
+const ACTIVATION_CODE=/^\d{12}$/;
+const ACTIVATION_TTL=24*60*60*1000;
 const SAFE_ID=/^[A-Za-z0-9_-]{8,80}$/;
 const STORE_ID=/^[A-Za-z0-9_-]{1,80}$/;
 // Diagnostics anonymes : aucun jeton, identifiant ou texte utilisateur dans les journaux.
@@ -96,6 +98,19 @@ async function catalog(db) {
   throw new Error('Initialisation du catalogue impossible après modifications simultanées');
 }
 async function sellerUid(storeId,sellerId) {return `seller-${(await digestBase64(`${storeId}:${sellerId}`)).slice(0,28)}`;}
+// Trois groupes de quatre chiffres, générés sans biais ; le code en clair n'est
+// renvoyé qu'une fois à l'administrateur et jamais enregistré en base.
+function newActivationCode() {
+  const values=new Uint32Array(1),max=10000,ceiling=Math.floor(0x100000000/max)*max;
+  let code='';
+  for(let i=0;i<3;i++) {do{crypto.getRandomValues(values);}while(values[0]>=ceiling);code+=String(values[0]%max).padStart(4,'0');}
+  return code;
+}
+function accessStatus(access,previous) {
+  const status={active:access.active,storeId:access.storeId,sellerId:access.sellerId,sellerKey:access.sellerKey,version:access.version};
+  if(previous?.data?.goalsRevision)status.goalsRevision=previous.data.goalsRevision;
+  return status;
+}
 async function recordFailure(db,uid) {
   const path=`pulseAttempts/${uid}`;
   for(let i=0;i<8;i++) {
@@ -151,37 +166,89 @@ export function createWorker(deps={}) {
     const [a,c]=await Promise.all([db.get(`pulseAccess/${p.sub}`),catalog(db)]);
     if(!a?.data?.active || a.data.version!==p.accessVersion || a.data.storeId!==p.storeId || a.data.sellerId!==Number(p.sellerId) ||
        !validStore(c.data,p.storeId) || !sellerBy(c.data,p.sellerId,p.storeId))fail(403,'Profil désactivé ou code PIN modifié. Reconnectez-vous.');
-    return {claims:p,access:a.data,catalog:c.data};
+    return {claims:p,access:a.data,accessDoc:a,catalog:c.data,catalogDoc:c};
+  }
+  async function limitAuthentication(env,uid) {
+    if(!env.LOGIN_LIMITER||!env.PIN_PEPPER)fail(503,'Protection de connexion non configurée.');
+    const limit=await env.LOGIN_LIMITER.limit({key:uid});
+    if(!limit.success)fail(429,'Trop de tentatives. Réessayez plus tard.');
+  }
+  function selectedProfile(c,body) {
+    const selected=sellerBy(c.data,body.sellerId,body.storeId);
+    return validStore(c.data,body.storeId)&&selected&&
+      (body.departmentId===undefined||body.departmentId===sellerDepartmentId(selected));
+  }
+  async function signedIn(env,uid,access) {
+    const claims={role:'seller',storeId:access.storeId,sellerId:access.sellerId,sellerKey:access.sellerKey,accessVersion:access.version};
+    return {customToken:await custom(env,uid,claims)};
   }
   async function login(req,env,db,body) {
     const {storeId,sellerId,proof}=body;
     if(!STORE_ID.test(storeId||'')||!isId(sellerId)||!PROOF.test(proof||''))fail(400,'Sélection ou code PIN invalide.');
     const uid=await sellerUid(storeId,Number(sellerId));
-    if(!env.LOGIN_LIMITER||!env.PIN_PEPPER)fail(503,'Protection de connexion non configurée.');
-    const limit=await env.LOGIN_LIMITER.limit({key:uid});
-    if(!limit.success)fail(429,'Trop de tentatives. Réessayez plus tard.');
+    await limitAuthentication(env,uid);
     const [attempt,a,c]=await Promise.all([db.get(`pulseAttempts/${uid}`),db.get(`pulseAccess/${uid}`),catalog(db)]);
     if(attempt?.data?.lockUntil>Date.now())fail(429,'Trop de tentatives. Réessayez dans 15 minutes.');
-    const selected=sellerBy(c.data,sellerId,storeId);
-    if(!a?.data?.active||!validStore(c.data,storeId)||!selected||
-      (body.departmentId!==undefined&&body.departmentId!==sellerDepartmentId(selected))||
-      !(await verifyPin(env,uid,proof,a.data.pinMac||''))) {
+    if(!a?.data?.active||!selectedProfile(c,body)||!(await verifyPin(env,uid,proof,a.data.pinMac||''))) {
       await recordFailure(db,uid);fail(401,'Profil ou code PIN incorrect.');
     }
     await clearFailures(db,uid);
-    const claims={role:'seller',storeId,sellerId:Number(sellerId),sellerKey:`s${Number(sellerId)}`,accessVersion:a.data.version};
-    return {customToken:await custom(env,uid,claims)};
+    // Les anciens PIN n'autorisent plus une nouvelle session : après vérification,
+    // leur propriétaire doit en choisir un autre. Les sessions déjà actives ne
+    // sont pas révoquées avant cet enregistrement.
+    if(a.data.pinPersonal!==true){
+      if(body.personalPinFlow!==true)fail(409,'Mettez Fnac Pulse à jour en la fermant puis en la rouvrant pour choisir votre nouveau PIN.');
+      return {choosePersonalPin:true};
+    }
+    return signedIn(env,uid,a.data);
   }
-  async function savePin(env,db,body) {
-    const {storeId,sellerId,proof}=body;
-    if(!STORE_ID.test(storeId||'')||!isId(sellerId)||!PROOF.test(proof||''))fail(400,'Choisissez un magasin, un vendeur et un PIN valide.');
-    const c=await catalog(db);
-    if(!validStore(c.data,storeId)||!sellerBy(c.data,sellerId,storeId))fail(400,'Magasin ou vendeur invalide.');
-    const uid=await sellerUid(storeId,Number(sellerId));
-    const data={active:true,storeId,sellerId:Number(sellerId),sellerKey:`s${Number(sellerId)}`,version:crypto.randomUUID(),pinMac:await pinMac(env,uid,proof)};
-    const {pinMac:_,...status}=data;
-    await db.commit([db.write(`pulseAccess/${uid}`,data),db.write(`pulseStatus/${uid}`,status)]);await clearFailures(db,uid);
-    return {ok:true};
+  async function issueActivation(env,db,body) {
+    const {storeId,sellerId}=body;
+    if(!STORE_ID.test(storeId||'')||!isId(sellerId)||body.pin!==undefined||body.proof!==undefined)fail(400,'Choisissez un magasin et un vendeur.');
+    const uid=await sellerUid(storeId,Number(sellerId)),accessPath=`pulseAccess/${uid}`,statusPath=`pulseStatus/${uid}`;
+    for(let attempt=0;attempt<8;attempt++) {
+      const [old,status,c]=await Promise.all([db.get(accessPath),db.get(statusPath),catalog(db)]);
+      if(!validStore(c.data,storeId)||!sellerBy(c.data,sellerId,storeId))fail(400,'Magasin ou vendeur invalide.');
+      const activationCode=newActivationCode(),expiresAt=Date.now()+ACTIVATION_TTL;
+      const access={active:false,storeId,sellerId:Number(sellerId),sellerKey:`s${Number(sellerId)}`,
+        version:crypto.randomUUID(),activationMac:await pinMac(env,`activation:${uid}`,activationCode),activationExpiresAt:expiresAt};
+      try {
+        await db.commit([db.verify('pulse/catalog',precondition(c)),db.write(accessPath,access,precondition(old)),db.write(statusPath,accessStatus(access,status),precondition(status))]);
+        await clearFailures(db,uid);
+        return {activationCode,expiresAt};
+      } catch(e) {if(!conflict(e))throw e;}
+    }
+    fail(409,'Accès modifié simultanément. Réessayez.');
+  }
+  async function choosePersonalPin(env,db,body,mode) {
+    const {storeId,sellerId,newProof,currentProof,activationCode}=body;
+    if(!STORE_ID.test(storeId||'')||!isId(sellerId)||!PROOF.test(newProof||'')||
+       (mode==='migration'&&!PROOF.test(currentProof||''))||
+       (mode==='activation'&&!ACTIVATION_CODE.test(activationCode||'')))fail(400,'Sélection ou code invalide.');
+    const uid=await sellerUid(storeId,Number(sellerId)),accessPath=`pulseAccess/${uid}`,statusPath=`pulseStatus/${uid}`;
+    await limitAuthentication(env,uid);
+    for(let retry=0;retry<8;retry++) {
+      const [attempt,a,c,status]=await Promise.all([db.get(`pulseAttempts/${uid}`),db.get(accessPath),catalog(db),db.get(statusPath)]);
+      if(attempt?.data?.lockUntil>Date.now())fail(429,'Trop de tentatives. Réessayez dans 15 minutes.');
+      const authorized=mode==='activation'
+        ? !!a&&!a.data.active&&a.data.activationExpiresAt>Date.now()&&await verifyPin(env,`activation:${uid}`,activationCode,a.data.activationMac||'')
+        : !!a&&a.data.active&&a.data.pinPersonal!==true&&await verifyPin(env,uid,currentProof,a.data.pinMac||'');
+      if(!selectedProfile(c,body)||!authorized) {
+        await recordFailure(db,uid);
+        fail(401,mode==='activation'?'Code d’activation invalide ou expiré. Demandez-en un nouveau.':'Profil ou ancien code PIN incorrect.');
+      }
+      if(mode==='migration'&&currentProof===newProof)fail(400,'Choisissez un code différent de votre ancien PIN.');
+      const access={active:true,storeId,sellerId:Number(sellerId),sellerKey:`s${Number(sellerId)}`,
+        version:crypto.randomUUID(),pinPersonal:true,pinMac:await pinMac(env,uid,newProof)};
+      try {
+        // La précondition rend le code à usage unique, même si deux appareils
+        // essaient simultanément ; elle protège aussi une réinitialisation admin.
+        await db.commit([db.verify('pulse/catalog',precondition(c)),db.write(accessPath,access,precondition(a)),db.write(statusPath,accessStatus(access,status),precondition(status))]);
+        await clearFailures(db,uid);
+        return signedIn(env,uid,access);
+      } catch(e) {if(!conflict(e))throw e;}
+    }
+    fail(409,'Accès modifié simultanément. Recommencez la connexion.');
   }
   // Les objectifs sont privés : seuls le Worker et l'administrateur peuvent lire
   // pulseGoals. pulseStatus ne reçoit qu'un marqueur pour signaler un changement.
@@ -334,17 +401,21 @@ export function createWorker(deps={}) {
     if(rows.length>2000)fail(409,'Plus de 2 000 opérations ce jour : correction indisponible, contactez l’administrateur.');
     return rows;
   }
+  function saleAuthorizationChecks(db,session) {
+    return [db.verify(`pulseAccess/${session.claims.sub}`,precondition(session.accessDoc)),db.verify('pulse/catalog',precondition(session.catalogDoc))];
+  }
   async function addSale(req,env,db,ctx,body) {
     const s=await seller(req,env,db),service=serviceBy(s.catalog,body.serviceId),requestId=body.requestId;
     if(!service||!SAFE_ID.test(requestId||''))fail(400,'Service ou identifiant de vente invalide.');
     const storeId=s.claims.storeId,sellerId=Number(s.claims.sellerId),person=sellerBy(s.catalog,sellerId,storeId),departmentId=sellerDepartmentId(person);
     const data={id:requestId,storeId,sellerId,departmentId,serviceId:service.id,createdAt:new Date().toISOString(),businessDate:today(),deletedAt:null,source:'sale',clientId:typeof body.clientId==='string'?body.clientId.slice(0,80):'',ownerUid:s.claims.sub};
     const outbox={saleId:requestId,storeId,departmentId,sellerName:person.name,serviceName:service.name,status:'pending',createdAt:Date.now(),leaseUntil:0};
-    try {await db.commit([db.write(docPath(storeId,requestId),data,{exists:false}),db.write(`pulseOutbox/${requestId}`,outbox,{exists:false}),db.write(guardPath(storeId),{revision:crypto.randomUUID()})]);}
+    try {await db.commit([...saleAuthorizationChecks(db,s),db.write(docPath(storeId,requestId),data,{exists:false}),db.write(`pulseOutbox/${requestId}`,outbox,{exists:false}),db.write(guardPath(storeId),{revision:crypto.randomUUID()})]);}
     catch(e) {
       if(!conflict(e))throw e;
       const existing=await db.get(docPath(storeId,requestId));
-      if(!existing || existing.data.ownerUid!==s.claims.sub || existing.data.serviceId!==service.id)fail(409,'Identifiant de vente déjà utilisé.');
+      if(!existing)fail(409,'Votre accès ou le catalogue a changé. Actualisez avant de réessayer.');
+      if(existing.data.ownerUid!==s.claims.sub || existing.data.serviceId!==service.id)fail(409,'Identifiant de vente déjà utilisé.');
       ctx.waitUntil(dispatch(env,db,requestId).catch(e=>logPushError('dispatch',e)));return {id:requestId,duplicate:true};
     }
     ctx.waitUntil(dispatch(env,db,requestId).catch(e=>logPushError('dispatch',e)));return {id:requestId};
@@ -353,8 +424,8 @@ export function createWorker(deps={}) {
     if(!SAFE_ID.test(id||''))fail(400,'Vente invalide.');
     const s=await seller(req,env,db),path=docPath(s.claims.storeId,id),d=await db.get(path);
     if(!d||d.data.ownerUid!==s.claims.sub||d.data.businessDate!==today()||d.data.deletedAt)fail(409,'Cette vente ne peut plus être annulée.');
-    try {await db.commit([db.write(path,{...d.data,deletedAt:new Date().toISOString()},{updateTime:d.updateTime}),db.write(guardPath(s.claims.storeId),{revision:crypto.randomUUID()})]);}
-    catch(e){if(conflict(e))fail(409,'Cette vente a déjà été modifiée.');throw e;}
+    try {await db.commit([...saleAuthorizationChecks(db,s),db.write(path,{...d.data,deletedAt:new Date().toISOString()},{updateTime:d.updateTime}),db.write(guardPath(s.claims.storeId),{revision:crypto.randomUUID()})]);}
+    catch(e){if(conflict(e))fail(409,'Votre accès, le catalogue ou cette vente a changé. Actualisez avant de réessayer.');throw e;}
     return {ok:true,id};
   }
   async function removeLatest(req,env,db,body) {
@@ -458,6 +529,8 @@ export function createWorker(deps={}) {
     if(method==='GET'&&path==='/api/health')return {ok:true};
     if(method==='GET'&&path==='/api/bootstrap')return publicCatalog((await catalog(db)).data,url.searchParams.get('storeId'));
     if(method==='POST'&&path==='/api/auth/login')return login(req,env,db,await readBody(req));
+    if(method==='POST'&&path==='/api/auth/activate')return choosePersonalPin(env,db,await readBody(req),'activation');
+    if(method==='POST'&&path==='/api/auth/personal-pin')return choosePersonalPin(env,db,await readBody(req),'migration');
     if((method==='GET'||method==='POST')&&path==='/api/goals') {
       const s=await seller(req,env,db);
       const owner={uid:s.claims.sub,storeId:s.claims.storeId,sellerId:Number(s.claims.sellerId),catalog:s.catalog};
@@ -483,7 +556,7 @@ export function createWorker(deps={}) {
       if(method==='GET'&&path==='/api/admin/all'){const d=(await catalog(db)).data;return {sellers:d.sellers,services:d.services,serviceOrders:d.serviceOrders||{},departmentsByStore:d.departmentsByStore||{}};}
       const department=path.match(/^\/api\/admin\/departments(?:\/([A-Za-z0-9_-]+))?$/);
       if(department&&((method==='POST'&&!department[1])||(method==='PATCH'&&department[1])))return mutateDepartment(db,department[1],await readBody(req),method);
-      if(method==='POST'&&path==='/api/admin/pin')return savePin(env,db,await readBody(req));
+      if(method==='POST'&&path==='/api/admin/pin-activation')return issueActivation(env,db,await readBody(req));
       if(method==='GET'&&path==='/api/admin/goals')return readGoals(db,await goalOwner(db,url.searchParams.get('storeId'),url.searchParams.get('sellerId')));
       if(method==='POST'&&path==='/api/admin/goals') {
         const body=await readBody(req), owner=await goalOwner(db,body.storeId,body.sellerId);

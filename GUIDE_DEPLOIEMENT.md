@@ -6,6 +6,14 @@ Ce guide configure **GitHub Pages + Firebase Spark + Cloudflare Workers/Queues F
 >
 > Ne partagez jamais ici ou dans Git de mot de passe, PIN, fichier JSON de compte de service, clé privée VAPID, `PIN_PEPPER` ou jeton d'accès. La configuration Web Firebase, l'URL Worker et la **clé VAPID publique** ne sont pas des secrets. Les règles Firestore et les contrôles du Worker, et non la confidentialité de la configuration Web, protègent les données.
 
+## Mise à jour : PIN choisis par les vendeurs et signature sonore
+
+1. Déployer le nouveau Worker en conservant ses secrets et sa Queue, puis publier rapidement la nouvelle interface Pages. Les règles Firestore ne changent pas. Entre les deux publications, une ancienne interface ne peut pas terminer la migration d'un ancien PIN : fermer et rouvrir la PWA une fois la publication terminée.
+2. Aucun PIN existant n'est réinitialisé en masse. Une session déjà ouverte continue de fonctionner. À la prochaine connexion, l'ancien PIN doit être vérifié, puis le vendeur choisit un **autre** PIN personnel de 8 chiffres. Lorsque ce nouveau PIN est enregistré, ses anciennes sessions sont révoquées : reconnecter les autres appareils avec le nouveau PIN.
+3. Pour un nouveau vendeur ou un PIN oublié : **Administration → Magasins** (choisir le magasin) → **Codes PIN** → choisir le vendeur → **Générer / réinitialiser l'accès**. Cette action désactive immédiatement les éventuels ancien PIN et sessions. Vérifier l'identité du vendeur et lui transmettre le code de 12 chiffres par un canal privé. Il est valable 24 h, utilisable une seule fois et n'est plus affiché après fermeture de l'écran ; en générer un autre annule le précédent.
+4. Le vendeur sélectionne son magasin, département et profil, puis **Première connexion ou PIN oublié ?** ; il saisit le code d'activation et choisit et confirme son PIN secret. L'administrateur ne saisit ni ne consulte ce PIN. Tester avec un second vendeur qu'un autre code ne permet pas d'accéder au profil. Sur un appareil partagé, **se déconnecter** : une session laissée ouverte reste utilisable sans nouvelle saisie du PIN.
+5. La signature MP3 est jouée au démarrage lorsque le navigateur l'autorise, sinon au premier geste autorisé. Elle peut être désactivée dans **Apparence et son**. Les notifications push continuent d'utiliser le son système ; la PWA ne peut pas imposer le MP3 comme son d'une notification lorsque l'application est fermée.
+
 ## Mise à jour : départements et jauges de récapitulatif
 
 1. Déployer le Worker mis à jour en conservant ses secrets et sa Queue, puis publier la nouvelle interface Pages. Les règles Firestore existantes restent inchangées : le marqueur de rafraîchissement ne contient qu’une révision et utilise la collection de ventes déjà lisible, sans être inclus dans les requêtes de ventes.
@@ -40,7 +48,7 @@ Pour une installation plus ancienne qui n'a pas encore été migrée, cette vers
 1. Déployer d'abord le **nouveau Worker** sur Cloudflare, sans modifier les trois secrets existants. Le premier accès à `/api/bootstrap` effectue la migration du catalogue avec précondition de concurrence et crée une copie de son état précédent dans `pulseBackups/catalog-before-store-scoping-v1`. La sauvegarde et la migration du catalogue sont atomiques. Cette copie ne remplace **pas** une sauvegarde complète de Firestore.
 2. Vérifier que `/api/bootstrap` répond et que les vendeurs historiques portent `storeId: osm-way-386504727`. Dans Firestore, vérifier que `pulse/catalog` contient `catalogVersion: 2` et `sellerStores` **avant** de modifier les règles : sinon les vendeurs risquent de perdre temporairement l'accès en lecture.
 3. Publier l'interface GitHub Pages via le workflow manuel, puis remplacer les règles dans **Firebase → Firestore Database → Règles** par le contenu de [`firestore.rules`](firestore.rules) et appuyer sur **Publier**. Les nouvelles règles vérifient l'appartenance du vendeur à son magasin. Les anciennes sessions restées ouvertes sur le mauvais magasin sont refusées ; celles de Labège gardent leur PIN.
-4. Fermer et rouvrir l'application sur chaque appareil pour charger la nouvelle version. Dans **Administration**, choisir le magasin avant d'y ajouter des vendeurs ou de réordonner les services. Définir un PIN pour chaque nouveau vendeur. Tester la vente, le classement, l'ordre et les notifications sur les appareils de l'équipe.
+4. Fermer et rouvrir l'application sur chaque appareil pour charger la nouvelle version. Dans **Administration**, choisir le magasin avant d'y ajouter des vendeurs ou de réordonner les services. Chaque nouveau vendeur choisit son propre PIN après réception d'un code d'activation. Tester la vente, le classement, l'ordre et les notifications sur les appareils de l'équipe.
 
 Noms et activation des services sont communs à tous les magasins ; seul leur **ordre** est propre à chaque magasin. Les priorités de classement DMax et FVD correspondent aux services historiques (identifiants 1 et 5), même si leur intitulé est modifié.
 
@@ -146,8 +154,8 @@ Ouvrir ensuite <https://hypernovax31.github.io/FNAC-Pulse/> dans un onglet norma
 
 ## 5. Première mise en service et recette
 
-1. Ouvrir **Administration**, se connecter avec le compte Firebase créé à l'étape 1, puis ouvrir **Codes PIN**.
-2. Pour chaque couple **magasin / vendeur**, définir un PIN différent de 8 chiffres. Le générateur intégré est préférable à un code facile à deviner. Le transmettre au vendeur par un canal privé. Cinq échecs successifs entraînent un blocage temporaire ; l'administrateur peut redéfinir le PIN.
+1. Ouvrir **Administration**, se connecter avec le compte Firebase créé à l'étape 1, choisir le magasin dans **Magasins**, puis ouvrir **Codes PIN**.
+2. Pour chaque nouveau vendeur, générer un code d'activation de 12 chiffres et le transmettre en privé après vérification de son identité. Le vendeur saisit ce code, puis choisit son PIN secret de 8 chiffres. Cinq échecs rapprochés entraînent un blocage temporaire ; l'administrateur peut réinitialiser l'accès et générer un nouveau code d'activation, pas choisir le PIN.
 3. Sur deux appareils, se connecter avec deux vendeurs du même magasin. Ajouter une vente sur l'un : vérifier sa présence dans le bilan et sur l'autre appareil. Vérifier une correction et le classement. Tester un second magasin pour vérifier l'isolation.
 4. Sur chaque appareil, autoriser les notifications. Tester l'envoi avec l'application ouverte puis fermée ; sur iPhone/iPad, installer d'abord la PWA depuis Safari. Les navigateurs, les réglages système et les politiques d'économie d'énergie peuvent empêcher la réception.
 5. Vérifier le changement d'un PIN : l'ancienne session ne doit plus pouvoir lire de nouvelles données ni écrire. Vérifier également les permissions Firestore et la protection de l'accès administrateur.

@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createWorker} from '../worker/index.js';
-import {digestBase64} from '../worker/firebase.js';
+import {digestBase64,pinMac} from '../worker/firebase.js';
 import {pinProof} from '../src/pin.js';
 import {summarize,periodStarts,earliestDate,parisToday} from '../src/cloud-stats.js';
 import {LEGACY_STORE_ID,sellersForStore,orderServices} from '../src/catalog.js';
@@ -12,14 +12,22 @@ class MemoryDb {
   async get(path){const d=this.docs.get(path);return d?structuredClone(d):null;}
   write(path,data,currentDocument){return {path,data:structuredClone(data),currentDocument};}
   delete(path,currentDocument){return {path,del:true,currentDocument};}
+  verify(path,currentDocument){return {path,check:true,currentDocument};}
   async commit(writes){
     for(const w of writes){const old=this.docs.get(w.path),c=w.currentDocument;
       if((c?.exists===false&&old)||(c?.exists===true&&!old)||(c?.updateTime&&old?.updateTime!==c.updateTime)) {const e=new Error('conflict');e.status=409;throw e;}}
-    for(const w of writes){if(w.del)this.docs.delete(w.path);else this.docs.set(w.path,{id:w.path.split('/').pop(),name:w.path,data:structuredClone(w.data),updateTime:String(++this.n)});}
+    for(const w of writes){if(w.check)continue;if(w.del)this.docs.delete(w.path);else this.docs.set(w.path,{id:w.path.split('/').pop(),name:w.path,data:structuredClone(w.data),updateTime:String(++this.n)});}
   }
   async query(path,field,op,value,limit=1000){return [...this.docs].filter(([k])=>k.startsWith(path+'/')&&!k.slice(path.length+1).includes('/')).map(([,v])=>structuredClone(v)).filter(x=>!field||(op==='EQUAL'?x.data[field]===value:x.data[field]>=value)).slice(0,limit);}
 }
 function makeMessage(body){return {body,acked:false,retried:false,ack(){this.acked=true},retry(){this.retried=true}};}
+async function activateSeller(req,storeId,sellerId,newProof,adminToken) {
+  const invitation=await req('/api/admin/pin-activation','POST',{storeId,sellerId},adminToken);
+  assert.equal(invitation.status,200);
+  assert.match(invitation.body.activationCode,/^\d{12}$/);
+  const result=await req('/api/auth/activate','POST',{storeId,sellerId,newProof,activationCode:invitation.body.activationCode});
+  assert.equal(result.status,200);return result;
+}
 
 test('Cloud : PIN, isolation, corrections, administration et notifications en file',async()=>{
   const db=new MemoryDb(), sent=[], queued=[], identities=new Map(), waits=[];
@@ -44,7 +52,7 @@ test('Cloud : PIN, isolation, corrections, administration et notifications en fi
   const store=LEGACY_STORE_ID,other=base.stores.find(s=>s.name==='Fnac Bordeaux').id;
   assert.equal(sellersForStore(base.sellers,store).length,12);assert.equal(sellersForStore(base.sellers,other).length,0);
   assert.deepEqual(base.sellers.map(x=>x.name),[...base.sellers].sort((a,b)=>a.name.localeCompare(b.name,'fr',{sensitivity:'base'})).map(x=>x.name));
-  assert.equal((await req('/api/admin/pin','POST',{storeId:other,sellerId:1,proof:'A'.repeat(43)},'admin-token')).status,400);
+  assert.equal((await req('/api/admin/pin-activation','POST',{storeId:other,sellerId:1},'admin-token')).status,400);
   assert.equal((await req('/api/admin/entities/sellers','POST',{name:'Morgan',storeId:other},'admin-token')).status,200);
   assert.equal((await req('/api/admin/entities/sellers','POST',{name:'morgan',storeId:other},'admin-token')).status,409);
   assert.equal((await req('/api/admin/entities/sellers','POST',{name:'Nouveau'},'admin-token')).status,400);
@@ -56,8 +64,9 @@ test('Cloud : PIN, isolation, corrections, administration et notifications en fi
   assert.equal((await req(`/api/bootstrap?storeId=${other}`)).body.services[0].id,1);
   assert.equal((await req(`/api/admin/counts?storeId=${other}&sellerId=1`,'GET',undefined,'admin-token')).status,400);
   const proof=await pinProof('demo-fnac',store,1,'73628519');
-  assert.equal((await req('/api/admin/pin','POST',{storeId:store,sellerId:1,proof})).status,401);
-  assert.equal((await req('/api/admin/pin','POST',{storeId:store,sellerId:1,proof},'admin-token')).status,200);
+  assert.equal((await req('/api/admin/pin-activation','POST',{storeId:store,sellerId:1})).status,401);
+  assert.equal((await req('/api/admin/pin','POST',{storeId:store,sellerId:1,proof},'admin-token')).status,404);
+  await activateSeller(req,store,1,proof,'admin-token');
   assert.equal((await req('/api/auth/login','POST',{storeId:other,sellerId:1,proof})).status,401);
   assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:1,proof})).body.customToken,'custom-test-token');
   const claims=identities.get('seller-token');assert.equal(claims.storeId,store);
@@ -82,9 +91,10 @@ test('Cloud : PIN, isolation, corrections, administration et notifications en fi
   assert.equal((await req('/api/admin/adjust','POST',{storeId:store,sellerId:1,serviceId:1,count:0},'admin-token')).status,200);
   assert.equal((await req(`/api/admin/counts?storeId=${store}&sellerId=1`,'GET',undefined,'admin-token')).body.counts.length,0);
   const newProof=await pinProof('demo-fnac',store,1,'59386271');
-  assert.equal((await req('/api/admin/pin','POST',{storeId:store,sellerId:1,proof:newProof},'admin-token')).status,200);
+  const reset=await req('/api/admin/pin-activation','POST',{storeId:store,sellerId:1},'admin-token');assert.equal(reset.status,200);
   assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'test-sale-00000002'},'seller-token')).status,403);
   assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:1,proof})).status,401);
+  assert.equal((await req('/api/auth/activate','POST',{storeId:store,sellerId:1,newProof,activationCode:reset.body.activationCode})).status,200);
   assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:1,proof:newProof})).status,200);
   assert.equal((await req('/api/admin/entities/sellers/1','PATCH',{active:false},'admin-token')).status,200);
   assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'test-sale-00000003'},'seller-token')).status,403);
@@ -95,14 +105,14 @@ test('Cloud : verrouillage durable après cinq PIN erronés',async()=>{
   const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!identities.has(t))throw Error();return identities.get(t)},makeCustomToken:async()=> 'ok'});
   const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PIN_PEPPER:Buffer.alloc(32,11).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}};
   const ctx={waitUntil(){}};
-  async function req(path,body,token) {const r=await worker.fetch(new Request(`https://worker.test${path}`,{method:'POST',headers:{'content-type':'application/json',...(token?{authorization:`Bearer ${token}`}:{})},body:JSON.stringify(body)}),env,ctx);return r.status;}
+  async function req(path,method='GET',body,token) {const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{'content-type':'application/json',...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};}
   await worker.fetch(new Request('https://worker.test/api/bootstrap'),env,ctx);
   const store=LEGACY_STORE_ID;
   const good=await pinProof('demo-fnac',store,2,'90473512');
-  assert.equal(await req('/api/admin/pin',{storeId:store,sellerId:2,proof:good},'admin'),200);
+  await activateSeller(req,store,2,good,'admin');
   const bad=await pinProof('demo-fnac',store,2,'00000000');
-  for(let n=0;n<5;n++)assert.equal(await req('/api/auth/login',{storeId:store,sellerId:2,proof:bad}),401);
-  assert.equal(await req('/api/auth/login',{storeId:store,sellerId:2,proof:good}),429);
+  for(let n=0;n<5;n++)assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:2,proof:bad})).status,401);
+  assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:2,proof:good})).status,429);
   const uid=`seller-${(await digestBase64(`${store}:2`)).slice(0,28)}`;
   assert((await db.get(`pulseAttempts/${uid}`)).data.lockUntil>Date.now());
 });
@@ -244,7 +254,7 @@ test('Objectifs cloud : confidentialité, vendeur/admin, simultanéité et chang
   assert.equal((await db.get(`pulseGoals/${uid}`)).data.goals.s1.week,10);
   const proof1=await pinProof('demo-fnac',store,1,'73628519'),proof2=await pinProof('demo-fnac',store,2,'59386271');
   for(const [id,proof] of [[1,proof1],[2,proof2]]) {
-    assert.equal((await request('/api/admin/pin','POST',{storeId:store,sellerId:id,proof},'admin-token')).status,200);
+    await activateSeller(request,store,id,proof,'admin-token');
     assert.equal((await request('/api/auth/login','POST',{storeId:store,sellerId:id,proof})).body.customToken,`seller-${id}-token`);
   }
   assert.equal((await request('/api/goals','GET',undefined,'seller-1-token')).body.goals.s1.day,2);
@@ -282,8 +292,9 @@ test('Objectifs cloud : confidentialité, vendeur/admin, simultanéité et chang
   let actual=(await request('/api/goals','GET',undefined,'seller-1-token')).body.goals;
   assert.equal(actual.s5.week,3);assert.equal(actual.s6.month,20);
   const changed=await pinProof('demo-fnac',store,1,'82467913');
-  assert.equal((await request('/api/admin/pin','POST',{storeId:store,sellerId:1,proof:changed},'admin-token')).status,200);
+  const reset=await request('/api/admin/pin-activation','POST',{storeId:store,sellerId:1},'admin-token');assert.equal(reset.status,200);
   assert.equal((await request('/api/goals','GET',undefined,'seller-1-token')).status,403);
+  assert.equal((await request('/api/auth/activate','POST',{storeId:store,sellerId:1,newProof:changed,activationCode:reset.body.activationCode})).status,200);
   assert.equal((await request('/api/auth/login','POST',{storeId:store,sellerId:1,proof:changed})).status,200);
   actual=(await request('/api/goals','GET',undefined,'seller-1-token')).body.goals;
   assert.equal(actual.s5.week,3);assert.equal(actual.s6.month,20);
@@ -337,7 +348,7 @@ test('Jours personnels cloud : admin seul, isolation, conservation et modificati
   assert.equal(await db.get(`pulseStatus/${uid}`),null);assert.equal(await db.get(`pulseAccess/${uid}`),null);
   const proof1=await pinProof('demo-fnac',store,1,'73628519'),proof2=await pinProof('demo-fnac',store,2,'59386271');
   for(const [id,proof] of [[1,proof1],[2,proof2]]) {
-    assert.equal((await req('/api/admin/pin','POST',{storeId:store,sellerId:id,proof},'admin')).status,200);
+    await activateSeller(req,store,id,proof,'admin');
     assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:id,proof})).status,200);
   }
   assert.deepEqual((await req('/api/goals','GET',undefined,'seller-1')).body.workdays,[1,2,3,4,6]);
@@ -370,8 +381,9 @@ test('Jours personnels cloud : admin seul, isolation, conservation et modificati
   assert.equal(sunday.status,200);assert.deepEqual(sunday.body.workdays,[0]);assert.equal(sunday.body.goals.s1.day,5);
   assert.deepEqual((await req('/api/goals','GET',undefined,'seller-1')).body.workdays,[0]);
   const newProof=await pinProof('demo-fnac',store,1,'82467913');
-  assert.equal((await req('/api/admin/pin','POST',{storeId:store,sellerId:1,proof:newProof},'admin')).status,200);
+  const reset=await req('/api/admin/pin-activation','POST',{storeId:store,sellerId:1},'admin');assert.equal(reset.status,200);
   assert.equal((await req('/api/goals','GET',undefined,'seller-1')).status,403);
+  assert.equal((await req('/api/auth/activate','POST',{storeId:store,sellerId:1,newProof,activationCode:reset.body.activationCode})).status,200);
   assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:1,proof:newProof})).status,200);
   assert.deepEqual((await req('/api/goals','GET',undefined,'seller-1')).body.workdays,[0]);
 });
@@ -422,7 +434,7 @@ test('Cloud départements : affectations, agrégats privés, historique et notif
   const pins={1:'73628519',2:'59386271',[otherSeller]:'48275196'};
   for(const [id,pin] of Object.entries(pins)) {
     const sid=Number(id),targetStore=sid===otherSeller?other:store,proof=await pinProof('demo-fnac',targetStore,sid,pin);
-    assert.equal((await req('/api/admin/pin','POST',{storeId:targetStore,sellerId:sid,proof},'admin')).status,200);
+    await activateSeller(req,targetStore,sid,proof,'admin');
     if(sid===2)assert.equal((await req('/api/auth/login','POST',{storeId:targetStore,sellerId:sid,departmentId:'tech',proof})).status,401);
     assert.equal((await req('/api/auth/login','POST',{storeId:targetStore,sellerId:sid,departmentId:sid===2?'editorial':'tech',proof})).status,200);
     assert.equal((await req('/api/push/subscribe','POST',{token:`registration-token-for-seller-${sid}-123456`},`seller-${sid}`)).status,200);
@@ -467,4 +479,116 @@ test('Cloud départements : affectations, agrégats privés, historique et notif
   assert.equal((await req('/api/admin/departments/editorial','PATCH',{storeId:store,active:false},'admin')).status,409);
   assert.equal((await req(`/api/admin/departments/${added.body.id}`,'PATCH',{storeId:store,active:false},'admin')).status,200);
   const untouched=(await req(`/api/bootstrap?storeId=${other}`)).body;assert.equal(untouched.departmentsByStore[other],undefined);
+});
+
+test('PIN personnel : ancien code vérifié, choix obligatoire et révocation après enregistrement',async()=>{
+  const db=new MemoryDb(),identities=new Map([['admin',{sub:'administrator'}]]);
+  let serial=0;
+  const worker=createWorker({createDb:()=>db,
+    verifyIdToken:async(_env,t)=>{const value=identities.get(t);if(!value)throw Error('invalid');return value;},
+    makeCustomToken:async(_env,uid,claims)=>{const token=`seller-session-${++serial}`;identities.set(token,{sub:uid,...claims});return token;},
+  });
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PIN_PEPPER:Buffer.alloc(32,21).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  async function req(path,method='GET',body,token) {
+    const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:r.status,body:await r.json()};
+  }
+  await req('/api/bootstrap');
+  const storeId=LEGACY_STORE_ID,sellerId=1,uid=`seller-${(await digestBase64(`${storeId}:${sellerId}`)).slice(0,28)}`;
+  const oldProof=await pinProof('demo-fnac',storeId,sellerId,'65481902');
+  const wrongProof=await pinProof('demo-fnac',storeId,sellerId,'11111111');
+  const newProof=await pinProof('demo-fnac',storeId,sellerId,'18374629');
+  const access={active:true,storeId,sellerId,sellerKey:'s1',version:'legacy-version',pinMac:await pinMac(env,uid,oldProof)};
+  const status={active:true,storeId,sellerId,sellerKey:'s1',version:'legacy-version',goalsRevision:'existing-goal-revision'};
+  await db.commit([db.write(`pulseAccess/${uid}`,access),db.write(`pulseStatus/${uid}`,status),db.write(`pulseGoals/${uid}`,{goals:{s1:{month:17}}})]);
+  identities.set('old-session',{sub:uid,role:'seller',storeId,sellerId,sellerKey:'s1',accessVersion:'legacy-version'});
+  assert.equal((await req('/api/goals','GET',undefined,'old-session')).status,200); // session préexistante conservée
+  assert.equal((await req('/api/auth/login','POST',{storeId,sellerId,proof:wrongProof})).status,401);
+  const outdated=await req('/api/auth/login','POST',{storeId,sellerId,proof:oldProof});
+  assert.equal(outdated.status,409);assert.match(outdated.body.error,/mettez fnac pulse à jour/i);
+  const first=await req('/api/auth/login','POST',{storeId,sellerId,proof:oldProof,personalPinFlow:true});
+  assert.deepEqual(first.body,{choosePersonalPin:true}); // aucun jeton avant le nouveau PIN
+  assert.equal((await req('/api/admin/pin-activation','POST',{storeId,sellerId},'old-session')).status,403);
+  assert.equal((await req('/api/auth/personal-pin','POST',{storeId,sellerId,currentProof:wrongProof,newProof})).status,401);
+  assert.equal((await req('/api/auth/personal-pin','POST',{storeId,sellerId,currentProof:oldProof,newProof:oldProof})).status,400);
+  assert.equal((await db.get(`pulseAccess/${uid}`)).data.version,'legacy-version');
+  const chosen=await req('/api/auth/personal-pin','POST',{storeId,sellerId,currentProof:oldProof,newProof});
+  assert.equal(chosen.status,200);assert(chosen.body.customToken);
+  assert.equal((await req('/api/goals','GET',undefined,'old-session')).status,403);
+  assert.equal((await req('/api/goals','GET',undefined,chosen.body.customToken)).body.goals.s1.month,17);
+  assert.equal((await db.get(`pulseStatus/${uid}`)).data.goalsRevision,'existing-goal-revision');
+  assert.equal((await db.get(`pulseAccess/${uid}`)).data.pinPersonal,true);
+  assert.equal((await req('/api/auth/login','POST',{storeId,sellerId,proof:oldProof})).status,401);
+  assert.equal((await req('/api/auth/login','POST',{storeId,sellerId,proof:newProof})).status,200);
+  assert.equal((await req('/api/auth/personal-pin','POST',{storeId,sellerId,currentProof:oldProof,newProof:wrongProof})).status,401);
+});
+
+test('Activation : code privé, expiration, vendeur ciblé, usage unique et accès administrateur',async()=>{
+  const db=new MemoryDb(),identities=new Map([['admin',{sub:'administrator'}],['seller',{sub:'different-seller',role:'seller'}]]);
+  const worker=createWorker({createDb:()=>db,
+    verifyIdToken:async(_env,t)=>{const p=identities.get(t);if(!p)throw Error();return p;},makeCustomToken:async()=> 'valid-custom-token'});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PIN_PEPPER:Buffer.alloc(32,22).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  async function req(path,method='GET',body,token) {
+    const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:r.status,body:await r.json()};
+  }
+  await req('/api/bootstrap');
+  const storeId=LEGACY_STORE_ID,sellerId=1,proof=await pinProof('demo-fnac',storeId,sellerId,'27594068');
+  assert.equal((await req('/api/admin/pin-activation','POST',{storeId,sellerId})).status,401);
+  assert.equal((await req('/api/admin/pin-activation','POST',{storeId,sellerId},'seller')).status,403);
+  assert.equal((await req('/api/admin/pin-activation','POST',{storeId,sellerId,proof},'admin')).status,400);
+  const first=await req('/api/admin/pin-activation','POST',{storeId,sellerId},'admin');
+  assert.equal(first.status,200);assert.match(first.body.activationCode,/^\d{12}$/);
+  assert(first.body.expiresAt>Date.now()+23*60*60*1000&&first.body.expiresAt<=Date.now()+24*60*60*1000);
+  const uid=`seller-${(await digestBase64(`${storeId}:${sellerId}`)).slice(0,28)}`;
+  let access=(await db.get(`pulseAccess/${uid}`)).data,status=(await db.get(`pulseStatus/${uid}`)).data;
+  assert.equal(access.active,false);assert(!JSON.stringify(access).includes(first.body.activationCode));
+  assert.equal('activationMac' in status,false);assert.equal('pinMac' in status,false);
+  assert.equal((await req('/api/auth/login','POST',{storeId,sellerId,proof})).status,401);
+  assert.equal((await req('/api/auth/activate','POST',{storeId,sellerId:2,newProof:proof,activationCode:first.body.activationCode})).status,401);
+  assert.equal((await req('/api/auth/activate','POST',{storeId,sellerId,newProof:proof,activationCode:'000000000000'})).status,401);
+  access.activationExpiresAt=Date.now()-1;await db.commit([db.write(`pulseAccess/${uid}`,access)]);
+  assert.equal((await req('/api/auth/activate','POST',{storeId,sellerId,newProof:proof,activationCode:first.body.activationCode})).status,401);
+  const replacement=await req('/api/admin/pin-activation','POST',{storeId,sellerId},'admin');assert.equal(replacement.status,200);
+  assert.notEqual(replacement.body.activationCode,first.body.activationCode);
+  assert.equal((await req('/api/auth/activate','POST',{storeId,sellerId,newProof:proof,activationCode:first.body.activationCode})).status,401);
+  const attempts=await Promise.all([
+    req('/api/auth/activate','POST',{storeId,sellerId,newProof:proof,activationCode:replacement.body.activationCode}),
+    req('/api/auth/activate','POST',{storeId,sellerId,newProof:proof,activationCode:replacement.body.activationCode}),
+  ]);
+  assert.deepEqual(attempts.map(x=>x.status).sort(),[200,401]);
+  access=(await db.get(`pulseAccess/${uid}`)).data;status=(await db.get(`pulseStatus/${uid}`)).data;
+  assert.equal(access.active,true);assert.equal(access.pinPersonal,true);assert.equal('activationMac' in access,false);
+  assert.equal('activationExpiresAt' in access,false);assert.equal('pinMac' in status,false);
+  assert.equal((await req('/api/auth/activate','POST',{storeId,sellerId,newProof:proof,activationCode:replacement.body.activationCode})).status,401);
+  assert.equal((await req('/api/auth/login','POST',{storeId,sellerId,proof})).status,200);
+});
+
+test('Réinitialisation concurrente : aucune vente ou annulation après révocation',async()=>{
+  const db=new MemoryDb(),identities=new Map([['admin',{sub:'administrator'}]]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{const p=identities.get(t);if(!p)throw Error();return p;},
+    makeCustomToken:async(_env,uid,claims)=>{identities.set('seller',{sub:uid,...claims});return 'seller';},sendFcm:async()=>{}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PIN_PEPPER:Buffer.alloc(32,23).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}},PULSE_QUEUE:{async sendBatch(){}}},ctx={waitUntil(){}};
+  async function req(path,method='GET',body,token) {
+    const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:r.status,body:await r.json()};
+  }
+  await req('/api/bootstrap');const storeId=LEGACY_STORE_ID,sellerId=1,proof=await pinProof('demo-fnac',storeId,sellerId,'17263940');
+  await activateSeller(req,storeId,sellerId,proof,'admin');
+  const uid=`seller-${(await digestBase64(`${storeId}:${sellerId}`)).slice(0,28)}`;
+  const original=db.commit.bind(db);let shouldRace=true;
+  db.commit=async writes=>{
+    if(shouldRace&&writes.some(w=>w.check&&w.path===`pulseAccess/${uid}`)) {
+      shouldRace=false;const a=(await db.get(`pulseAccess/${uid}`)).data,st=(await db.get(`pulseStatus/${uid}`)).data;
+      await original([db.write(`pulseAccess/${uid}`,{...a,active:false,version:'reset-during-request'}),db.write(`pulseStatus/${uid}`,{...st,active:false,version:'reset-during-request'})]);
+    }
+    return original(writes);
+  };
+  const blocked=await req('/api/sales','POST',{serviceId:1,requestId:'race-sale-create-001'},'seller');
+  assert.equal(blocked.status,409);assert.equal(await db.get(`pulseStores/${storeId}/sales/race-sale-create-001`),null);
+  await activateSeller(req,storeId,sellerId,proof,'admin');
+  const sale=await req('/api/sales','POST',{serviceId:1,requestId:'race-sale-delete-001'},'seller');assert.equal(sale.status,200);
+  shouldRace=true;
+  assert.equal((await req('/api/sales/race-sale-delete-001','DELETE',{},'seller')).status,409);
+  assert.equal((await db.get(`pulseStores/${storeId}/sales/race-sale-delete-001`)).data.deletedAt,null);
 });

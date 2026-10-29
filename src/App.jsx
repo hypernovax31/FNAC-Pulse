@@ -7,12 +7,13 @@ import {
 } from 'lucide-react';
 import Admin, { Modal } from './Admin';
 import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
-import { CLOUD, observeVendor, sellerLogin, sellerLogout, listenStore, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
+import { CLOUD, observeVendor, sellerLogin, sellerChoosePin, sellerLogout, listenStore, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
 import { parisToday } from './cloud-stats';
 import { sellerStoreId } from './catalog';
 import { departmentsForStore, sellerDepartmentId, sellersForDepartment } from './departments';
 import { serviceIconKey } from './service-icons';
 import { THEME_KEY, readTheme, applyTheme } from './theme';
+import { startupSoundEnabled, saveStartupSound } from './startup-sound';
 import { GoalForm, GoalsPanel } from './Goals';
 import { normalizeWorkdays } from './goals';
 import { saleMessage } from './sale-message';
@@ -53,41 +54,72 @@ function DateChip({today}) {
   return <div className="date-chip" title={fullDate}><span className="date-icon" role="img" aria-label={`Date du jour : ${fullDate}`}><Calendar size={24} strokeWidth={1.6} aria-hidden="true"/><span className="date-icon-day" aria-hidden="true">{day}</span></span><div><span>AUJOURD’HUI</span><strong>{fullDate}</strong></div></div>;
 }
 
-function SessionForm({data,initialSession,onSubmit,modal=false,onNotify}) {
+function SessionForm({data,initialSession,onSubmit,modal=false}) {
   const [store,setStore]=useState(initialSession?.storeId||'');
   const initialPerson=data.sellers.find(s=>Number(s.id)===Number(initialSession?.sellerId)&&sellerStoreId(s)===initialSession?.storeId);
   const [department,setDepartment]=useState(initialPerson?sellerDepartmentId(initialPerson):initialSession?.departmentId||'');
   const [seller,setSeller]=useState(String(initialSession?.sellerId||''));
-  const [geoText,setGeoText]=useState('');
-  const [geoBusy,setGeoBusy]=useState(false);
-  const [pin,setPin]=useState('');
-  const [formBusy,setFormBusy]=useState(false);
-  const [formError,setFormError]=useState('');
+  const [geoText,setGeoText]=useState(''),[geoBusy,setGeoBusy]=useState(false);
+  const [mode,setMode]=useState('login');
+  const [pin,setPin]=useState(''),[activationCode,setActivationCode]=useState(''),[newPin,setNewPin]=useState(''),[confirmPin,setConfirmPin]=useState('');
+  const [formBusy,setFormBusy]=useState(false),[formError,setFormError]=useState('');
+  const currentProof=useRef(''),geoRequest=useRef(0);
+  useEffect(()=>()=>{geoRequest.current++;},[]);
   const departments=store?departmentsForStore(data,store):[];
   const storeSellers=department?sellersForDepartment(data.sellers,store,department):[];
-  const changeStore=value=>{if(value!==store){setDepartment('');setSeller('');setPin('');setFormError('');}setStore(value);};
-  const changeDepartment=value=>{if(value!==department){setSeller('');setPin('');setFormError('');}setDepartment(value);};
+  const locked=mode==='personal'||formBusy;
+  function clearSecrets(){setPin('');setActivationCode('');setNewPin('');setConfirmPin('');currentProof.current='';setFormError('');}
+  function cancelLocate(){geoRequest.current++;setGeoBusy(false);setGeoText('');}
+  function switchMode(next){cancelLocate();clearSecrets();setMode(next);}
+  const changeStore=value=>{if(value!==store){setDepartment('');setSeller('');clearSecrets();}setStore(value);};
+  const changeDepartment=value=>{if(value!==department){setSeller('');clearSecrets();}setDepartment(value);};
   const locate=()=>{
     if(!navigator.geolocation){setGeoText('La géolocalisation n’est pas disponible sur cet appareil.');return;}
+    const request=++geoRequest.current;
     setGeoBusy(true);setGeoText('Recherche du magasin le plus proche…');
     navigator.geolocation.getCurrentPosition(({coords})=>{
+      if(request!==geoRequest.current)return;
       const located=data.stores.filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon)).map(s=>({ ...s, distance:kmBetween(coords.latitude,coords.longitude,s.lat,s.lon) })).sort((a,b)=>a.distance-b.distance);
       setGeoBusy(false);
       if(!located.length){setGeoText('Aucun magasin géolocalisé dans la liste.');return;}
       const nearest=located[0];changeStore(nearest.id);
       setGeoText(`${nearest.name} proposé · à environ ${nearest.distance<1?`${Math.round(nearest.distance*1000)} m`:`${nearest.distance.toFixed(1).replace('.',',')} km`} (liste OpenStreetMap).`);
-    },err=>{setGeoBusy(false);setGeoText(err.code===1?'Géolocalisation refusée. Vous pouvez choisir votre magasin dans la liste.':'Position indisponible. Choisissez votre magasin dans la liste.');},
+    },err=>{if(request!==geoRequest.current)return;setGeoBusy(false);setGeoText(err.code===1?'Géolocalisation refusée. Vous pouvez choisir votre magasin dans la liste.':'Position indisponible. Choisissez votre magasin dans la liste.');},
     {enableHighAccuracy:false,timeout:12000,maximumAge:300000});
   };
-  return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={async e=>{e.preventDefault();if(!store||!department||!seller)return;setFormBusy(true);setFormError('');try{await onSubmit({storeId:store,departmentId:department,sellerId:Number(seller)},pin);setPin('');}catch(error){setFormError(error.message);}finally{setFormBusy(false);}}}>
+  async function submit(event) {
+    event.preventDefault();if(!store||!department||!seller)return;
+    cancelLocate();
+    if(mode!=='login'&&newPin!==confirmPin){setFormError('Les deux codes PIN ne correspondent pas.');return;}
+    setFormBusy(true);setFormError('');
+    try {
+      const selection={storeId:store,departmentId:department,sellerId:Number(seller)};
+      const result=mode==='login'?await onSubmit(selection,pin):await onSubmit(selection,newPin,{currentProof:currentProof.current,activationCode});
+      if(result?.choosePersonalPin) {
+        currentProof.current=result.currentProof;setPin('');setNewPin('');setConfirmPin('');setMode('personal');
+      } else clearSecrets();
+    } catch(error){
+      // Une réponse peut être perdue après l'enregistrement à usage unique.
+      // Le vendeur peut alors se connecter avec le PIN qu'il vient de choisir.
+      setFormError(mode!=='login'&&(!error.status||error.status>=500)?'Connexion interrompue. Si votre PIN a été enregistré, revenez à la connexion et essayez-le.':error.message);
+    }finally{setFormBusy(false);}
+  }
+  return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={submit}>
     <div className="session-fields">
-      <label className="session-field store-field"><span>VOTRE MAGASIN</span><div className="select-wrap"><MapPin size={16}/><select aria-label="Votre magasin Fnac" value={store} onChange={e=>{changeStore(e.target.value);setGeoText('');}} required><option value="">Choisir un magasin</option>{data.stores.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
-      <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver le magasin le plus proche" title="Trouver le magasin le plus proche" disabled={geoBusy}><Crosshair size={17}/></button>
-      <label className="session-field department-field"><span>VOTRE DÉPARTEMENT</span><div className="select-wrap"><UsersRound size={16}/><select aria-label="Votre département" value={department} onChange={e=>changeDepartment(e.target.value)} disabled={!store||!departments.length} required><option value="">Choisir un département</option>{departments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
-      <label className="session-field seller-field"><span>VOTRE PROFIL</span><div className="select-wrap"><UserRound size={16}/><select aria-label="Votre profil vendeur" value={seller} onChange={e=>{setSeller(e.target.value);setPin('');setFormError('');}} disabled={!department||!storeSellers.length} required><option value="">{department&&!storeSellers.length?'Aucun vendeur dans ce département':'Choisir un vendeur'}</option>{storeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
-      {CLOUD&&<label className="session-field pin-field"><span>CODE PIN</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} placeholder="8 chiffres" required/></label>}
-      <button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==8)}>{formBusy?'Connexion…':modal?'Enregistrer':'C’est parti'} <ArrowRight size={16}/></button>
+      <label className="session-field store-field"><span>VOTRE MAGASIN</span><div className="select-wrap"><MapPin size={16}/><select aria-label="Votre magasin Fnac" value={store} onChange={e=>{cancelLocate();changeStore(e.target.value);}} disabled={locked} required><option value="">Choisir un magasin</option>{data.stores.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+      <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver le magasin le plus proche" title="Trouver le magasin le plus proche" disabled={geoBusy||locked}><Crosshair size={17}/></button>
+      <label className="session-field department-field"><span>VOTRE DÉPARTEMENT</span><div className="select-wrap"><UsersRound size={16}/><select aria-label="Votre département" value={department} onChange={e=>{cancelLocate();changeDepartment(e.target.value);}} disabled={locked||!store||!departments.length} required><option value="">Choisir un département</option>{departments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+      <label className="session-field seller-field"><span>VOTRE PROFIL</span><div className="select-wrap"><UserRound size={16}/><select aria-label="Votre profil vendeur" value={seller} onChange={e=>{cancelLocate();setSeller(e.target.value);clearSecrets();}} disabled={locked||!department||!storeSellers.length} required><option value="">{department&&!storeSellers.length?'Aucun vendeur dans ce département':'Choisir un vendeur'}</option>{storeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+      {CLOUD&&mode==='login'&&<label className="session-field pin-field"><span>CODE PIN</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} placeholder="8 chiffres" required/></label>}
+      {mode==='login'&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==8)}>{formBusy?'Connexion…':modal?'Enregistrer':'C’est parti'} <ArrowRight size={16}/></button>}
     </div>
+    {CLOUD&&mode==='login'&&<button type="button" className="pin-setup-link" onClick={()=>switchMode('activation')}>Première connexion ou PIN oublié ? <ArrowRight size={13}/></button>}
+    {CLOUD&&mode!=='login'&&<div className="pin-setup">
+      <div className="pin-setup-intro"><ShieldCheck size={19}/><div><strong>{mode==='personal'?'Choisissez votre PIN personnel':'Activez votre profil'}</strong><p>{mode==='personal'?'Votre ancien code a été vérifié. Choisissez maintenant un nouveau PIN que vous seul connaissez.':'Demandez un code d’activation à votre responsable. Il est valable 24 h et ne peut servir qu’une fois.'}</p></div></div>
+      {mode==='activation'&&<label className="pin-setup-code"><span className="form-label">CODE D’ACTIVATION</span><input className="text-input" aria-label="Code d’activation" type="text" inputMode="numeric" autoComplete="off" pattern="[0-9]{12}" maxLength={12} placeholder="12 chiffres" value={activationCode} onChange={e=>setActivationCode(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label>}
+      <div className="pin-setup-fields"><label><span className="form-label">VOTRE NOUVEAU PIN</span><input className="text-input" aria-label="Votre nouveau code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label><label><span className="form-label">CONFIRMER LE PIN</span><input className="text-input" aria-label="Confirmer votre code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={confirmPin} onChange={e=>setConfirmPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label></div>
+      <div className="pin-setup-actions"><button type="button" className="outline-button" onClick={()=>switchMode('login')} disabled={formBusy}>Retour</button><button className="primary-button" type="submit" disabled={!store||!department||!seller||formBusy||newPin.length!==8||confirmPin.length!==8||(mode==='activation'&&activationCode.length!==12)}>{formBusy?'Enregistrement…':'Enregistrer mon PIN'} <ArrowRight size={15}/></button></div>
+    </div>}
     {department&&!storeSellers.length&&<p className="no-store-sellers">Aucun vendeur dans ce département. Un administrateur peut y affecter des profils.</p>}
     {formError&&<div className="form-error session-error" role="alert">{formError}</div>}
     {geoText&&<div className="geo-message" role="status"><MapPin size={13}/>{geoText}</div>}
@@ -118,7 +150,7 @@ function Header({session,seller,store,connected,onBell,onSession,onAdmin,onTheme
     <div className="topbar-actions">
       <div className={`connection ${connected==='live'?'':'is-muted'}`} title={connected==='live'?'Mises à jour en direct':connected==='offline'?'Connexion interrompue':'En attente de votre sélection'}><Dot/><span>{connected==='live'?'En direct':connected==='offline'?'Hors connexion':'Votre espace'}</span></div>
       <span className="topbar-divider"/>
-      <button className="icon-button theme-trigger" title="Apparence" aria-label="Apparence" onClick={onTheme}><SunMoon size={19}/></button>
+      <button className="icon-button theme-trigger" title="Apparence et son" aria-label="Apparence et son" onClick={onTheme}><SunMoon size={19}/></button>
       <button className="icon-button top-bell" title="Notifications" aria-label="Notifications" onClick={onBell}><Bell size={19}/><span className="bell-marker"/></button>
       <button className="profile-trigger" onClick={onSession} aria-label={session?`Changer de profil, ${seller?.name||''}`:'Choisir mon profil'}>
         {seller?<Avatar name={seller.name} id={seller.id}/>:<span className="avatar avatar-blank"><UserRound size={17}/></span>}
@@ -194,6 +226,7 @@ export default function App() {
   const [goalState,setGoalState]=useState({owner:'',...goalData(null),loading:false,error:''});
   const [summaryState,setSummaryState]=useState({key:'',data:null,loading:false,error:''});
   const [theme,setTheme]=useState(readTheme);
+  const [startupSound,setStartupSound]=useState(startupSoundEnabled);
   const [installPrompt,setInstallPrompt]=useState(null);
   const [notificationsEnabled,setNotificationsEnabled]=useState(false);
   const [notificationBusy,setNotificationBusy]=useState(false);
@@ -348,8 +381,9 @@ export default function App() {
   },[session]);
   useEffect(()=>()=>clearTimeout(toastTimer.current),[]);
 
-  async function selectSession(next,pin){
-    const authenticated=CLOUD?await sellerLogin(api,next,pin):next;
+  async function selectSession(next,pin,setup=null){
+    const authenticated=CLOUD?(setup?await sellerChoosePin(api,next,pin,setup):await sellerLogin(api,next,pin)):next;
+    if(authenticated.choosePersonalPin)return authenticated;
     localStorage.setItem(SESSION_KEY,JSON.stringify(authenticated));
     setData(d=>d?{...d,stats:null}:d);setSession(authenticated);setSessionModal(false);setActiveNav('overview');
     window.scrollTo({top:0,behavior:'smooth'});
@@ -441,12 +475,13 @@ export default function App() {
     {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={()=>setGoalModal(null)}><GoalForm services={data.services} goals={currentGoals} workdays={goalState.workdays} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={()=>setGoalModal(null)} disabled={connection==='offline'}/></Modal>}
     {adminModal&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>}
     {notificationsModal&&<Modal title="Notifications d’équipe" subtitle="Ne manquez aucune nouvelle vente de votre département." onClose={()=>setNotificationsModal(false)}><div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{notificationsEnabled?'Notifications activées':'Un petit signal, une belle dynamique.'}</strong><p>Chaque nouvelle vente peut vous être signalée sur cet appareil, même lorsque l’application est fermée.</p></div></div><div className="notification-details"><div><Check size={16}/> Une notification pour chaque nouvelle vente</div><div><Check size={16}/> Uniquement pour votre magasin et votre département</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div><div className="notification-device-note"><Info size={15}/><span>Sur iPhone et iPad, installez d’abord l’application sur l’écran d’accueil (iOS/iPadOS 16.4 ou plus). Une connexion HTTPS et un navigateur compatible sont nécessaires.</span></div><button className={notificationsEnabled?'outline-button full-button':'primary-button full-button'} disabled={notificationBusy} onClick={notificationsEnabled?disableNotifications:enableNotifications}>{notificationBusy?'Un instant…':notificationsEnabled?'Désactiver sur cet appareil':'Activer les notifications'} {notificationsEnabled?<BellOff size={16}/>:<Bell size={16}/>}</button></Modal>}
-    {themeModal&&<Modal title="Apparence" subtitle="Choisissez l’apparence de cet appareil." onClose={()=>setThemeModal(false)}>
+    {themeModal&&<Modal title="Apparence et son" subtitle="Vos préférences sur cet appareil." onClose={()=>setThemeModal(false)}>
       <div className="theme-options" role="radiogroup" aria-label="Thème de l’application">
         {[['system',Monitor,'Automatique','Suivre les réglages de l’appareil'],['light',Sun,'Clair','Toujours utiliser le thème clair'],['dark',Moon,'Sombre','Toujours utiliser le thème sombre']].map(([value,Icon,label,description])=><label key={value} className={`theme-option ${theme===value?'is-selected':''}`}>
           <input type="radio" name="theme" value={value} checked={theme===value} onChange={()=>setTheme(value)}/><Icon size={19}/><span><strong>{label}</strong><small>{description}</small></span><Check className="theme-check" size={17}/>
         </label>)}
       </div>
+      <label className="startup-sound-setting"><input type="checkbox" checked={startupSound} onChange={e=>{setStartupSound(e.target.checked);saveStartupSound(e.target.checked);}}/><span><strong>Signature au démarrage</strong><small>Au lancement ou à la première interaction si le navigateur bloque le son. Les notifications gardent leur son système.</small></span></label>
     </Modal>}
     {installModal&&<Modal title="Installer Fnac Pulse" subtitle="Votre espace d’équipe toujours à portée de main." onClose={()=>setInstallModal(false)}><div className="install-steps"><div><span>1</span><p><strong>Sur iPhone ou iPad</strong><br/>Dans Safari, touchez Partager, puis « Sur l’écran d’accueil ».</p></div><div><span>2</span><p><strong>Sur Android ou ordinateur</strong><br/>Ouvrez le menu du navigateur, puis choisissez « Installer l’application » ou « Ajouter à l’écran d’accueil ».</p></div></div><p className="modal-hint"><Info size={14}/> L’installation et les notifications nécessitent une adresse HTTPS et un navigateur compatible.</p><button className="primary-button full-button" onClick={()=>setInstallModal(false)}>J’ai compris <Check size={16}/></button></Modal>}
     {toast&&<div className={`toast toast-${toast.tone||'default'}`} role="status"><span className="toast-icon">{toast.tone==='warning'?<Info size={17}/>:<CircleCheck size={17}/>}</span><span>{toast.message}</span>{toast.action&&<button onClick={()=>{const action=toast.action;setToast(null);action();}}>{toast.actionLabel}</button>}<button className="toast-close" aria-label="Fermer" onClick={()=>setToast(null)}><X size={16}/></button></div>}

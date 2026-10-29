@@ -47,10 +47,10 @@ for (const scope of ['https://example.test/', 'https://example.test/FNAC-Pulse/'
     assert.equal(new URL(manifest.icons[0].src,manifestUrl).pathname,`${base}icons/icon-192-v3.png`);
     const sw = serviceWorker(scope);
     await dispatch(sw.handlers.get('install'));
-    assert.deepEqual(Array.from(sw.added[0]), [base,`${base}manifest.webmanifest`,`${base}icons/icon-192-v3.png`,`${base}icons/icon-512-v3.png`,`${base}icons/icon-maskable-512-v3.png`,`${base}icons/apple-touch-icon-v3.png`,`${base}icons/icon-192.png`,`${base}fnac.svg`]);
+    assert.deepEqual(Array.from(sw.added[0]), [base,`${base}manifest.webmanifest`,`${base}icons/icon-192-v3.png`,`${base}icons/icon-512-v3.png`,`${base}icons/icon-maskable-512-v3.png`,`${base}icons/apple-touch-icon-v3.png`,`${base}icons/icon-192.png`,`${base}fnac.svg`,`${base}FNAC%20-%20SIGNATURE.mp3`]);
     assert.deepEqual(Array.from(sw.added[1]), [`${base}assets/app.js`,`${base}assets/app.css`]);
     await dispatch(sw.handlers.get('activate'));
-    assert.deepEqual(sw.deleted,['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','fnac-pulse-shell-v8','fnac-pulse-shell-v9','fnac-pulse-shell-v10','fnac-pulse-shell-v11','fnac-pulse-shell-v12','fnac-pulse-shell-v13']);
+    assert.deepEqual(sw.deleted,['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','fnac-pulse-shell-v8','fnac-pulse-shell-v9','fnac-pulse-shell-v10','fnac-pulse-shell-v11','fnac-pulse-shell-v12','fnac-pulse-shell-v13','fnac-pulse-shell-v14']);
     await dispatch(sw.handlers.get('push'),{data:{json:()=>({title:'Test', url:'https://elsewhere.invalid/'})}});
     assert.equal(sw.shown[0].options.icon,`${base}icons/icon-192-v3.png`);
     assert.equal(sw.shown[0].options.data.url,scope);
@@ -79,6 +79,6 @@ test('PWA : icônes versionnées, tailles, masque et compatibilité des ancienne
   assert.match(html,/rel="icon"[^>]+icon-192-v3\.png/);
   assert.match(html,/rel="apple-touch-icon"[^>]+apple-touch-icon-v3\.png/);
   const cloudWorker=fs.readFileSync(new URL('../src/sw-cloud.js',import.meta.url),'utf8');
-  assert.match(cloudWorker,/fnac-pulse-shell-v14/);
+  assert.match(cloudWorker,/fnac-pulse-shell-v15/);
   for(const icon of manifest.icons)assert.ok(cloudWorker.includes(icon.src));
 });

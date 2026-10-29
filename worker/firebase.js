@@ -142,6 +142,9 @@ export class FirestoreRest {
     return {update:{name:this.name(path),fields:encodeFields(data)},...(precondition?{currentDocument:precondition}:{})};
   }
   delete(path,precondition) {return {delete:this.name(path),...(precondition?{currentDocument:precondition}:{})};}
+  // Précondition sans écriture : empêche une vente en cours de franchir une
+  // réinitialisation de PIN ou une modification du catalogue concurrente.
+  verify(path,precondition) {return {verify:this.name(path),currentDocument:precondition};}
   async commit(writes) {return this.request(':commit',{method:'POST',body:{writes}});}
   async put(path,data,previous) {return this.commit([this.write(path,data,previous?{updateTime:previous.updateTime}:undefined)]);}
 }

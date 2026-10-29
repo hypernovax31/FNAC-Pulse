@@ -10,9 +10,3 @@ export async function pinProof(projectId,storeId,sellerId,pin) {
   let str='';for(const b of bits)str+=String.fromCharCode(b);
   return btoa(str).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
-export function randomPin() {
-  // Rejection sampling avoids modulo bias. The PIN is only displayed locally.
-  const max=100000000, ceiling=Math.floor(0x100000000/max)*max, n=new Uint32Array(1);
-  do {crypto.getRandomValues(n);} while(n[0]>=ceiling);
-  return String(n[0]%max).padStart(8,'0');
-}

@@ -28,13 +28,29 @@ export function observeVendor(callback) {
     } catch {callback(null);}
   });
 }
-export async function sellerLogin(api,session,pin) {
-  const proof=await pinProof(firebaseConfig.projectId,session.storeId,session.sellerId,pin);
-  const result=await api('/api/auth/login',{method:'POST',body:{...session,proof}});
-  const user=(await signInWithCustomToken(auth,result.customToken)).user;
+async function completeSellerLogin(result,session,pinJustSaved=false) {
+  if(typeof result?.customToken!=='string'||!result.customToken)throw new Error('Connexion invalide. Réessayez.');
+  let user;
+  try {user=(await signInWithCustomToken(auth,result.customToken)).user;}
+  catch {throw new Error(pinJustSaved?'Votre PIN a été enregistré. Reconnectez-vous avec votre nouveau code.':'Connexion impossible. Réessayez.');}
   const {claims}=await user.getIdTokenResult();
   if(claims.role!=='seller'||claims.storeId!==session.storeId||claims.sellerId!==session.sellerId||typeof claims.accessVersion!=='string'||!claims.accessVersion){await signOut(auth);throw new Error('Connexion invalide. Réessayez.');}
   return {storeId:claims.storeId,sellerId:claims.sellerId,uid:user.uid,accessVersion:claims.accessVersion};
+}
+export async function sellerLogin(api,session,pin) {
+  const proof=await pinProof(firebaseConfig.projectId,session.storeId,session.sellerId,pin);
+  const result=await api('/api/auth/login',{method:'POST',body:{...session,proof,personalPinFlow:true}});
+  // Le dérivé n'existe qu'en mémoire pendant le choix du nouveau code.
+  if(result.choosePersonalPin===true)return {choosePersonalPin:true,currentProof:proof};
+  return completeSellerLogin(result,session);
+}
+export async function sellerChoosePin(api,session,pin,{currentProof,activationCode}={}) {
+  const newProof=await pinProof(firebaseConfig.projectId,session.storeId,session.sellerId,pin);
+  const migration=!!currentProof;
+  const result=await api(migration?'/api/auth/personal-pin':'/api/auth/activate',{
+    method:'POST',body:{...session,newProof,...(migration?{currentProof}:{activationCode})},
+  });
+  return completeSellerLogin(result,session,true);
 }
 export async function sellerLogout() {await signOut(auth);}
 export async function adminLogin(email,password) {
@@ -49,10 +65,6 @@ export async function changeAdminPassword(currentPassword,newPassword) {
   if(newPassword.length<12)throw new Error('Le mot de passe doit comporter au moins 12 caractères.');
   try {await reauthenticateWithCredential(user,EmailAuthProvider.credential(user.email,currentPassword));await updatePassword(user,newPassword);}
   catch {throw new Error('Mot de passe actuel incorrect ou modification impossible.');}
-}
-export async function setPin(api,token,storeId,sellerId,pin) {
-  const proof=await pinProof(firebaseConfig.projectId,storeId,sellerId,pin);
-  return api('/api/admin/pin',{method:'POST',token,body:{storeId,sellerId:Number(sellerId),proof}});
 }
 function presentation(catalog,storeId) {
   return {

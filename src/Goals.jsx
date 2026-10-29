@@ -4,6 +4,7 @@ import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, WORKDAY_NAMES, WORKDAY_ORDER, go
 import { parisToday } from './cloud-stats';
 
 const REFERENCE_SUFFIX = {day:'jour travaillé',week:'semaine',month:'mois'};
+const PERSONAL_PERIOD_LABELS = {day:'Jour',week:'Semaine',month:'Mois'};
 const referenceInputs = (period,amount) => Object.fromEntries(GOAL_PERIODS.map(p=>[p,p===period?amount:'']));
 function formReference(entry) {
   const reference=goalReference(entry);
@@ -119,7 +120,7 @@ function GoalMetric({service,period,target,stats}) {
   const count=available?(rows.find(item=>Number(item.serviceId)===Number(service.id))?.count||0):null;
   const progress=available&&target>0?progressFor(count,target):null;
   return <div className="goal-metric">
-    <div className="goal-metric-label"><span>{GOAL_LABELS[period]}</span>{target!==null?<strong>{available?count:'—'} <span>/ {target}</span></strong>:<span className="goal-unset">Indisponible</span>}</div>
+    <div className="goal-metric-label"><span>{PERSONAL_PERIOD_LABELS[period]}</span>{target!==null?<strong>{available?count:'—'} <span>/ {target}</span></strong>:<span className="goal-unset">Indisponible</span>}</div>
     {target>0?<div className={`goal-track ${progress?.reached?'is-reached':''}`} role={available?'progressbar':undefined}
       aria-label={available?`${service.name}, ${GOAL_LABELS[period]}`:undefined} aria-valuemin={available?0:undefined} aria-valuemax={available?target:undefined}
       aria-valuenow={available?Math.min(count,target):undefined} aria-valuetext={available?`${count} sur ${target}${progress.reached?', objectif atteint':''}`:undefined}>
