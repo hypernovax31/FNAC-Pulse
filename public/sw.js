@@ -1,6 +1,6 @@
 /* Fnac Pulse: app shell and Web Push. Works at a domain root or under /FNAC-Pulse/.
    The backend remains necessary; sales are never queued offline. */
-const CACHE = 'fnac-pulse-shell-v16';
+const CACHE = 'fnac-pulse-shell-v17';
 const APP_URL = new URL(self.registration.scope);
 const APP_PATH = APP_URL.pathname;
 const appAsset = path => new URL(path, APP_URL).pathname;

@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { ArrowRight, Pencil, Target, RotateCw } from 'lucide-react';
-import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, WORKDAY_NAMES, WORKDAY_ORDER, goalReference, goalTargets, hasGoal, parseGoalInputs, progressFor, normalizeWorkdays, validWorkdays, workdaysLabel } from './goals';
-import { parisToday } from './cloud-stats';
+import { ArrowRight, Check, Pencil, Plus, Target, RotateCw } from 'lucide-react';
+import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, WORKDAY_NAMES, WORKDAY_ORDER, goalReference, goalTargets, hasGoal, parseGoalInputs, normalizeWorkdays, validWorkdays, workdaysLabel } from './goals.js';
+import { personalGoalMetric } from './goal-display.js';
+import { parisToday } from './cloud-stats.js';
 
-const REFERENCE_SUFFIX = {day:'jour travaillé',week:'semaine',month:'mois'};
-const PERSONAL_PERIOD_LABELS = {day:'Jour',week:'Semaine',month:'Mois'};
+const PERSONAL_PERIOD_LABELS = {day:'Aujourd’hui',week:'Semaine',month:'Mois'};
+const numberFormat=new Intl.NumberFormat('fr-FR');
+const formatNumber = value => value===null?'—':numberFormat.format(value);
 const referenceInputs = (period,amount) => Object.fromEntries(GOAL_PERIODS.map(p=>[p,p===period?amount:'']));
 function formReference(entry) {
   const reference=goalReference(entry);
@@ -31,8 +33,8 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     setService(String(id));setBasis(reference.period);setAmount(reference.amount);setRevision(next?.revision||null);setError('');setNotice('');
   }
   function changeBasis(period) {
-    const suggested=preview?.[period];
-    setBasis(period);setAmount(Number.isInteger(suggested)&&suggested>=0&&suggested<=GOAL_LIMIT?String(suggested):'');setError('');setNotice('');
+    // Changer de période ne remplace jamais silencieusement le nombre saisi.
+    setBasis(period);setError('');setNotice('');
   }
   async function save(values,removed=false) {
     setBusy(true);
@@ -61,15 +63,15 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     <label><span className="form-label">SERVICE</span><select className="text-input" aria-label="Service pour les objectifs" value={service} onChange={e=>loadService(e.target.value)} disabled={busy||disabled||!services.length}>
       {!services.length&&<option value="">Aucun service disponible</option>}{services.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
     </select></label>
-    <p className="goal-form-intro">Choisissez une période et une seule cible : les deux autres sont calculées automatiquement.</p>
+    <p className="goal-form-intro">Une seule cible récurrente suffit : les autres périodes sont calculées.</p>
     <div className="goal-base-fields">
-      <label><span className="form-label">PÉRIODE DE RÉFÉRENCE</span><select className="text-input" aria-label="Période de référence" value={basis} onChange={e=>changeBasis(e.target.value)} disabled={busy||disabled||!service}>
+      <label><span className="form-label">PÉRIODE</span><select className="text-input" aria-label="Période de référence" value={basis} onChange={e=>changeBasis(e.target.value)} disabled={busy||disabled||!service}>
         <option value="day">Par jour travaillé</option><option value="week">Par semaine</option><option value="month">Par mois</option>
       </select></label>
-      <label><span className="form-label">CIBLE À ATTEINDRE</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min="0" max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={busy||disabled||!service} onChange={e=>{setAmount(e.target.value);setNotice('');}} required/></label>
+      <label><span className="form-label">CIBLE</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min="0" max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={busy||disabled||!service} onChange={e=>{setAmount(e.target.value);setNotice('');}} required/></label>
     </div>
-    <div className="goal-preview" aria-live="polite"><span className="form-label">RÉPARTITION ACTUELLE</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{GOAL_LABELS[period]}</span><strong>{preview?preview[period]:'—'}</strong></div>)}</div></div>
-    <p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Jours fériés inclus ; l’administrateur peut modifier ces jours. La répartition est entière et certains jours peuvent être à 0.</p>
+    <div className="goal-preview" aria-live="polite"><span className="form-label">APERÇU DE LA RÉPARTITION</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{GOAL_LABELS[period]}</span><strong>{preview?formatNumber(preview[period]):'—'}</strong></div>)}</div></div>
+    <details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. L’administrateur peut modifier ces jours. Les jours fériés sont inclus ; la répartition en nombres entiers peut donner 0 certains jours.</p></details>
     {stale&&<div className="goal-conflict" role="alert"><span>Cet objectif a été modifié ailleurs.</span><button type="button" onClick={()=>loadService(service)}><RotateCw size={13}/> Recharger les valeurs</button></div>}
     {error&&<div className="form-error" role="alert">{error}</div>}
     {notice&&<div className="goal-saved" role="status">{notice}</div>}
@@ -115,37 +117,63 @@ export function WorkdaysForm({workdays,revision,onSave,disabled=false}) {
 }
 
 function GoalMetric({service,period,target,stats}) {
-  const rows=stats?.[period]?.mineByService;
-  const available=Array.isArray(rows);
-  const count=available?(rows.find(item=>Number(item.serviceId)===Number(service.id))?.count||0):null;
-  const progress=available&&target>0?progressFor(count,target):null;
+  const metric=personalGoalMetric(service.id,period,target,stats);
+  const label={
+    'pending':`Reste ${formatNumber(metric.remaining)}`,
+    'reached':'Atteint',
+    'zero':'Cible à 0',
+    'sales-unavailable':'Ventes indisponibles',
+    'target-unavailable':'Cible indisponible',
+  }[metric.state];
+  const description=metric.state==='pending'?`Encore ${formatNumber(metric.remaining)} vente${metric.remaining>1?'s':''} pour atteindre l’objectif`:label;
+  const showProgress=!!metric.progress;
   return <div className="goal-metric">
-    <div className="goal-metric-label"><span>{PERSONAL_PERIOD_LABELS[period]}</span>{target!==null?<strong>{available?count:'—'} <span>/ {target}</span></strong>:<span className="goal-unset">Indisponible</span>}</div>
-    {target>0?<div className={`goal-track ${progress?.reached?'is-reached':''}`} role={available?'progressbar':undefined}
-      aria-label={available?`${service.name}, ${GOAL_LABELS[period]}`:undefined} aria-valuemin={available?0:undefined} aria-valuemax={available?target:undefined}
-      aria-valuenow={available?Math.min(count,target):undefined} aria-valuetext={available?`${count} sur ${target}${progress.reached?', objectif atteint':''}`:undefined}>
-      <span style={{width:`${progress?.percent||0}%`}}/>
-    </div>:<><div className="goal-track is-unset" aria-hidden="true"/>{target===0&&<span className="goal-zero-note">Aucune vente prévue</span>}</>}
+    <div className="goal-progress-summary">
+      <div className="goal-value"><strong>{formatNumber(metric.count)}</strong><span> / {formatNumber(metric.target)}</span><span className="sr-only"> ventes sur l’objectif</span></div>
+      <div className={`goal-state ${metric.state==='reached'?'is-reached':''}`}>
+        {metric.state==='reached'&&<Check size={13} aria-hidden="true"/>}<span aria-hidden="true">{label}</span><span className="sr-only">{description}</span>
+      </div>
+    </div>
+    <div className={`goal-track ${metric.state==='reached'?'is-reached':''} ${!showProgress?'is-unset':''}`}
+      role={showProgress?'progressbar':undefined} aria-hidden={showProgress?undefined:true}
+      aria-label={showProgress?`${service.name}, ${GOAL_LABELS[period]}`:undefined}
+      aria-valuemin={showProgress?0:undefined} aria-valuemax={showProgress?metric.target:undefined}
+      aria-valuenow={showProgress?Math.min(metric.count,metric.target):undefined}
+      aria-valuetext={showProgress?`${metric.count} ventes sur ${metric.target}, ${description}`:undefined}>
+      {showProgress&&<span style={{width:`${metric.progress.percent}%`}}/>}
+    </div>
   </div>;
 }
 
 export function GoalsPanel({seller,services,goals,workdays,workdaysDefault=false,stats,loading,error,offline,onEdit,onRetry,date=parisToday()}) {
+  const [period,setPeriod]=useState('day');
   const configured=services.filter(service=>hasGoal(goals?.[`s${service.id}`]));
+  const nextService=services.find(service=>!hasGoal(goals?.[`s${service.id}`]));
   return <section className="panel goals-panel" aria-labelledby="personal-goals-title">
-    <div className="goals-heading"><div><div className="section-kicker"><span className="kicker-line"/> VOTRE PROGRESSION</div><h2 id="personal-goals-title">Mes objectifs</h2><p>Vos ventes font avancer vos objectifs par service.</p></div>
-      <button className="goal-manage" onClick={()=>onEdit(null)} disabled={!goals||offline||!services.length}><Pencil size={14}/> <span>Gérer</span></button>
+    <div className="goals-heading"><div><div className="section-kicker"><span className="kicker-line"/> VOTRE PROGRESSION</div><h2 id="personal-goals-title">Mes objectifs</h2></div>
+      {goals&&configured.length>0&&<button type="button" className="goal-manage" onClick={()=>onEdit(nextService?.id||null)} disabled={offline||!services.length}>
+        {nextService?<Plus size={15}/>:<Pencil size={14}/>} <span>{nextService?'Ajouter':'Gérer'}</span>
+      </button>}
     </div>
     {offline&&<p className="goal-offline">Lecture hors ligne · les modifications seront possibles au retour de la connexion.</p>}
     {!goals ? <div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>{loading?'Chargement de vos objectifs…':'Vos objectifs sont indisponibles.'}</strong><p>{error||'Ils apparaîtront ici dès que votre espace sera prêt.'}</p>{!loading&&!offline&&<button type="button" onClick={onRetry}>Réessayer</button>}</div></div>
-    :configured.length===0?<div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>Aucun objectif défini pour le moment.</strong><p>Choisissez un service pour définir vos objectifs, ou demandez à votre responsable.</p><button type="button" onClick={()=>onEdit(null)} disabled={offline||!services.length}>Définir un objectif <ArrowRight size={13}/></button></div></div>
-    :<div className="goals-grid">{configured.map(service=>{
-      const entry=goals?.[`s${service.id}`],reference=goalReference(entry),targets=goalTargets(entry,date,workdays);
-      return <article className="goal-card" key={service.id}>
-        <div className="goal-card-heading"><div><span className="goal-card-icon"><Target size={16}/></span><div className="goal-card-name"><strong>{service.name}</strong>{reference&&<span>Référence : {reference.amount} / {REFERENCE_SUFFIX[reference.period]}</span>}</div></div><button className="icon-button goal-card-edit" aria-label={`Modifier les objectifs ${service.name}`} onClick={()=>onEdit(service.id)} disabled={offline}><Pencil size={15}/></button></div>
-        <div className="goal-metrics">{GOAL_PERIODS.map(period=><GoalMetric key={period} service={service} period={period} target={targets?.[period]??null} stats={stats}/>)}</div>
-      </article>;
-    })}</div>}
+    :configured.length===0?<div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>Aucun objectif pour le moment.</strong><p>Définissez une cible pour suivre vos ventes par service.</p><button type="button" onClick={()=>onEdit(nextService?.id||null)} disabled={offline||!services.length}>Définir un objectif <ArrowRight size={13}/></button></div></div>
+    :<>
+      <div className="goals-toolbar">
+        <div className="goal-periods" role="group" aria-label="Période des objectifs">{GOAL_PERIODS.map(value=><button type="button" key={value} aria-label={GOAL_LABELS[value]} aria-pressed={period===value} className={period===value?'is-active':''} onClick={()=>setPeriod(value)}>{PERSONAL_PERIOD_LABELS[value]}</button>)}</div>
+        <span className="goal-legend">Ventes / objectif</span>
+      </div>
+      <div className="goals-grid">{configured.map(service=>{
+        const targets=goalTargets(goals?.[`s${service.id}`],date,workdays);
+        return <article className="goal-card" key={service.id}>
+          <button type="button" className="goal-card-edit" aria-label={`Modifier les objectifs ${service.name}`} title={`Modifier ${service.name}`} onClick={()=>onEdit(service.id)} disabled={offline}>
+            <strong>{service.name}</strong><Pencil size={15} aria-hidden="true"/>
+          </button>
+          <GoalMetric service={service} period={period} target={targets?.[period]??null} stats={stats}/>
+        </article>;
+      })}</div>
+      <details className={`goal-planning ${workdaysDefault?'needs-check':''}`}><summary>{workdaysDefault?'Planning par défaut · à vérifier':'Planning et calcul'}</summary><p>Jours travaillés de {seller?.name||'votre profil'} : {workdaysLabel(workdays)}. L’administrateur peut modifier ce planning. Les jours fériés sont inclus. Une cible à 0 peut venir du planning ou de la répartition ; toutes les ventes restent comptées.</p></details>
+    </>}
     {error&&goals&&!offline&&<p className="goal-sync-warning">Dernières valeurs affichées · {error} <button type="button" onClick={onRetry}>Réessayer</button></p>}
-    {configured.length>0&&<p className="goal-caption">Jours travaillés de {seller?.name||'votre profil'}{workdaysDefault?' (par défaut, à vérifier)':''} : {workdaysLabel(workdays)}. Jours fériés inclus ; toutes les ventes restent comptées dans les bilans.</p>}
   </section>;
 }
