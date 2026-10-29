@@ -149,7 +149,7 @@ export function GoalsPanel({seller,services,goals,workdays,workdaysDefault=false
   const [period,setPeriod]=useState('day');
   const configured=services.filter(service=>hasGoal(goals?.[`s${service.id}`]));
   const nextService=services.find(service=>!hasGoal(goals?.[`s${service.id}`]));
-  return <section className="panel goals-panel" aria-labelledby="personal-goals-title">
+  return <section className="panel goals-panel" id="objectifs" aria-labelledby="personal-goals-title">
     <div className="goals-heading"><div><div className="section-kicker"><span className="kicker-line"/> VOTRE PROGRESSION</div><h2 id="personal-goals-title">Mes objectifs</h2></div>
       {goals&&configured.length>0&&<button type="button" className="goal-manage" onClick={()=>onEdit(nextService?.id||null)} disabled={offline||!services.length}>
         {nextService?<Plus size={15}/>:<Pencil size={14}/>} <span>{nextService?'Ajouter':'Gérer'}</span>

@@ -45,7 +45,7 @@ export function summarize(catalog,sales,sellerId,date=parisToday(),explicitStore
   const mineMap=new Map();
   for(const s of team)if(s.businessDate===date&&Number(s.sellerId)===Number(sellerId))mineMap.set(Number(s.serviceId),(mineMap.get(Number(s.serviceId))||0)+1);
   const mine=[...mineMap].map(([serviceId,count])=>({serviceId,count}));
-  const activity=team.filter(s=>s.businessDate===date&&s.source==='sale').sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||String(b.id).localeCompare(String(a.id))).slice(0,6)
+  const activity=team.filter(s=>s.businessDate===date&&s.source==='sale').sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||String(b.id).localeCompare(String(a.id)))
     .map(s=>({id:s.id,sellerId:s.sellerId,sellerName:bySeller.get(Number(s.sellerId))?.name||'Vendeur',serviceName:byService.get(Number(s.serviceId))?.name||'Service',createdAt:s.createdAt}));
   return {...current,mine,mineTotal:mine.reduce((n,x)=>n+x.count,0),leaderboard:current.day.bySeller.slice(0,3),activity,summary:{store,departments:groups}};
 }

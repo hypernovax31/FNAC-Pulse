@@ -21,6 +21,7 @@ const render=(component,p)=>renderToStaticMarkup(React.createElement(component,p
 
 test('Objectifs : une période sélectionnée, deux cartes personnelles et accès direct',()=>{
   const html=render(GoalsPanel,props);
+  assert.match(html,/<section class="panel goals-panel" id="objectifs"/);
   assert.match(html,/aria-label="Période des objectifs"/);
   assert.equal((html.match(/aria-pressed="true"/g)||[]).length,1);
   assert.equal((html.match(/aria-pressed="false"/g)||[]).length,2);

@@ -6,7 +6,7 @@ import { firebaseConfig } from './firebase-config';
 import { pinProof } from './pin';
 import { earliestDate, parisToday, summarize } from './cloud-stats';
 import { comparePeople, orderServices, sellerStoreId } from './catalog';
-import { createSaleAnnouncer } from './live-sales';
+import { createSaleAnnouncer, createSaleSnapshotFilter, isFreshSale } from './live-sales';
 import { sellerDepartmentId, saleDepartmentId } from './departments';
 
 export const CLOUD=import.meta.env.VITE_BACKEND==='cloud';
@@ -70,10 +70,11 @@ function presentation(catalog,storeId) {
   };
 }
 export function listenStore(session,day,clientId,onChange,onSale,onError,onGoalsChanged=()=>{},onSummaryChanged=()=>{}) {
-  let catalog=null,sales=[],catalogReady=false,salesReady=false,catalogCache=true,salesCache=true,initial=true;
+  let catalog=null,sales=[],catalogReady=false,salesReady=false,catalogCache=true,salesCache=true;
+  const freshSales=createSaleSnapshotFilter({day,clientId});
   const announcer=createSaleAnnouncer(sale=>{
     const self=catalog?.sellers.find(s=>Number(s.id)===Number(session.sellerId)&&sellerStoreId(s)===session.storeId);
-    if(self&&saleDepartmentId(sale)===sellerDepartmentId(self))onSale(sale);
+    if(self&&isFreshSale(sale,day,clientId)&&saleDepartmentId(sale)===sellerDepartmentId(self))onSale(sale);
   });
   let goalRevision=Symbol('premier chargement'),summaryRevision=Symbol('premier chargement'),catalogSignature='';
   const emit=()=>{if(catalogReady&&salesReady){const scoped={...catalog,services:orderServices(catalog.services,catalog.serviceOrders,session.storeId)};onChange({...presentation(scoped,session.storeId),today:day,stats:summarize(scoped,sales,session.sellerId,day)},!(catalogCache||salesCache));}};
@@ -98,10 +99,10 @@ export function listenStore(session,day,clientId,onChange,onSale,onError,onGoals
   },onError);
   const q=query(collection(db,'pulseStores',session.storeId,'sales'),where('businessDate','>=',earliestDate(day)));
   const stopSales=onSnapshot(q,{includeMetadataChanges:true},snap=>{
-    if(!initial)for(const change of snap.docChanges())if(change.type==='added') {
-      const sale=change.doc.data();if(sale.source==='sale'&&!sale.deletedAt&&sale.clientId!==clientId)announcer.add(sale);
-    }
-    initial=false;sales=snap.docs.map(x=>x.data());salesCache=snap.metadata.fromCache;salesReady=true;emit();
+    // Le premier état serveur est une base historique, jamais une nouvelle
+    // vente : même après un premier instantané vide fourni par le cache.
+    for(const sale of freshSales(snap))announcer.add(sale);
+    sales=snap.docs.map(x=>x.data());salesCache=snap.metadata.fromCache;salesReady=true;emit();
   },onError);
   return ()=>{stopAccess();stopCatalog();stopSummary();stopSales();};
 }

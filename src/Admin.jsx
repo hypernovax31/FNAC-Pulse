@@ -5,7 +5,7 @@ import { CLOUD, adminLogin, adminLogout, changeAdminPassword } from './cloud';
 import { sellersForStore, orderServices } from './catalog';
 import { departmentsForStore, sellerDepartmentId } from './departments';
 import { GoalForm, WorkdaysForm } from './Goals';
-import { normalizeWorkdays } from './goals';
+import { normalizeWorkdays } from './goals.js';
 
 function Modal({title,subtitle,onClose,children,wide=false}) {
   const dialog=useRef(null),close=useRef(onClose);

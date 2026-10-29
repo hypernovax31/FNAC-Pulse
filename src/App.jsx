@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  LayoutDashboard, Zap, Trophy, ChartNoAxesCombined, Settings2, MapPin, ChevronDown, ChevronRight, ArrowRight,
-  Activity, Bell, BellRing, BellOff, Plus, Minus, UserRound, UsersRound, Sparkles, Crosshair, Calendar, CalendarDays,
+  Target, Zap, Trophy, ChartNoAxesCombined, Settings2, MapPin, ChevronDown, ChevronRight, ArrowRight,
+  Activity, Bell, BellRing, BellOff, Plus, Minus, UserRound, UsersRound, Sparkles, Crosshair, CalendarDays,
   Check, MoreHorizontal, Play, Smartphone, MonitorSmartphone, Shield, ShieldCheck, HardHat, IdCard, DollarSign, PackageCheck, BadgePlus,
-  Repeat2, RefreshCw, Tv, Wifi, Clock3, X, Download, Store, WifiOff, Info, CircleCheck, ArrowUpRight, SunMoon, Sun, Moon, Monitor
+  Repeat2, RefreshCw, Tv, Wifi, Clock3, X, Download, Store, WifiOff, Info, CircleCheck, ArrowUpRight, SunMoon, Sun, Moon, Monitor, Volume2, VolumeX
 } from 'lucide-react';
 import Admin, { Modal } from './Admin';
 import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
@@ -13,10 +13,11 @@ import { sellerStoreId } from './catalog';
 import { departmentsForStore, sellerDepartmentId, sellersForDepartment } from './departments';
 import { serviceIconKey } from './service-icons';
 import { THEME_KEY, readTheme, applyTheme } from './theme';
-import { startupSoundEnabled, saveStartupSound } from './startup-sound';
+import { createSaleSound, saleSoundEnabled, saveSaleSound, SALE_SOUND_KEY } from './sale-sound';
+import { calendarChip } from './calendar';
 import { readDeviceProfile, saveDeviceProfile, clearDeviceProfile } from './device-profile';
 import { GoalForm, GoalsPanel } from './Goals';
-import { normalizeWorkdays } from './goals';
+import { normalizeWorkdays } from './goals.js';
 import { saleMessage } from './sale-message';
 
 const APP_BASE = import.meta.env.BASE_URL;
@@ -51,8 +52,10 @@ function Avatar({name,id,size='normal'}) {return <span className={`avatar avatar
 function Brand({compact=false}) {return <div className={`brand ${compact?'brand-compact':''}`}><img src={`${APP_BASE}fnac.svg`} alt="Fnac"/><div className="brand-word"><strong>pulse<span className="brand-period">.</span></strong>{!compact&&<span>ESPACE ÉQUIPE</span>}</div></div>}
 function Dot() {return <span className="live-dot" aria-hidden="true"/>}
 function DateChip({today}) {
-  const fullDate=dateLabel(today), day=String(Number(today.slice(-2)));
-  return <div className="date-chip" title={fullDate}><span className="date-icon" role="img" aria-label={`Date du jour : ${fullDate}`}><Calendar size={24} strokeWidth={1.6} aria-hidden="true"/><span className="date-icon-day" aria-hidden="true">{day}</span></span><div><span>AUJOURD’HUI</span><strong>{fullDate}</strong></div></div>;
+  const fullDate=dateLabel(today),parts=calendarChip(today);
+  return <time className="date-chip" dateTime={today} title={`${fullDate} · semaine ${parts.week.slice(1)}`} aria-label={`${fullDate}, semaine ${parts.week.slice(1)}`}>
+    <span className="date-week"><small>SEM.</small><strong>{parts.week}</strong></span><span className="date-parts"><strong>{parts.weekday}</strong><small>{parts.day} {parts.month}</small></span>
+  </time>;
 }
 
 function SessionForm({data,initialSession,initialProfile,onSubmit,onForgetProfile,onRefreshProfile,modal=false}) {
@@ -152,6 +155,7 @@ function SessionForm({data,initialSession,initialProfile,onSubmit,onForgetProfil
       <div className="pin-setup-actions"><button className="primary-button" type="submit" disabled={!store||!department||!seller||formBusy||newPin.length!==8||confirmPin.length!==8}>{formBusy?'Enregistrement…':'Enregistrer mon PIN'} <ArrowRight size={15}/></button></div>
     </div>}
     {CLOUD&&pinMode==='login'&&<p className="pin-help">PIN oublié ? Demandez à votre responsable de réinitialiser votre accès.</p>}
+    {fixed&&<button type="button" className="profile-switch" disabled={formBusy} onClick={()=>{if(window.confirm('Changer de profil sur cet appareil ? Le profil mémorisé sera retiré de cet appareil.'))onForgetProfile?.();}}>Changer de profil sur cet appareil</button>}
     {department&&!storeSellers.length&&!fixed&&<p className="no-store-sellers">Aucun vendeur dans ce département. Un administrateur peut y affecter des profils.</p>}
     {formError&&<div className="form-error session-error" role="alert">{formError}</div>}
     {geoText&&<div className="geo-message" role="status"><MapPin size={13}/>{geoText}</div>}
@@ -164,7 +168,7 @@ function WelcomePanel({data,onSubmit,deviceProfile,onForgetProfile,onRefreshProf
   </section>;
 }
 function Sidebar({onNavigate,onAdmin,onSession,onInstall,activeNav}) {
-  const items=[['overview',LayoutDashboard,'Vue d’ensemble'],['services',Zap,'Mes services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Récapitulatifs']];
+  const items=[['objectifs',Target,'Objectifs'],['services',Zap,'Mes services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Récapitulatifs']];
   return <aside className="sidebar">
     <div className="sidebar-brand"><Brand/></div>
     <div className="sidebar-group-label">VOTRE ESPACE</div>
@@ -175,15 +179,18 @@ function Sidebar({onNavigate,onAdmin,onSession,onInstall,activeNav}) {
     <div className="sidebar-bottom"><div className="sidebar-tip"><div className="sidebar-tip-icon"><Zap size={16} fill="currentColor"/></div><strong>Chaque service compte.</strong><p>Ensemble, faisons la différence au quotidien.</p><span>À VOUS DE JOUER <ArrowUpRight size={12}/></span></div><button className="install-link" onClick={onInstall}><Download size={16}/> Installer l’application <ChevronRight size={14}/></button><div className="sidebar-copyright">FNAC PULSE <span>•</span> ESPACE ÉQUIPE</div></div>
   </aside>;
 }
-function Header({session,seller,store,connected,onBell,onSession,onAdmin,onTheme}) {
+function Header({session,seller,store,connected,notificationsEnabled,soundEnabled,onBell,onSound,onSession,onAdmin,onTheme}) {
+  const soundLabel=soundEnabled?'Couper le son des ventes':'Activer le son des ventes';
+  const bellLabel=notificationsEnabled?'Notifications activées':'Notifications non activées';
   return <header className="topbar">
     <div className="mobile-brand"><Brand compact/></div>
     <div className="breadcrumbs"><span>Espace équipe</span><ChevronRight size={14}/><strong>Vue d’ensemble</strong></div>
     <div className="topbar-actions">
-      <div className={`connection ${connected==='live'?'':'is-muted'}`} title={connected==='live'?'Mises à jour en direct':connected==='offline'?'Connexion interrompue':'En attente de votre sélection'}><Dot/><span>{connected==='live'?'En direct':connected==='offline'?'Hors connexion':'Votre espace'}</span></div>
+      <div className={`connection ${connected==='live'?'':'is-muted'}`} title={connected==='live'?'Mises à jour en direct':connected==='offline'?'Connexion interrompue':'En attente de votre sélection'}><span>{connected==='live'?'En direct':connected==='offline'?'Hors connexion':'Votre espace'}</span></div>
       <span className="topbar-divider"/>
-      <button className="icon-button theme-trigger" title="Apparence et son" aria-label="Apparence et son" onClick={onTheme}><SunMoon size={19}/></button>
-      <button className="icon-button top-bell" title="Notifications" aria-label="Notifications" onClick={onBell}><Bell size={19}/><span className="bell-marker"/></button>
+      <button className="icon-button theme-trigger" title="Apparence" aria-label="Apparence" onClick={onTheme}><SunMoon size={19}/></button>
+      <button className="icon-button sound-trigger" title={soundLabel} aria-label={soundLabel} aria-pressed={soundEnabled} onClick={onSound}>{soundEnabled?<Volume2 size={19}/>:<VolumeX size={19}/>}</button>
+      <button className="icon-button top-bell" title={bellLabel} aria-label={bellLabel} onClick={onBell}>{notificationsEnabled?<Bell size={19}/>:<BellOff size={19}/>}</button>
       <button className="profile-trigger" onClick={onSession} aria-label={session?`Mon profil, ${seller?.name||''}`:'Choisir mon profil'}>
         {seller?<Avatar name={seller.name} id={seller.id}/>:<span className="avatar avatar-blank"><UserRound size={17}/></span>}
         <span className="profile-text"><strong>{seller?.name||'Mon profil'}</strong><small>{store?.name||'Choisir mon espace'}</small></span><ChevronDown size={15}/>
@@ -205,9 +212,16 @@ function Ranking({leaders,hasSession}) {
     <div className="ranking-footer"><Dot/> {hasSession?'En direct · Égalités : DMax, puis FVD':'Classement disponible après sélection'}</div>
   </section>;
 }
+function ActivityRow({item}) {
+  return <div className="activity-row"><Avatar name={item.sellerName} id={item.sellerId} size="small"/><div><p><strong>{item.sellerName}</strong> a ajouté <strong>{item.serviceName}</strong></p><span>Aujourd’hui · {timeLabel(item.createdAt)}</span></div><span className="activity-add">+1</span></div>;
+}
 function ActivityCard({activity,hasSession}) {
+  const [expanded,setExpanded]=useState(false),items=activity||[];
   return <section className="panel activity-panel"><div className="activity-heading"><div><div className="section-kicker"><span className="kicker-line"/> AU FIL DE LA JOURNÉE</div><h2>Activité récente</h2></div><span className="activity-live"><Dot/> EN DIRECT</span></div>
-    {activity?.length>0?<div className="activity-list">{activity.map(item=><div className="activity-row" key={item.id}><Avatar name={item.sellerName} id={item.sellerId} size="small"/><div><p><strong>{item.sellerName}</strong> a ajouté <strong>{item.serviceName}</strong></p><span>Aujourd’hui · {timeLabel(item.createdAt)}</span></div><span className="activity-add">+1</span></div>)}</div>:<div className="activity-empty"><span><Activity size={19}/></span><p>{hasSession?'Les ventes de l’équipe apparaîtront ici en temps réel.':'L’activité de votre magasin apparaîtra ici.'}</p></div>}
+    {items.length>0?<div className="activity-list">
+      {items.slice(0,4).map(item=><ActivityRow key={item.id} item={item}/>)}
+      {items.length>4&&<details className="activity-more" open={expanded} onToggle={e=>setExpanded(e.currentTarget.open)}><summary><span>{expanded?'Afficher moins':`Toute l’activité du jour (${items.length})`}</span><ChevronDown size={15}/></summary>{expanded&&<div className="activity-more-list">{items.slice(4).map(item=><ActivityRow key={item.id} item={item}/>)}</div>}</details>}
+    </div>:<div className="activity-empty"><span><Activity size={19}/></span><p>{hasSession?'Les ventes de l’équipe apparaîtront ici en temps réel.':'L’activité de votre magasin apparaîtra ici.'}</p></div>}
   </section>;
 }
 function Summary({stats,hasSession,storeId,departments,goals,goalsLoading,goalsError,onRetry}) {
@@ -218,8 +232,9 @@ function Summary({stats,hasSession,storeId,departments,goals,goalsLoading,goalsE
   const selected=scope==='store'?stats?.summary?.store:stats?.summary?.departments?.[scope];
   const current=selected?.[period]||(scope==='store'&&!stats?.summary?stats?.[period]:null);
   const goalScope=scope==='store'?goals?.store:goals?.departments?.[scope];
-  return <section className="panel summary-panel" id="summary"><div className="summary-heading"><div><div className="section-kicker"><span className="kicker-line"/> PRENDRE DU RECUL</div><h2>Le récap’ des services</h2><p>Comparez les ventes aux objectifs du périmètre choisi.</p></div><div className="period-tabs" role="tablist" aria-label="Période du récapitulatif">{Object.entries(labels).map(([id,label])=><button role="tab" aria-selected={period===id} key={id} className={period===id?'selected':''} onClick={()=>setPeriod(id)}>{label}</button>)}</div></div>
-    {hasSession&&<label className="summary-scope"><span>PÉRIMÈTRE DU RÉCAP’</span><div className="select-wrap"><UsersRound size={15}/><select aria-label="Périmètre du récapitulatif" value={scope} onChange={e=>setScope(e.target.value)}><option value="store">Tout le magasin</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}{d.active?'':' · archivé'}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>}
+  return <section className="panel summary-panel" id="summary"><div className="summary-heading"><div><div className="section-kicker"><span className="kicker-line"/> PRENDRE DU RECUL</div><h2>Le récap’ des services</h2><p>Toutes les ventes du magasin et par département.</p></div></div>
+    <div className="summary-controls">{hasSession&&<label className="summary-scope"><span>PÉRIMÈTRE DU RÉCAP’</span><div className="select-wrap"><UsersRound size={15}/><select aria-label="Périmètre du récapitulatif" value={scope} onChange={e=>setScope(e.target.value)}><option value="store">Tout le magasin</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}{d.active?'':' · archivé'}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>}
+      <div className="period-tabs" role="tablist" aria-label="Période du récapitulatif">{Object.entries(labels).map(([id,label])=><button role="tab" aria-selected={period===id} key={id} className={period===id?'selected':''} onClick={()=>setPeriod(id)}>{label}</button>)}</div></div>
     <div className="summary-content"><div className="summary-total"><span className="summary-total-label">TOTAL VENTES</span><strong>{current?.total??'—'}</strong><span>{current?current.total>1?'services vendus':'service vendu':'Sélectionnez un magasin'}</span><div className="summary-date"><CalendarDays size={13} aria-hidden="true"/><span>{current?`${dateLabel(current.start,{day:'numeric',month:'short'})}${current.start!==current.end?` — ${dateLabel(current.end,{day:'numeric',month:'short'})}`:''}`:'En attente'}</span></div></div>
       <div className="summary-breakdown">{current ? current.byService.map(s=>{
         const target=goalScope?.byService?.[`s${s.id}`]?.[period]??null;
@@ -236,10 +251,12 @@ function Summary({stats,hasSession,storeId,departments,goals,goalsLoading,goalsE
   </section>;
 }
 function MobileNav({onNavigate,onSession,active}) {
-  return <nav className="mobile-nav" aria-label="Navigation mobile">{[['overview',LayoutDashboard,'Accueil'],['services',Zap,'Services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Bilan']].map(([id,Icon,name])=><button key={id} onClick={()=>onNavigate(id)} className={active===id?'active':''}><Icon size={19}/><span>{name}</span></button>)}<button onClick={onSession}><UserRound size={19}/><span>Profil</span></button></nav>;
+  return <nav className="mobile-nav" aria-label="Navigation mobile">{[['objectifs',Target,'Objectifs'],['services',Zap,'Services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Bilan']].map(([id,Icon,name])=><button key={id} onClick={()=>onNavigate(id)} className={active===id?'active':''}><Icon size={19}/><span>{name}</span></button>)}<button onClick={onSession}><UserRound size={19}/><span>Profil</span></button></nav>;
 }
 function urlBase64ToUint8Array(base64) {const padding='='.repeat((4-base64.length%4)%4);const raw=atob((base64+padding).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
+function readNotificationPermission() {return typeof Notification==='undefined'?'unsupported':Notification.permission;}
 
+export { Header, DateChip, ActivityCard, Summary, MobileNav };
 export default function App() {
   const [session,setSession]=useState(()=>CLOUD?null:getSession());
   const [deviceProfile,setDeviceProfile]=useState(()=>CLOUD?readDeviceProfile(undefined,getSession()):null);
@@ -249,7 +266,7 @@ export default function App() {
   const [loadFailed,setLoadFailed]=useState(false);
   const [loadMessage,setLoadMessage]=useState('');
   const [connection,setConnection]=useState('waiting');
-  const [activeNav,setActiveNav]=useState('overview');
+  const [activeNav,setActiveNav]=useState('objectifs');
   const [sessionModal,setSessionModal]=useState(false);
   const [adminModal,setAdminModal]=useState(false);
   const [notificationsModal,setNotificationsModal]=useState(false);
@@ -259,13 +276,14 @@ export default function App() {
   const [goalState,setGoalState]=useState({owner:'',...goalData(null),loading:false,error:''});
   const [summaryState,setSummaryState]=useState({key:'',data:null,loading:false,error:''});
   const [theme,setTheme]=useState(readTheme);
-  const [startupSound,setStartupSound]=useState(startupSoundEnabled);
+  const [soundEnabled,setSoundEnabled]=useState(saleSoundEnabled);
   const [installPrompt,setInstallPrompt]=useState(null);
-  const [notificationsEnabled,setNotificationsEnabled]=useState(false);
+  const [notificationPermission,setNotificationPermission]=useState(readNotificationPermission);
+  const [notificationsEnabled,setNotificationsEnabled]=useState(()=>readNotificationPermission()==='granted'?null:false);
   const [notificationBusy,setNotificationBusy]=useState(false);
   const [pending,setPending]=useState({});
   const [toast,setToast]=useState(null);
-  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null);
+  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), sound=useRef(null), notificationPrompted=useRef(false);
   const store=data?.stores?.find(s=>s.id===session?.storeId), seller=data?.sellers?.find(s=>s.id===session?.sellerId&&sellerStoreId(s)===session?.storeId);
   const activeDepartmentId=seller?sellerDepartmentId(seller):'';
   const departments=session?departmentsForStore(data||{},session.storeId,{activeOnly:false}):[];
@@ -284,6 +302,18 @@ export default function App() {
     return ()=>media?.removeEventListener?.('change',update);
   },[theme]);
   useEffect(()=>{const sync=e=>{if(e.key===THEME_KEY)setTheme(readTheme());};window.addEventListener('storage',sync);return ()=>window.removeEventListener('storage',sync);},[]);
+  useEffect(()=>{
+    const player=createSaleSound({base:APP_BASE});sound.current=player;
+    const sync=e=>{if(e.key===SALE_SOUND_KEY){const enabled=saleSoundEnabled();setSoundEnabled(enabled);player.setEnabled(enabled);if(!enabled)player.stop();}};
+    window.addEventListener('storage',sync);
+    return ()=>{window.removeEventListener('storage',sync);player.dispose();if(sound.current===player)sound.current=null;};
+  },[]);
+  useEffect(()=>{
+    const sync=()=>setNotificationPermission(readNotificationPermission());
+    const visible=()=>{if(document.visibilityState==='visible')sync();};
+    window.addEventListener('focus',sync);document.addEventListener('visibilitychange',visible);
+    return ()=>{window.removeEventListener('focus',sync);document.removeEventListener('visibilitychange',visible);};
+  },[]);
 
   const flash=useCallback((message,options={})=>{clearTimeout(toastTimer.current);setToast({message,...options});toastTimer.current=setTimeout(()=>setToast(null),options.duration||5500);},[]);
   const refresh=useCallback(async()=>{
@@ -373,6 +403,7 @@ export default function App() {
       setData(next);setLoadFailed(false);setConnection(live?'live':'offline');
       try{localStorage.setItem(CACHE_KEY,JSON.stringify({data:next,session}));}catch{}
     },sale=>{
+      sound.current?.play();
       flash(saleMessage(sale.serviceName,sale.sellerName),{tone:'celebrate'});
     },error=>{
       setConnection('offline');
@@ -388,7 +419,7 @@ export default function App() {
     source.addEventListener('change',e=>{
       try {
         const event=JSON.parse(e.data);
-        if(event.kind==='sale'&&event.clientId!==clientId.current&&(event.departmentId||'tech')===activeDepartmentId)flash(saleMessage(event.serviceName,event.sellerName),{tone:'celebrate'});
+        if(event.kind==='sale'&&event.clientId!==clientId.current&&(event.departmentId||'tech')===activeDepartmentId){sound.current?.play();flash(saleMessage(event.serviceName,event.sellerName),{tone:'celebrate'});}
         if(event.kind==='goals'&&Number(event.sellerId)===Number(session.sellerId))loadGoals();
         if(event.kind==='goals'||event.kind==='config')queueSummary();
       } catch{}
@@ -411,12 +442,14 @@ export default function App() {
     window.addEventListener('beforeinstallprompt',handler);return ()=>window.removeEventListener('beforeinstallprompt',handler);
   },[]);
   useEffect(()=>{
-    if(!session||!('serviceWorker' in navigator)||!('PushManager' in window)||!('Notification' in window)||Notification.permission!=='granted'){setNotificationsEnabled(false);return;}
+    if(!session||!('serviceWorker' in navigator)||!('PushManager' in window)||notificationPermission!=='granted'){setNotificationsEnabled(false);return;}
     let cancelled=false;
     if(CLOUD){
       if(!notificationsWanted()){setNotificationsEnabled(false);return;}
+      setNotificationsEnabled(null);
       subscribeFcm(api).then(()=>{if(!cancelled)setNotificationsEnabled(true);}).catch(()=>{if(!cancelled)setNotificationsEnabled(false);});
     } else {
+      setNotificationsEnabled(null);
       navigator.serviceWorker.ready.then(reg=>reg.pushManager.getSubscription()).then(async sub=>{
         if(!sub){if(!cancelled)setNotificationsEnabled(false);return;}
         await api('/api/push/subscribe',{method:'POST',body:{storeId:session.storeId,sellerId:session.sellerId,subscription:sub.toJSON()}});
@@ -424,31 +457,37 @@ export default function App() {
       }).catch(()=>{if(!cancelled)setNotificationsEnabled(false)});
     }
     return ()=>{cancelled=true};
-  },[session]);
+  },[session,notificationPermission]);
+  useEffect(()=>{
+    // Les navigateurs exigent un geste pour ouvrir leur demande système. On
+    // propose donc l'activation au lancement, sans demander la permission seul.
+    if(!session||!authReady||notificationsEnabled!==false||notificationPermission!=='default'||notificationPrompted.current||!window.isSecureContext||!('serviceWorker' in navigator)||!('PushManager' in window))return;
+    notificationPrompted.current=true;setNotificationsModal(true);
+  },[session,authReady,notificationsEnabled,notificationPermission]);
   useEffect(()=>()=>clearTimeout(toastTimer.current),[]);
 
   async function selectSession(next,pin,setup=null){
     const authenticated=CLOUD?(setup?.firstTime?await sellerChoosePin(api,next,pin):await sellerLogin(api,next,pin)):next;
     if(CLOUD){const profile=saveDeviceProfile(authenticated);if(profile)setDeviceProfile(profile);}
     localStorage.setItem(SESSION_KEY,JSON.stringify(authenticated));
-    setData(d=>d?{...d,stats:null}:d);setSession(authenticated);setSessionModal(false);setActiveNav('overview');
+    setData(d=>d?{...d,stats:null}:d);setSession(authenticated);setSessionModal(false);setActiveNav('objectifs');
     window.scrollTo({top:0,behavior:'smooth'});
     const person=data?.sellers.find(s=>s.id===next.sellerId);flash(`Bienvenue${person?`, ${person.name}`:''} ! Votre espace est prêt.`);
   }
   function forgetDeviceProfile(){clearDeviceProfile();setDeviceProfile(null);}
-  async function logoutSeller(forget=false){
+  async function logoutSeller(){
     let warning=false;
     if(CLOUD&&notificationsWanted())try{await unsubscribeFcm(api);}catch{warning=true;}
     if(CLOUD)await sellerLogout();
-    if(forget)forgetDeviceProfile();
     localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);localStorage.removeItem(SUMMARY_CACHE_KEY);setSession(null);setData(d=>d?{...d,stats:null}:null);setSessionModal(false);
     flash(warning?'Déconnecté. Vérifiez les notifications de cet appareil lorsque la connexion revient.':'Vous êtes déconnecté.',warning?{tone:'warning'}:{});
   }
-  async function releaseDevice(){
-    if(window.confirm('Retirer votre profil de cet appareil et vous déconnecter ? La sélection des vendeurs sera de nouveau proposée.'))await logoutSeller(true);
-  }
   function changeSession(){if(session)setSessionModal(true);else {document.getElementById('selection')?.scrollIntoView({behavior:'smooth',block:'center'});document.querySelector('[aria-label="Votre magasin Fnac"]')?.focus();}}
-  function navigate(id){setActiveNav(id);document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});}
+  function navigate(id){setActiveNav(id);if(id==='objectifs'&&!session){changeSession();return;}document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});}
+  function toggleSound(){
+    const next=!soundEnabled;saveSaleSound(next);setSoundEnabled(next);sound.current?.setEnabled(next);
+    if(next)sound.current?.unlock();else sound.current?.stop();
+  }
   async function savePersonalGoals(body){
     if(!session||connection==='offline')throw new Error('Connexion interrompue. Réessayez en ligne.');
     const targetOwner=goalOwnerKey(session);
@@ -467,6 +506,7 @@ export default function App() {
     pendingRef.current.add(service.id);setPending(p=>({...p,[service.id]:true}));
     try {
       const result=await api('/api/sales',{method:'POST',body:{...session,serviceId:service.id,requestId:uid(),clientId:clientId.current}});
+      sound.current?.play();
       await refresh();
       flash(saleMessage(service.name,seller?.name),{tone:'success',actionLabel:'Annuler',action:async()=>{
         try {await api(`/api/sales/${result.id}`,{method:'DELETE',body:session});await refresh();flash('Vente annulée.');}
@@ -487,7 +527,8 @@ export default function App() {
     setNotificationBusy(true);
     try {
       const permission=await Notification.requestPermission();
-      if(permission!=='granted')throw new Error(permission==='denied'?'Notifications bloquées. Autorisez-les dans les réglages du navigateur.':'Autorisation de notification non accordée.');
+      setNotificationPermission(permission);
+      if(permission!=='granted')throw new Error(permission==='denied'?'Notifications bloquées. Autorisez-les dans les réglages de l’appareil ou du navigateur.':'Autorisation de notification non accordée.');
       if(CLOUD)await subscribeFcm(api);
       else {const registration=await navigator.serviceWorker.ready;
         let subscription=await registration.pushManager.getSubscription();
@@ -508,34 +549,40 @@ export default function App() {
   const stats=data.stats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
   return <div className="app-shell">
     <Sidebar onNavigate={navigate} onAdmin={()=>setAdminModal(true)} onSession={changeSession} onInstall={installApp} activeNav={activeNav}/>
-    <div className="main-shell"><Header session={session} seller={seller} store={store} connected={connection} onBell={()=>setNotificationsModal(true)} onSession={changeSession} onAdmin={()=>setAdminModal(true)} onTheme={()=>setThemeModal(true)}/>
+    <div className="main-shell"><Header session={session} seller={seller} store={store} connected={connection} notificationsEnabled={notificationsEnabled===true} soundEnabled={soundEnabled} onBell={()=>setNotificationsModal(true)} onSound={toggleSound} onSession={changeSession} onAdmin={()=>setAdminModal(true)} onTheme={()=>setThemeModal(true)}/>
       <main className="content" id="overview">
         {connection==='offline'&&session&&<div className="offline-banner"><WifiOff size={16}/><div><strong>Connexion interrompue.</strong> Les dernières données restent visibles, mais la saisie est suspendue jusqu’au retour de la connexion.</div><button onClick={refresh}>Réessayer</button></div>}
+        {notificationsEnabled===false&&<section className="notification-card notification-prompt" aria-label="Activation des notifications"><span className="notification-icon"><BellOff size={18}/></span><div><strong>Restez informés</strong><p>{notificationPermission==='denied'?'Notifications bloquées : autorisez-les dans les réglages de votre appareil.':'Activez les notifications pour suivre les ventes de votre équipe.'}</p></div><button onClick={()=>setNotificationsModal(true)}>{notificationPermission==='denied'?'En savoir plus':'Activer'} <ArrowRight size={13}/></button></section>}
         <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><DateChip today={cloudDay}/></div>
         {!session?<WelcomePanel data={data} onSubmit={selectSession} deviceProfile={deviceProfile} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>:<div className="session-strip"><div className="strip-icon"><Store size={18}/></div><div className="strip-copy"><span>VOTRE ESPACE DE VENTE</span><strong>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</strong></div><div className="strip-divider"/><div className="strip-user"><Avatar name={seller?.name} id={seller?.id} size="small"/><span>Connecté en tant que <strong>{seller?.name}</strong></span></div><button className="text-button" onClick={()=>setSessionModal(true)}>{CLOUD?'Mon profil':'Changer'} <ArrowRight size={14}/></button></div>}
         <div className="section-overline"><div><span className="kicker-line"/> EN UN COUP D’ŒIL</div><span>{session?'Les chiffres de votre département':'Choisissez votre espace pour démarrer'}</span></div>
         <section className="stats-grid" aria-label="Chiffres clés"><StatCard label="AUJOURD’HUI" value={stats?.day.total} detail="Ventes de l’équipe" Icon={Zap} tone="gold"/><StatCard label="MA JOURNÉE" value={stats?.mineTotal} detail="Mes services enregistrés" Icon={UserRound} tone="soft-blue"/></section>
         {session&&<GoalsPanel seller={seller} services={data.services} goals={currentGoals} workdays={goalState.workdays} workdaysDefault={!goalState.workdaysRevision} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
-        <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> PLACE À L’ACTION</div><h2>Ajouter un service</h2><p>Une vente ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
+        <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> VENTE QUOTIDIENNE</div><h2>Ajouter un service</h2><p>Une vente de services ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
           <Summary stats={stats} hasSession={!!session} storeId={session?.storeId} departments={departments} goals={currentSummary} goalsLoading={summaryState.key===summaryKey&&summaryState.loading} goalsError={summaryState.key===summaryKey?summaryState.error:''} onRetry={loadSummaryGoals}/>
-        </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/><div className="notification-card"><span className="notification-icon"><BellRing size={18}/></span><div><strong>{notificationsEnabled?'Vous êtes dans la boucle !':'Restez dans la boucle'}</strong><p>{notificationsEnabled?'Notifications activées sur cet appareil.':'Soyez prévenu des ventes de votre équipe.'}</p></div><button onClick={()=>setNotificationsModal(true)}>{notificationsEnabled?'Gérer':'Activer'} <ArrowRight size={13}/></button></div></div></div>
-        <footer className="page-footer">Le service, c’est notre rayon. Les ventes aussi. 😉</footer>
+        </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/></div></div>
+        <footer className="page-footer">La vente, c’est notre rayon. Les services aussi. 😉</footer>
       </main>
     </div>
     <MobileNav onNavigate={navigate} onSession={changeSession} active={activeNav}/>
     {sessionModal&&<Modal title={CLOUD?'Mon profil':'Changer d’espace'} subtitle={CLOUD?'Votre espace sur cet appareil.':'Sélectionnez votre magasin, votre département et votre profil vendeur.'} onClose={()=>setSessionModal(false)}>
-      {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button><button type="button" className="logout-button" onClick={releaseDevice}>Retirer ce profil de l’appareil</button></>:<><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/><p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></>}
+      {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button></>:<><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/><p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></>}
     </Modal>}
     {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={()=>setGoalModal(null)}><GoalForm services={data.services} goals={currentGoals} workdays={goalState.workdays} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={()=>setGoalModal(null)} disabled={connection==='offline'}/></Modal>}
     {adminModal&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>}
-    {notificationsModal&&<Modal title="Notifications d’équipe" subtitle="Ne manquez aucune nouvelle vente de votre département." onClose={()=>setNotificationsModal(false)}><div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{notificationsEnabled?'Notifications activées':'Un petit signal, une belle dynamique.'}</strong><p>Chaque nouvelle vente peut vous être signalée sur cet appareil, même lorsque l’application est fermée.</p></div></div><div className="notification-details"><div><Check size={16}/> Une notification pour chaque nouvelle vente</div><div><Check size={16}/> Uniquement pour votre magasin et votre département</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div><div className="notification-device-note"><Info size={15}/><span>Sur iPhone et iPad, installez d’abord l’application sur l’écran d’accueil (iOS/iPadOS 16.4 ou plus). Une connexion HTTPS et un navigateur compatible sont nécessaires.</span></div><button className={notificationsEnabled?'outline-button full-button':'primary-button full-button'} disabled={notificationBusy} onClick={notificationsEnabled?disableNotifications:enableNotifications}>{notificationBusy?'Un instant…':notificationsEnabled?'Désactiver sur cet appareil':'Activer les notifications'} {notificationsEnabled?<BellOff size={16}/>:<Bell size={16}/>}</button></Modal>}
-    {themeModal&&<Modal title="Apparence et son" subtitle="Vos préférences sur cet appareil." onClose={()=>setThemeModal(false)}>
+    {notificationsModal&&<Modal title="Notifications d’équipe" subtitle="Ne manquez aucune nouvelle vente de votre département." onClose={()=>setNotificationsModal(false)}>
+      <div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{notificationsEnabled?'Notifications activées':'Restez informés'}</strong><p>Chaque nouvelle vente peut vous être signalée sur cet appareil, même lorsque l’application est fermée.</p></div></div>
+      <div className="notification-details"><div><Check size={16}/> Une notification pour chaque nouvelle vente</div><div><Check size={16}/> Uniquement pour votre magasin et votre département</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div>
+      <div className="notification-device-note"><Info size={15}/><span>{notificationPermission==='denied'?'Les notifications sont bloquées. Autorisez-les dans les réglages de cet appareil ou de votre navigateur, puis revenez ici.':'Sur iPhone et iPad, installez d’abord l’application sur l’écran d’accueil (iOS/iPadOS 16.4 ou plus). Une connexion HTTPS et un navigateur compatible sont nécessaires.'}</span></div>
+      <button className={notificationsEnabled?'outline-button full-button':'primary-button full-button'} disabled={notificationBusy||(!notificationsEnabled&&notificationPermission==='denied')} onClick={notificationsEnabled?disableNotifications:enableNotifications}>{notificationBusy?'Un instant…':notificationsEnabled?'Désactiver sur cet appareil':notificationPermission==='denied'?'Notifications bloquées':'Activer les notifications'} {notificationsEnabled?<BellOff size={16}/>:<Bell size={16}/>}</button>
+      {!notificationsEnabled&&<button className="notification-later" onClick={()=>setNotificationsModal(false)}>Plus tard</button>}
+    </Modal>}
+    {themeModal&&<Modal title="Apparence" subtitle="Vos préférences sur cet appareil." onClose={()=>setThemeModal(false)}>
       <div className="theme-options" role="radiogroup" aria-label="Thème de l’application">
         {[['system',Monitor,'Automatique','Suivre les réglages de l’appareil'],['light',Sun,'Clair','Toujours utiliser le thème clair'],['dark',Moon,'Sombre','Toujours utiliser le thème sombre']].map(([value,Icon,label,description])=><label key={value} className={`theme-option ${theme===value?'is-selected':''}`}>
           <input type="radio" name="theme" value={value} checked={theme===value} onChange={()=>setTheme(value)}/><Icon size={19}/><span><strong>{label}</strong><small>{description}</small></span><Check className="theme-check" size={17}/>
         </label>)}
       </div>
-      <label className="startup-sound-setting"><input type="checkbox" checked={startupSound} onChange={e=>{setStartupSound(e.target.checked);saveStartupSound(e.target.checked);}}/><span><strong>Signature au démarrage</strong><small>Au lancement ou à la première interaction si le navigateur bloque le son. Les notifications gardent leur son système.</small></span></label>
     </Modal>}
     {installModal&&<Modal title="Installer Fnac Pulse" subtitle="Votre espace d’équipe toujours à portée de main." onClose={()=>setInstallModal(false)}><div className="install-steps"><div><span>1</span><p><strong>Sur iPhone ou iPad</strong><br/>Dans Safari, touchez Partager, puis « Sur l’écran d’accueil ».</p></div><div><span>2</span><p><strong>Sur Android ou ordinateur</strong><br/>Ouvrez le menu du navigateur, puis choisissez « Installer l’application » ou « Ajouter à l’écran d’accueil ».</p></div></div><p className="modal-hint"><Info size={14}/> L’installation et les notifications nécessitent une adresse HTTPS et un navigateur compatible.</p><button className="primary-button full-button" onClick={()=>setInstallModal(false)}>J’ai compris <Check size={16}/></button></Modal>}
     {toast&&<div className={`toast toast-${toast.tone||'default'}`} role="status"><span className="toast-icon">{toast.tone==='warning'?<Info size={17}/>:<CircleCheck size={17}/>}</span><span>{toast.message}</span>{toast.action&&<button onClick={()=>{const action=toast.action;setToast(null);action();}}>{toast.actionLabel}</button>}<button className="toast-close" aria-label="Fermer" onClick={()=>setToast(null)}><X size={16}/></button></div>}
