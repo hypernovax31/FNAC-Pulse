@@ -14,6 +14,7 @@ import { serviceIconKey } from './service-icons';
 import { THEME_KEY, readTheme, applyTheme } from './theme';
 import { GoalForm, GoalsPanel } from './Goals';
 import { normalizeWorkdays } from './goals';
+import { saleMessage } from './sale-message';
 
 const APP_BASE = import.meta.env.BASE_URL;
 const SESSION_KEY = 'fnac-pulse-session-v1';
@@ -241,7 +242,7 @@ export default function App() {
       setData(next);setLoadFailed(false);setConnection(live?'live':'offline');
       try{localStorage.setItem(CACHE_KEY,JSON.stringify({data:next,session}));}catch{}
     },sale=>{
-      flash(`${sale.sellerName} vient de vendre ${sale.serviceName} !`,{tone:'celebrate'});
+      flash(saleMessage(sale.serviceName,sale.sellerName),{tone:'celebrate'});
     },error=>{
       setConnection('offline');
       if(error?.code==='permission-denied'){sellerLogout().catch(()=>{});setSession(null);setData(d=>d?{...d,stats:null}:d);localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);flash('Votre accès a changé. Reconnectez-vous avec votre code PIN.',{tone:'warning'});}
@@ -254,7 +255,7 @@ export default function App() {
     const source=new EventSource(`/api/events?storeId=${encodeURIComponent(session.storeId)}`);
     source.addEventListener('ready',()=>{setConnection('live');refresh();});
     source.addEventListener('change',e=>{
-      try {const event=JSON.parse(e.data);if(event.kind==='sale'&&event.clientId!==clientId.current) flash(`${event.sellerName} vient de vendre ${event.serviceName} !`,{tone:'celebrate'});if(event.kind==='goals'&&Number(event.sellerId)===Number(session.sellerId))loadGoals();} catch{}
+      try {const event=JSON.parse(e.data);if(event.kind==='sale'&&event.clientId!==clientId.current) flash(saleMessage(event.serviceName,event.sellerName),{tone:'celebrate'});if(event.kind==='goals'&&Number(event.sellerId)===Number(session.sellerId))loadGoals();} catch{}
       refresh();
     });
     source.onerror=()=>setConnection('offline');
@@ -324,7 +325,7 @@ export default function App() {
     try {
       const result=await api('/api/sales',{method:'POST',body:{...session,serviceId:service.id,requestId:uid(),clientId:clientId.current}});
       await refresh();
-      flash(seller?.name?`${seller.name} vient de vendre ${service.name} !`:`Vous venez de vendre ${service.name} !`,{tone:'success',actionLabel:'Annuler',action:async()=>{
+      flash(saleMessage(service.name,seller?.name),{tone:'success',actionLabel:'Annuler',action:async()=>{
         try {await api(`/api/sales/${result.id}`,{method:'DELETE',body:session});await refresh();flash('Vente annulée.');}
         catch(e){flash(e.message,{tone:'warning'});}
       },duration:8000});
@@ -375,7 +376,7 @@ export default function App() {
         <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> PLACE À L’ACTION</div><h2>Ajouter un service</h2><p>Une vente ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
           <Summary stats={stats} hasSession={!!session}/>
         </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/><div className="notification-card"><span className="notification-icon"><BellRing size={18}/></span><div><strong>{notificationsEnabled?'Vous êtes dans la boucle !':'Restez dans la boucle'}</strong><p>{notificationsEnabled?'Notifications activées sur cet appareil.':'Soyez prévenu des ventes de votre équipe.'}</p></div><button onClick={()=>setNotificationsModal(true)}>{notificationsEnabled?'Gérer':'Activer'} <ArrowRight size={13}/></button></div></div></div>
-        <footer className="page-footer">Conçu pour les équipes, avec la pêche 🍑</footer>
+        <footer className="page-footer">Le service, c’est notre rayon. Les ventes aussi. 😉</footer>
       </main>
     </div>
     <MobileNav onNavigate={navigate} onSession={changeSession} active={activeNav}/>

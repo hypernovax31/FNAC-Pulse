@@ -32,14 +32,14 @@ test('Firebase : signature des jetons, OAuth, PIN et requête FCM',async()=>{
     assert.equal(String(url),'https://fcm.googleapis.com/v1/projects/demo-pulse-crypto/messages:send');
     assert.equal(options.headers.Authorization,'Bearer fake-access-token');
     const body=JSON.parse(options.body);assert.equal(body.message.token,'fake-fcm-registration-token');
-    assert.equal(body.message.notification.body,'Morgan vient de vendre DMax.');
+    assert.equal(body.message.notification.body,'1 DMax fait par Morgan 👍');
     assert.equal(body.message.webpush.fcm_options.link,'https://example.test/FNAC-Pulse/');
     assert.equal(body.message.webpush.headers.TTL,'3600');
     fcmCalls++;return failFcm?Response.json({error:{details:[{errorCode:'UNREGISTERED'}]}},{status:404}):Response.json({name:'mock-delivery'});
   };
   try {
     assert.equal(await googleAccessToken(env),'fake-access-token');assert.equal(await googleAccessToken(env),'fake-access-token');
-    const sale={sellerName:'Morgan',serviceName:'DMax',saleId:'fake-sale',storeId:'demo-store'};
+    const sale={sellerName:'Morgan Dupont',serviceName:'DMax',saleId:'fake-sale',storeId:'demo-store'};
     await sendFcm(env,'fake-fcm-registration-token',sale);
     failFcm=true;await assert.rejects(sendFcm(env,'fake-fcm-registration-token',sale),e=>e.unregistered===true&&e.status===404&&e.fcmCode==='UNREGISTERED');
     assert.equal(oauthCalls,1);assert.equal(fcmCalls,2);

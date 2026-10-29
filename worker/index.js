@@ -2,6 +2,7 @@ import locations from '../server/locations.json' with {type:'json'};
 import { FirestoreRest, FirebaseError, googleAccessToken, verifyIdToken, makeCustomToken, digestBase64, pinMac, verifyPin } from './firebase.js';
 import { LEGACY_STORE_ID, comparePeople, orderServices, sellerStoreId } from '../src/catalog.js';
 import { validGoalValues, GOAL_PERIODS, validWorkdays, normalizeWorkdays } from '../src/goals.js';
+import { saleMessage } from '../src/sale-message.js';
 
 const SELLERS=['Morgan','Anthony','Cedric','Philippe','Fabien','Florent','Eric','Tamera','Ikram','Selenia','Johan','Alice'];
 const SERVICES=[['DMax','play'],['Assu Téléph','phone'],['Assu Multim','devices'],['Garantie','shield'],['FVD','package'],['FNAC +','badge'],['TRC','repeat'],['Reprise','refresh'],['Canal +','tv'],['Free','wifi'],['Autre','other']];
@@ -111,7 +112,7 @@ export async function sendFcm(env,token,sale) {
   const icon=new URL('icons/icon-192.png',appUrl).href;
   const r=await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/messages:send`,{
     method:'POST',headers:{Authorization:`Bearer ${access}`,'content-type':'application/json'},
-    body:JSON.stringify({message:{token,notification:{title:'Une vente pour l’équipe !',body:`${sale.sellerName} vient de vendre ${sale.serviceName}.`},
+    body:JSON.stringify({message:{token,notification:{title:'Une vente pour l’équipe !',body:saleMessage(sale.serviceName,sale.sellerName)},
       webpush:{headers:{TTL:'3600',Urgency:'normal'},notification:{icon,badge:icon,tag:`sale-${sale.saleId}`},fcm_options:{link:appUrl.href}},
       data:{saleId:sale.saleId,storeId:sale.storeId}}}),
   });

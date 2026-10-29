@@ -71,6 +71,7 @@ test('Cloud : PIN, isolation, corrections, administration et notifications en fi
   assert.equal(await db.get(`pulseStores/${other}/sales/${requestId}`),null);
   r=await req('/api/sales','POST',{serviceId:1,requestId},'seller-token');assert.equal(r.body.duplicate,true);await Promise.all(waits.splice(0));assert.equal(queued.length,1);
   const message=makeMessage(queued[0]);await worker.queue({messages:[message]},env);assert.equal(message.acked,true);assert.equal(sent.length,1);
+  assert.equal(sent[0].sale.sellerName,'Morgan');assert.equal(sent[0].sale.serviceName,'DMax');
   const same=makeMessage(queued[0]);await worker.queue({messages:[same]},env);assert.equal(same.acked,true);assert.equal(sent.length,1);
   assert.equal((await req('/api/sales/test-sale-00000001','DELETE',{},'seller-token')).status,200);
   assert.equal((await req('/api/sales/test-sale-00000001','DELETE',{},'seller-token')).status,409);

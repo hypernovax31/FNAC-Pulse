@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LEGACY_STORE_ID, comparePeople, orderServices } from '../src/catalog.js';
 import { validGoalValues, validWorkdays, normalizeWorkdays } from '../src/goals.js';
+import { saleMessage } from '../src/sale-message.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = path.resolve(process.env.DATA_DIR || path.join(root, 'data'));
@@ -259,7 +260,7 @@ app.post('/api/sales', (req,res) => {
   broadcast(store.id,event);
   res.status(201).json({ id });
   // Only real new sales trigger pushes; corrections and administrative adjustments do not.
-  const payload = JSON.stringify({ title:'Une vente pour l’équipe !', body:`${seller.name} vient de vendre ${service.name}.`, tag:`sale-${id}`, url:'/' });
+  const payload = JSON.stringify({ title:'Une vente pour l’équipe !', body:saleMessage(service.name,seller.name), tag:`sale-${id}`, url:'/' });
   const rows = db.prepare('SELECT endpoint,subscription_json FROM subscriptions WHERE store_id=?').all(store.id);
   for (const row of rows) {
     // A broken or expired subscription must not prevent delivery to the rest of the team.
