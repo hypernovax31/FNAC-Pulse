@@ -109,7 +109,7 @@ async function clearFailures(db,uid) {
 export async function sendFcm(env,token,sale) {
   const access=await googleAccessToken(env);
   const appUrl=new URL(env.APP_URL);
-  const icon=new URL('icons/icon-192.png',appUrl).href;
+  const icon=new URL('icons/icon-192-v3.png',appUrl).href;
   const r=await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/messages:send`,{
     method:'POST',headers:{Authorization:`Bearer ${access}`,'content-type':'application/json'},
     body:JSON.stringify({message:{token,notification:{title:'Une vente pour l’équipe !',body:saleMessage(sale.serviceName,sale.sellerName)},

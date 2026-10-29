@@ -25,7 +25,7 @@ function serviceWorker(scope) {
   };
   const caches = {
     async open() { return cache; },
-    async keys() { return ['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','fnac-pulse-shell-v8','fnac-pulse-shell-v9','fnac-pulse-shell-v10','fnac-pulse-shell-v11','fnac-pulse-shell-v12','another-application']; },
+    async keys() { return ['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','fnac-pulse-shell-v8','fnac-pulse-shell-v9','fnac-pulse-shell-v10','fnac-pulse-shell-v11','fnac-pulse-shell-v12','fnac-pulse-shell-v13','another-application']; },
     async delete(key) { deleted.push(key); },
     async match() { return undefined; },
   };
@@ -44,15 +44,15 @@ for (const scope of ['https://example.test/', 'https://example.test/FNAC-Pulse/'
     const manifestUrl = new URL('manifest.webmanifest',scope);
     assert.equal(new URL(manifest.start_url,manifestUrl).pathname,base);
     assert.equal(new URL(manifest.scope,manifestUrl).pathname,base);
-    assert.equal(new URL(manifest.icons[0].src,manifestUrl).pathname,`${base}icons/icon-192-v2.png`);
+    assert.equal(new URL(manifest.icons[0].src,manifestUrl).pathname,`${base}icons/icon-192-v3.png`);
     const sw = serviceWorker(scope);
     await dispatch(sw.handlers.get('install'));
-    assert.deepEqual(Array.from(sw.added[0]), [base,`${base}manifest.webmanifest`,`${base}icons/icon-192-v2.png`,`${base}icons/icon-512-v2.png`,`${base}icons/icon-maskable-512-v2.png`,`${base}icons/apple-touch-icon-v2.png`,`${base}icons/icon-192.png`,`${base}fnac.svg`]);
+    assert.deepEqual(Array.from(sw.added[0]), [base,`${base}manifest.webmanifest`,`${base}icons/icon-192-v3.png`,`${base}icons/icon-512-v3.png`,`${base}icons/icon-maskable-512-v3.png`,`${base}icons/apple-touch-icon-v3.png`,`${base}icons/icon-192.png`,`${base}fnac.svg`]);
     assert.deepEqual(Array.from(sw.added[1]), [`${base}assets/app.js`,`${base}assets/app.css`]);
     await dispatch(sw.handlers.get('activate'));
-    assert.deepEqual(sw.deleted,['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','fnac-pulse-shell-v8','fnac-pulse-shell-v9','fnac-pulse-shell-v10','fnac-pulse-shell-v11']);
+    assert.deepEqual(sw.deleted,['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','fnac-pulse-shell-v8','fnac-pulse-shell-v9','fnac-pulse-shell-v10','fnac-pulse-shell-v11','fnac-pulse-shell-v12']);
     await dispatch(sw.handlers.get('push'),{data:{json:()=>({title:'Test', url:'https://elsewhere.invalid/'})}});
-    assert.equal(sw.shown[0].options.icon,`${base}icons/icon-192-v2.png`);
+    assert.equal(sw.shown[0].options.icon,`${base}icons/icon-192-v3.png`);
     assert.equal(sw.shown[0].options.data.url,scope);
   });
 }
@@ -65,17 +65,20 @@ test('PWA : icônes versionnées, tailles, masque et compatibilité des ancienne
     assert.equal(png.subarray(0,8).toString('hex'),'89504e470d0a1a0a');
     return [png.readUInt32BE(16),png.readUInt32BE(20)];
   };
-  assert.deepEqual(dimensions('icon-192-v2.png'),[192,192]);
-  assert.deepEqual(dimensions('icon-512-v2.png'),[512,512]);
-  assert.deepEqual(dimensions('icon-maskable-512-v2.png'),[512,512]);
-  assert.deepEqual(dimensions('apple-touch-icon-v2.png'),[180,180]);
-  assert.equal(manifest.icons.find(icon=>icon.purpose==='maskable')?.src,'icons/icon-maskable-512-v2.png');
-  assert.deepEqual(fs.readFileSync(new URL('icon-192.png',iconDir)),fs.readFileSync(new URL('icon-192-v2.png',iconDir)));
-  assert.deepEqual(fs.readFileSync(new URL('icon-512.png',iconDir)),fs.readFileSync(new URL('icon-512-v2.png',iconDir)));
+  assert.deepEqual(dimensions('icon-192-v3.png'),[192,192]);
+  assert.deepEqual(dimensions('icon-512-v3.png'),[512,512]);
+  assert.deepEqual(dimensions('icon-maskable-512-v3.png'),[512,512]);
+  assert.deepEqual(dimensions('apple-touch-icon-v3.png'),[180,180]);
+  assert.deepEqual(dimensions('icon-192-v2.png'),[192,192]); // anciennes installations
+  const approved=fs.readFileSync(new URL('../artwork/fnac-pulse-approved.png',import.meta.url));
+  assert.deepEqual([approved.readUInt32BE(16),approved.readUInt32BE(20)],[1254,1254]);
+  assert.equal(manifest.icons.find(icon=>icon.purpose==='maskable')?.src,'icons/icon-maskable-512-v3.png');
+  assert.deepEqual(fs.readFileSync(new URL('icon-192.png',iconDir)),fs.readFileSync(new URL('icon-192-v3.png',iconDir)));
+  assert.deepEqual(fs.readFileSync(new URL('icon-512.png',iconDir)),fs.readFileSync(new URL('icon-512-v3.png',iconDir)));
   const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
-  assert.match(html,/rel="icon"[^>]+icon-192-v2\.png/);
-  assert.match(html,/rel="apple-touch-icon"[^>]+apple-touch-icon-v2\.png/);
+  assert.match(html,/rel="icon"[^>]+icon-192-v3\.png/);
+  assert.match(html,/rel="apple-touch-icon"[^>]+apple-touch-icon-v3\.png/);
   const cloudWorker=fs.readFileSync(new URL('../src/sw-cloud.js',import.meta.url),'utf8');
-  assert.match(cloudWorker,/fnac-pulse-shell-v12/);
+  assert.match(cloudWorker,/fnac-pulse-shell-v13/);
   for(const icon of manifest.icons)assert.ok(cloudWorker.includes(icon.src));
 });

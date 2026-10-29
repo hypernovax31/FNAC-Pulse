@@ -61,5 +61,6 @@ Les tests Firebase Emulator utilisent uniquement un projet fictif `demo-fnac` ; 
 ## Sources et marques
 
 - Magasins : © les contributeurs d'[OpenStreetMap](https://www.openstreetmap.org/copyright), données ODbL via la BAse Nationale des Commerces Ouverte ; liste non officielle et non synchronisée.
+- Le visuel de l'icône PWA fourni et approuvé par l'équipe est conservé dans `artwork/fnac-pulse-approved.png` ; `node scripts/generate-icons.mjs` régénère ses formats (ImageMagick requis). Les anciennes URL d'icônes restent disponibles.
 - Identité visuelle inspirée de la Fnac ; logo issu de [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Fnac_Logo.svg). Marques et logos appartiennent à leurs propriétaires : vérifier les autorisations avant diffusion.
 - Dépôt : <https://github.com/hypernovax31/FNAC-Pulse>. Site publié : <https://hypernovax31.github.io/FNAC-Pulse/>.

@@ -33,6 +33,7 @@ test('Firebase : signature des jetons, OAuth, PIN et requête FCM',async()=>{
     assert.equal(options.headers.Authorization,'Bearer fake-access-token');
     const body=JSON.parse(options.body);assert.equal(body.message.token,'fake-fcm-registration-token');
     assert.equal(body.message.notification.body,'1 DMax fait par Morgan 👍');
+    assert.equal(body.message.webpush.notification.icon,'https://example.test/FNAC-Pulse/icons/icon-192-v3.png');
     assert.equal(body.message.webpush.fcm_options.link,'https://example.test/FNAC-Pulse/');
     assert.equal(body.message.webpush.headers.TTL,'3600');
     fcmCalls++;return failFcm?Response.json({error:{details:[{errorCode:'UNREGISTERED'}]}},{status:404}):Response.json({name:'mock-delivery'});
