@@ -6,6 +6,10 @@ Ce guide configure **GitHub Pages + Firebase Spark + Cloudflare Workers/Queues F
 >
 > Ne partagez jamais ici ou dans Git de mot de passe, PIN, fichier JSON de compte de service, clé privée VAPID, `PIN_PEPPER` ou jeton d'accès. La configuration Web Firebase, l'URL Worker et la **clé VAPID publique** ne sont pas des secrets. Les règles Firestore et les contrôles du Worker, et non la confidentialité de la configuration Web, protègent les données.
 
+## Mise à jour : cartes des objectifs personnels
+
+Publier l’interface GitHub Pages : aucune modification du Worker, des règles Firestore, des objectifs enregistrés, des ventes, des PIN ou des sessions n’est nécessaire. Dans **Mes objectifs**, la journée ne montre que les services ayant une cible calculée d’au moins 1, même si la cible est atteinte ; les vues semaine et mois montrent tous les services actifs, y compris ceux à 0 ou sans objectif. Les ventes personnelles, la cible de la période et le reste à faire sont identifiés séparément. Les objectifs hebdomadaires et mensuels couvrent la période entière ; les ventes affichées sont cumulées jusqu’à aujourd’hui. La fenêtre de saisie distingue aussi la cible de référence des trois cibles calculées. Aucun rappel de notification supplémentaire n’est créé.
+
 ## Mise à jour : installation et notifications au démarrage
 
 Publier l’interface GitHub Pages : cette mise à jour ne change ni le Worker ni les règles Firestore, et ne réinitialise aucun PIN ou session. À l’ouverture dans un navigateur, une fenêtre propose l’installation ; si la PWA est déjà ouverte en mode autonome, elle ne s’affiche pas. Si l’icône existe déjà, l’ouvrir directement : un simple onglet ne peut pas toujours détecter cette installation.
