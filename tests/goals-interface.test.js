@@ -30,6 +30,10 @@ test('Objectifs du jour : cibles à 0 ou absentes cachées, cible atteinte conse
   assert.match(html,/aria-label="Modifier les objectifs DMax"/);
   assert.doesNotMatch(html,/Modifier les objectifs Garantie/);assert.doesNotMatch(html,/objectif FVD/);
   assert.match(html,/Objectifs du jour/);assert.match(html,/jeudi 29 octobre 2026/);
+  assert.doesNotMatch(html,/Vos ventes personnelles|Cibles du jour de 1 ou plus/);
+  const friday=render(GoalsPanel,{...props,date:'2026-10-30'});
+  assert.match(friday,/<div class="goal-period-context" aria-live="polite"><div><strong>Objectifs du jour<\/strong><span>vendredi 30 octobre 2026<\/span><\/div><\/div>/);
+  assert.doesNotMatch(friday,/Vos ventes personnelles|Cibles du jour de 1 ou plus/);
   assert.match(html,/>Ventes</);assert.match(html,/>Cible</);assert.match(html,/Objectif atteint/);
   assert.match(html,/role="progressbar"[^>]+aria-label="DMax, Aujourd’hui"/);
   assert.match(html,/Planning et calcul/);assert.match(html,/Ajouter/);

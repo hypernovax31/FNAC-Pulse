@@ -23,7 +23,7 @@ export function personalGoalCards(services,goals,date,workdays,period) {
 }
 
 const periodCopy={
-  day:{title:'Objectifs du jour',hint:'Vos ventes personnelles · Cibles du jour de 1 ou plus, même atteintes.'},
+  day:{title:'Objectifs du jour',hint:null},
   week:{title:'Objectifs de la semaine',hint:'Vos ventes personnelles depuis lundi jusqu’à aujourd’hui. Tous les services sont affichés.'},
   month:{title:'Objectifs du mois',hint:'Vos ventes personnelles depuis le 1er du mois jusqu’à aujourd’hui. Tous les services sont affichés.'},
 };

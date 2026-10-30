@@ -45,7 +45,9 @@ test('Cartes : cible du jour au moins 1, y compris une cible déjà atteinte ; t
 
 test('Périodes : dates françaises, semaine à cheval sur deux années et date invalide',()=>{
   assert.equal(goalPeriodInfo('day','2026-10-30').range,'vendredi 30 octobre 2026');
-  assert.match(goalPeriodInfo('day','2026-10-30').hint,/Vos ventes personnelles/);
+  assert.equal(goalPeriodInfo('day','2026-10-30').hint,null);
+  assert.match(goalPeriodInfo('week','2026-10-30').hint,/Vos ventes personnelles depuis lundi/);
+  assert.match(goalPeriodInfo('month','2026-10-30').hint,/Vos ventes personnelles depuis le 1er du mois/);
   assert.equal(goalPeriodInfo('week','2026-10-30').range,'Du 26 octobre au 1er novembre 2026');
   assert.equal(goalPeriodInfo('week','2026-12-31').range,'Du 28 décembre 2026 au 3 janvier 2027');
   assert.equal(goalPeriodInfo('month','2026-10-30').range,'octobre 2026');
