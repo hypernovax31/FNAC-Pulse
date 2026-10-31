@@ -850,3 +850,135 @@ test('Reset ventes cloud : demandes administrateur simultanées et indisponibili
   await worker.scheduled({cron:'*/2 * * * *'},env,ctx);await Promise.all(waits.splice(0));
   assert(queued.some(job=>job.kind==='sales-reset'&&job.jobId===active.jobId));
 });
+
+test('Reset objectifs cloud : un département, tous services et vendeurs, plannings et ventes intacts',async()=>{
+  const db=new MemoryDb(),queued=[],waits=[];
+  const store=LEGACY_STORE_ID,uidOf=async(id,st=store)=>`seller-${(await digestBase64(`${st}:${id}`)).slice(0,28)}`;
+  const uid=await uidOf(1),identities=new Map([
+    ['admin-goals-reset',{sub:'administrator'}],
+    ['seller-goals-reset',{sub:uid,role:'seller',storeId:store,sellerId:1,accessVersion:'version-1'}],
+  ]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!identities.has(t))throw Error();return identities.get(t)}});
+  let queueDown=false;
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(messages){if(queueDown)throw Error('file inaccessible');queued.push(...messages.map(x=>x.body));}}};
+  const ctx={waitUntil(p){waits.push(p)}};
+  async function req(path,method='GET',body,token='admin-goals-reset'){
+    const response=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:response.status,body:await response.json()};
+  }
+  const base=(await req('/api/bootstrap')).body,other=base.stores.find(s=>s.name==='Fnac Bordeaux').id;
+  const catalog=(await db.get('pulse/catalog')).data;
+  catalog.sellers.find(s=>s.id===11).departmentId='editorial';
+  catalog.sellers.find(s=>s.id===12).active=false;catalog.sellerFlags.s12=false;
+  catalog.sellers.push({id:13,name:'Autre magasin',storeId:other,departmentId:'tech',active:true});catalog.sellerFlags.s13=true;catalog.sellerStores.s13=other;catalog.nextSellerId=14;
+  const access={active:true,storeId:store,sellerId:1,sellerKey:'s1',version:'version-1'};
+  const writes=[db.write('pulse/catalog',catalog),db.write(`pulseAccess/${uid}`,access),db.write(`pulseStatus/${uid}`,access),
+    db.write(`pulseStores/${store}/sales/vente-preservee`,{storeId:store,sellerId:1,serviceId:1,businessDate:'2026-11-01'}),
+    db.write(`pulseStores/${store}/sales/~summary-goals~`,{revision:'before-reset'})];
+  for(let id=1;id<=13;id++) {
+    const st=id===13?other:store,person=await uidOf(id,st);
+    writes.push(db.write(`pulseGoals/${person}`,{storeId:st,sellerId:id,goals:{s1:{day:null,week:null,month:id,revision:`old-target-${id}`},s2:{day:0,week:null,month:null,revision:`zero-target-${id}`}},workdays:[1,3,6],workdaysRevision:'planning-old',privateField:'preserved'}));
+  }
+  await db.commit(writes);
+  const reset={storeId:store,departmentId:'tech',jobId:'goals-reset-job-0001',confirmation:'SUPPRIMER'};
+  assert.equal((await req('/api/admin/goals/reset','POST',reset,'')).status,401);
+  assert.equal((await req('/api/admin/goals/reset','POST',{...reset,confirmation:'OUI'})).status,400);
+  assert.equal((await req('/api/admin/goals/reset','POST',{...reset,departmentId:'inconnu'})).status,400);
+  assert.equal((await req(`/api/admin/goals/reset?storeId=${store}`)).body.status,'idle');
+  queueDown=true;
+  const started=await req('/api/admin/goals/reset','POST',reset);assert.equal(started.status,200);assert.equal(started.body.status,'running');
+  assert.equal(started.body.totalSellers,11);assert.equal(started.body.departmentId,'tech');assert.equal('sellerIds' in started.body,false);
+  assert.equal((await db.get(`pulseGoals/${uid}`)).data.goals.s1.month,1); // aucun lot avant la confirmation traitée
+  assert.equal((await req('/api/admin/goals/reset','POST',{...reset,jobId:'goals-reset-job-0002',departmentId:'editorial'})).status,409);
+  const target={storeId:store,sellerId:1,serviceId:1,values:{day:null,week:null,month:42},revision:'old-target-1'};
+  const blocked=await req('/api/goals','POST',target,'seller-goals-reset');assert.equal(blocked.status,409);assert.match(blocked.body.error,/réinitialisation/);
+  // Les objectifs du département voisin restent modifiables durant le reset.
+  assert.equal((await req('/api/admin/goals','POST',{...target,sellerId:11,revision:'old-target-11'})).status,200);
+  // Une file indisponible après le commit est reprise sans seconde demande.
+  queueDown=false;await worker.scheduled({cron:'*/2 * * * *'},env,ctx);await Promise.all(waits.splice(0));
+  let message=makeMessage(queued.shift());assert.equal(message.body.kind,'goals-reset');await worker.queue({messages:[message]},env);assert(message.acked);
+  let progress=(await req(`/api/admin/goals/reset?storeId=${store}`)).body;assert.equal(progress.processedSellers,10);assert.equal(progress.totalSellers,11);
+  assert.deepEqual((await db.get(`pulseGoals/${uid}`)).data.goals,{});
+  assert.deepEqual((await db.get(`pulseGoals/${uid}`)).data.workdays,[1,3,6]);assert.equal((await db.get(`pulseGoals/${uid}`)).data.privateField,'preserved');
+  assert.notEqual((await db.get(`pulseStatus/${uid}`)).data.goalsRevision,undefined);
+  // Le lot déjà traité accepte un nouvel objectif et les lots suivants ne l'effacent pas.
+  const fresh=await req('/api/goals','POST',{...target,revision:null},'seller-goals-reset');assert.equal(fresh.status,200);assert.equal(fresh.body.goals.s1.month,42);
+  message=makeMessage(queued.shift());await worker.queue({messages:[message]},env);assert(message.acked);
+  progress=(await req(`/api/admin/goals/reset?storeId=${store}`)).body;assert.equal(progress.status,'done');assert.equal(progress.processedSellers,11);
+  assert.deepEqual((await db.get(`pulseGoals/${await uidOf(12)}`)).data.goals,{}); // vendeur archivé inclus
+  assert.equal((await db.get(`pulseGoals/${uid}`)).data.goals.s1.month,42);
+  assert.equal((await db.get(`pulseGoals/${await uidOf(11)}`)).data.goals.s1.month,42);
+  assert.equal((await db.get(`pulseGoals/${await uidOf(13,other)}`)).data.goals.s1.month,13);
+  assert.equal((await db.get(`pulseStores/${store}/sales/vente-preservee`)).data.sellerId,1);
+  assert.equal((await db.get(`pulseAccess/${uid}`)).data.version,'version-1');
+  assert.notEqual((await db.get(`pulseStores/${store}/sales/~summary-goals~`)).data.revision,'before-reset');
+  // Rejeu et redémarrage : un jobId déjà utilisé ne supprime jamais une nouvelle cible.
+  assert.equal((await req('/api/admin/goals/reset','POST',reset)).body.status,'done');
+  assert.equal((await db.get(`pulseGoals/${uid}`)).data.goals.s1.month,42);
+  assert.equal((await req('/api/admin/goals/reset','POST',{...reset,departmentId:'editorial'})).status,409);
+  const second=await req('/api/admin/goals/reset','POST',{...reset,departmentId:'editorial',jobId:'goals-reset-job-0002'});assert.equal(second.body.totalSellers,1);
+  message=makeMessage(queued.shift());await worker.queue({messages:[message]},env);assert(message.acked);
+  assert.deepEqual((await db.get(`pulseGoals/${await uidOf(11)}`)).data.goals,{});
+  assert.equal((await req('/api/admin/goals/reset','POST',reset)).body.status,'superseded');
+  assert.equal((await db.get(`pulseGoals/${uid}`)).data.goals.s1.month,42);
+});
+
+test('Reset objectifs cloud : protection contre une écriture et un planning concurrents',async()=>{
+  const db=new MemoryDb(),queue=[];const store=LEGACY_STORE_ID,uid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;
+  const identities=new Map([['admin',{sub:'administrator'}],['seller',{sub:uid,role:'seller',storeId:store,sellerId:1,accessVersion:'v1'}]]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_e,t)=>{if(!identities.has(t))throw Error();return identities.get(t)}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(xs){queue.push(...xs.map(x=>x.body));}}},ctx={waitUntil(){}};
+  async function req(path,method='GET',body,token='admin'){const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),authorization:`Bearer ${token}`},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};}
+  await req('/api/bootstrap');const access={active:true,storeId:store,sellerId:1,sellerKey:'s1',version:'v1'};
+  await db.commit([db.write(`pulseAccess/${uid}`,access),db.write(`pulseStatus/${uid}`,access),db.write(`pulseGoals/${uid}`,{storeId:store,sellerId:1,goals:{s1:{day:2,week:null,month:null,revision:'ancienne-revision'}},workdays:[1,2,3,4,5],workdaysRevision:'planning-ancien'})]);
+  const reset={storeId:store,departmentId:'tech',jobId:'goal-race-reset-001',confirmation:'SUPPRIMER'};
+  const original=db.commit.bind(db);let race=true;
+  db.commit=async writes=>{
+    if(race&&writes.some(w=>w.check&&w.path===`pulseGoalsResets/${store}`)) {race=false;assert.equal((await req('/api/admin/goals/reset','POST',reset)).status,200);}
+    return original(writes);
+  };
+  const saving=await req('/api/goals','POST',{storeId:store,sellerId:1,serviceId:1,values:{day:null,week:null,month:55},revision:'ancienne-revision'},'seller');
+  assert.equal(saving.status,409);assert.match(saving.body.error,/réinitialisation/);
+  assert.equal((await db.get(`pulseGoals/${uid}`)).data.goals.s1.day,2);
+  let workdayRace=true;
+  db.commit=async writes=>{
+    if(workdayRace&&writes.some(w=>w.path===`pulseGoalsResets/${store}`&&!w.check)) {
+      workdayRace=false;const old=(await db.get(`pulseGoals/${uid}`)).data;
+      await original([db.write(`pulseGoals/${uid}`,{...old,workdays:[2,6,0],workdaysRevision:'new-planning'})]);
+    }
+    return original(writes);
+  };
+  let m=makeMessage(queue.shift());await worker.queue({messages:[m]},env);assert(m.retried);
+  m=makeMessage(m.body);await worker.queue({messages:[m]},env);assert(m.acked);
+  const final=(await db.get(`pulseGoals/${uid}`)).data;assert.deepEqual(final.goals,{});assert.deepEqual(final.workdays,[2,6,0]);assert.equal(final.workdaysRevision,'new-planning');
+});
+
+test('Reset objectifs cloud : confirmations concurrentes et photo du département au démarrage',async()=>{
+  const db=new MemoryDb(),queue=[],store=LEGACY_STORE_ID,worker=createWorker({createDb:()=>db,verifyIdToken:async(_e,t)=>t==='admin'?{sub:'administrator'}:Promise.reject(Error())});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(xs){queue.push(...xs.map(x=>x.body));}}},ctx={waitUntil(){}};
+  const req=async(path,method='GET',body)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{'content-type':'application/json',authorization:'Bearer admin'},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  await req('/api/bootstrap');
+  const uid1=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`,uid2=`seller-${(await digestBase64(`${store}:2`)).slice(0,28)}`;
+  await db.commit([db.write(`pulseGoals/${uid1}`,{goals:{s1:{month:10,revision:'revision-1'}}}),db.write(`pulseGoals/${uid2}`,{goals:{s1:{month:20,revision:'revision-2'}}})]);
+  // Changement au même instant : la précondition catalogue impose de refaire la sélection.
+  const commit=db.commit.bind(db);let race=true;
+  db.commit=async writes=>{
+    if(race&&writes.some(w=>w.path===`pulseGoalsResets/${store}`&&!w.check)) {
+      race=false;const catalog=(await db.get('pulse/catalog')).data;catalog.sellers.find(s=>s.id===2).departmentId='editorial';await commit([db.write('pulse/catalog',catalog)]);
+    }
+    return commit(writes);
+  };
+  const body={storeId:store,departmentId:'tech',jobId:'parallel-goal-reset-001',confirmation:'SUPPRIMER'};
+  const first=await req('/api/admin/goals/reset','POST',body);assert.equal(first.status,200);
+  const state=(await db.get(`pulseGoalsResets/${store}`)).data;assert.equal(state.jobId,first.body.jobId);assert(state.sellerIds.includes(1));assert(!state.sellerIds.includes(2));assert.equal(state.totalSellers,11);
+  // Une réaffectation postérieure ne change pas la liste confirmée.
+  const updated=(await db.get('pulse/catalog')).data;updated.sellers.find(s=>s.id===1).departmentId='editorial';updated.sellers.find(s=>s.id===2).departmentId='tech';await commit([db.write('pulse/catalog',updated)]);
+  while(queue.length){const m=makeMessage(queue.shift());await worker.queue({messages:[m]},env);assert(m.acked);}
+  assert.deepEqual((await db.get(`pulseGoals/${uid1}`)).data.goals,{});
+  assert.equal((await db.get(`pulseGoals/${uid2}`)).data.goals.s1.month,20);
+  const results=await Promise.all([
+    req('/api/admin/goals/reset','POST',{...body,jobId:'parallel-goal-reset-002'}),
+    req('/api/admin/goals/reset','POST',{...body,departmentId:'editorial',jobId:'parallel-goal-reset-003'}),
+  ]);
+  assert.deepEqual(results.map(x=>x.status).sort(),[200,409]);
+});

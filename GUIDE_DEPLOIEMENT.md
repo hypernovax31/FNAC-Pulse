@@ -6,6 +6,12 @@ Ce guide configure **GitHub Pages + Firebase Spark + Cloudflare Workers/Queues F
 >
 > Ne partagez jamais ici ou dans Git de mot de passe, PIN, fichier JSON de compte de service, clé privée VAPID, `PIN_PEPPER` ou jeton d'accès. La configuration Web Firebase, l'URL Worker et la **clé VAPID publique** ne sont pas des secrets. Les règles Firestore et les contrôles du Worker, et non la confidentialité de la configuration Web, protègent les données.
 
+## Mise à jour : reset des objectifs d’un département
+
+1. Déployer le Worker avec les secrets et la Queue existants, puis publier Pages. Les règles Firestore restent inchangées. **Le déploiement ne lance aucun reset.** Faire rouvrir la PWA en ligne pour mettre l’interface à jour.
+2. Dans **Administration → Magasins**, choisir le magasin ; dans **Objectifs → Reset global des objectifs**, choisir un département, lire l’avertissement, saisir **SUPPRIMER** et confirmer. Les objectifs de tous les vendeurs rattachés à ce département au moment de la confirmation, vendeurs et services archivés compris, deviennent non renseignés pour les trois périodes. Aucune sauvegarde automatique n’est créée. Ventes, plannings, PIN, autres départements et autres magasins sont conservés.
+3. Le Worker conserve un travail privé et traite les vendeurs par lots. Leur statut individuel et le marqueur anonyme du récapitulatif signalent les changements ; la Queue et le cron reprennent les interruptions. Les vendeurs dont le lot n’est pas encore traité doivent attendre avant de modifier leurs cibles. Une cible créée après leur traitement est conservée. Les quotas gratuits peuvent retarder l’opération. Le suivi permet de reprendre une réponse perdue sans réexécuter un ancien reset ; les caches hors ligne et sauvegardes externes ne sont pas effacés.
+
 ## Mise à jour : reset global des ventes d’un magasin
 
 1. Déployer le Worker avec la Queue et les secrets existants, puis publier l’interface Pages. Les règles Firestore restent inchangées. **Le déploiement ne lance aucun reset.** Faire fermer et rouvrir Fnac Pulse en ligne sur les appareils de l’équipe.

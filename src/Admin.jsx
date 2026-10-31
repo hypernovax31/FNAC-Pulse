@@ -6,6 +6,7 @@ import { sellersForStore, orderServices } from './catalog';
 import { departmentsForStore, sellerDepartmentId } from './departments';
 import { GoalForm, WorkdaysForm } from './Goals';
 import { SalesResetPanel } from './SalesReset';
+import { GoalsResetPanel } from './GoalsReset';
 import { normalizeWorkdays } from './goals.js';
 
 function directoryDate(value) {
@@ -131,6 +132,16 @@ export default function Admin({onClose,data,session,onChanged}) {
       throw e;
     } finally {setBusy(false);}
   }
+  async function refreshAfterGoalsReset() {
+    const scope=`${adminStore}:${adminSeller}:${tab}`;
+    if(adminStore&&adminSeller&&tab==='goals') {
+      try {
+        const latest=await api(`/api/admin/goals?storeId=${encodeURIComponent(adminStore)}&sellerId=${encodeURIComponent(adminSeller)}`,{token});
+        if(goalScope.current===scope)applyAdminGoals(latest);
+      } catch { /* La prochaine sélection rechargera les données. */ }
+    }
+    onChanged();
+  }
   async function login(e) {
     e.preventDefault();setBusy(true);setError('');
     try {
@@ -208,6 +219,7 @@ export default function Admin({onClose,data,session,onChanged}) {
           <section className="admin-goals-services" aria-labelledby="admin-goals-services-title"><div className="workdays-heading"><div><h4 id="admin-goals-services-title">Services</h4><p>Définissez une cible et sa période de référence pour chaque service.</p></div></div><GoalForm services={activeServices} goals={adminGoals} workdays={adminWorkdays} date={data.today} onSave={saveAdminGoals} disabled={busy}/></section>
         </React.Fragment> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un vendeur pour gérer ses objectifs.</div>}
         <div className="admin-note"><Info size={15}/> Les objectifs se répètent et toute modification s’applique aux périodes suivantes.</div>
+        <GoalsResetPanel key={adminStore} storeId={adminStore} storeName={adminStoreName} departments={storeDepartments} token={token} disabled={busy||!allLoaded} onUpdate={refreshAfterGoalsReset}/>
       </>}
       {tab==='departments'&&adminStore&&<>
         <div className="admin-section-heading"><div><h3>Départements du magasin</h3><p>Renommez, ajoutez ou archivez les départements de ce magasin. Réaffectez les vendeurs actifs avant d’archiver leur département.</p></div></div>

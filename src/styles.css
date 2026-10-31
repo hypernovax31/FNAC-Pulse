@@ -842,7 +842,7 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .remembered-profile span,[data-theme='dark'] .remembered-profile small,[data-theme='dark'] .account-profile span,[data-theme='dark'] .account-help,[data-theme='dark'] .profile-unavailable p,[data-theme='dark'] .pin-status,[data-theme='dark'] .pin-help { color:#b7bcae; }
 [data-theme='dark'] .profile-status-error { color:#f2b6ad; }
 
-/* Réinitialisation volontaire et irréversible des ventes d'un magasin. */
+/* Réinitialisations volontaires et irréversibles, ventes ou objectifs. */
 .sales-reset { margin-top:20px; padding:15px; border:1px solid #efd9d3; border-radius:9px; background:#fffaf8; }
 .sales-reset-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
 .sales-reset-heading > div { min-width:0; }
@@ -864,6 +864,8 @@ p,h1,h2,h3 { margin:0; }
 .sales-reset-error button { color:inherit; background:transparent; text-decoration:underline; font-weight:750; }
 .sales-reset-recovery { margin-top:10px; }
 .sales-reset-recovery .outline-button { margin-top:8px; min-height:44px; }
+.goals-reset-select { display:flex; flex-direction:column; gap:6px; max-width:390px; margin:14px 0 10px; }
+.goals-reset-select .text-input { width:100%; min-width:0; }
 @media (max-width:520px) { .sales-reset-heading { flex-direction:column; } .sales-reset-actions > button { flex:1 1 100%; } }
 [data-theme='dark'] .sales-reset { background:#302520; border-color:#69463d; }
 [data-theme='dark'] .sales-reset-heading h4,[data-theme='dark'] .sales-reset-warning strong { color:#ffd3ca; }

@@ -265,3 +265,46 @@ test('SQLite reset ventes : confirmation, toutes dates, isolation et reprise san
     assert.equal((await request(`/api/bootstrap?storeId=${other}&sellerId=${otherSeller}`)).body.stats.day.total,1);
   } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
 });
+
+test('SQLite reset objectifs : département isolé, objectifs non renseignés, rejouabilité et persistance',async()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'fnac-pulse-goals-reset-')),port=await freePort(),url=`http://127.0.0.1:${port}`;let server;
+  const request=async(route,method='GET',body,token)=>{const r=await fetch(url+route,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,body:await r.json()};};
+  try {
+    server=await start(port,folder);
+    const data=(await request('/api/bootstrap')).body,store=LEGACY_STORE_ID,other=data.stores.find(s=>s.name==='Fnac Bordeaux').id;
+    const [one,two,archived]=data.sellers.slice(0,3).map(x=>x.id),service=data.services[0].id,service2=data.services[1].id;
+    const token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
+    const otherSeller=(await request('/api/admin/entities/sellers','POST',{name:'Autre équipe',storeId:other},token)).body.id;
+    assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:store,departmentId:'editorial'},token)).status,200);
+    const save=(sellerId,serviceId=service,storeId=store,month=20)=>request('/api/admin/goals','POST',{storeId,sellerId,serviceId,values:{day:null,week:null,month},revision:null},token);
+    for(const id of [one,two,archived])assert.equal((await save(id)).status,200);
+    assert.equal((await save(one,service2,store,0)).status,200);assert.equal((await save(otherSeller,service,other,35)).status,200);
+    assert.equal((await request('/api/admin/workdays','POST',{storeId:store,sellerId:one,workdays:[2,6,0],revision:null},token)).status,200);
+    assert.equal((await request('/api/sales','POST',{storeId:store,sellerId:one,serviceId:service,requestId:'sqlite-goals-sale-001'})).status,201);
+    assert.equal((await request(`/api/admin/entities/sellers/${archived}`,'PATCH',{storeId:store,active:false},token)).status,200);
+    const reset={storeId:store,departmentId:'tech',jobId:'sqlite-goals-reset-001',confirmation:'SUPPRIMER'};
+    assert.equal((await request('/api/admin/goals/reset','POST',reset)).status,401);
+    assert.equal((await request('/api/admin/goals/reset','POST',{...reset,confirmation:'OUI'},token)).status,400);
+    assert.equal((await request('/api/admin/goals/reset','POST',{...reset,departmentId:'inconnu'},token)).status,400);
+    assert.equal((await request(`/api/admin/goals/reset?storeId=${store}`,'GET',undefined,token)).body.status,'idle');
+    const done=await request('/api/admin/goals/reset','POST',reset,token);assert.equal(done.status,200);assert.equal(done.body.status,'done');assert(done.body.totalSellers>=2);assert.equal(done.body.resetSellers,2);
+    let current=(await request(`/api/goals?storeId=${store}&sellerId=${one}`)).body;
+    assert.deepEqual(current.goals,{});assert.deepEqual(current.workdays,[2,6,0]);assert(current.workdaysRevision);
+    assert.equal((await request(`/api/goals?storeId=${store}&sellerId=${two}`)).body.goals[`s${service}`].month,20);
+    assert.equal((await request(`/api/goals?storeId=${other}&sellerId=${otherSeller}`)).body.goals[`s${service}`].month,35);
+    assert.equal((await request(`/api/bootstrap?storeId=${store}&sellerId=${one}`)).body.stats.day.total,1);
+    let raw=new Database(path.join(folder,'pulse.sqlite'));assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM seller_goals WHERE store_id=? AND seller_id=?').get(store,archived).n,0);raw.close();
+    assert.equal((await save(one,service,store,42)).status,200);
+    assert.equal((await request('/api/admin/goals/reset','POST',reset,token)).body.status,'done');
+    assert.equal((await request(`/api/goals?storeId=${store}&sellerId=${one}`)).body.goals[`s${service}`].month,42);
+    assert.equal((await request('/api/admin/goals/reset','POST',{...reset,departmentId:'editorial'},token)).status,409);
+    await stop(server);server=await start(port,folder);
+    const token2=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
+    assert.equal((await request('/api/admin/goals/reset','POST',reset,token2)).body.status,'done');
+    assert.equal((await request(`/api/goals?storeId=${store}&sellerId=${one}`)).body.goals[`s${service}`].month,42);
+    assert.equal((await request('/api/admin/goals/reset','POST',{...reset,departmentId:'editorial',jobId:'sqlite-goals-reset-002'},token2)).body.status,'done');
+    assert.deepEqual((await request(`/api/goals?storeId=${store}&sellerId=${two}`)).body.goals,{});
+    assert.equal((await request('/api/admin/goals/reset','POST',reset,token2)).body.status,'superseded');
+    assert.equal((await request(`/api/goals?storeId=${store}&sellerId=${one}`)).body.goals[`s${service}`].month,42);
+  } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
+});

@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LEGACY_STORE_ID, comparePeople, orderServices } from '../src/catalog.js';
 import { validGoalValues, validWorkdays, normalizeWorkdays } from '../src/goals.js';
+import { GOALS_RESET_CONFIRMATION } from '../src/goals-reset.js';
 import { saleMessage } from '../src/sale-message.js';
 import { DEFAULT_DEPARTMENTS, TECH_DEPARTMENT_ID, departmentsForStore, sellerDepartmentId } from '../src/departments.js';
 import { summaryGoals } from '../src/summary-goals.js';
@@ -47,6 +48,11 @@ CREATE TABLE IF NOT EXISTS sales_reset_requests (
   job_id TEXT PRIMARY KEY, store_id TEXT NOT NULL, deleted_sales INTEGER NOT NULL, completed_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sales_reset_store ON sales_reset_requests(store_id, completed_at);
+CREATE TABLE IF NOT EXISTS goals_reset_requests (
+  job_id TEXT PRIMARY KEY, store_id TEXT NOT NULL, department_id TEXT NOT NULL, department_name TEXT NOT NULL,
+  total_sellers INTEGER NOT NULL, reset_sellers INTEGER NOT NULL, completed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS goals_reset_store ON goals_reset_requests(store_id, completed_at);
 CREATE TABLE IF NOT EXISTS service_orders (
   store_id TEXT NOT NULL REFERENCES stores(id), service_id INTEGER NOT NULL REFERENCES services(id),
   position INTEGER NOT NULL, PRIMARY KEY(store_id,service_id)
@@ -382,6 +388,42 @@ app.get('/api/admin/all', requireAdmin, (req,res) => {
     services:db.prepare('SELECT id,name,icon,active FROM services ORDER BY sort_order,id').all(),
     serviceOrders:serviceOrders(), departmentsByStore:localDepartmentsByStore(),
   });
+});
+function localGoalsResetStatus(row) {
+  return row?{status:'done',jobId:row.job_id,departmentId:row.department_id,departmentName:row.department_name,
+    totalSellers:row.total_sellers,processedSellers:row.total_sellers,resetSellers:row.reset_sellers,startedAt:row.completed_at,finishedAt:row.completed_at}:
+    {status:'idle',jobId:null,departmentId:null,departmentName:'',totalSellers:0,processedSellers:0,resetSellers:0};
+}
+app.get('/api/admin/goals/reset',requireAdmin,(req,res)=>{
+  const {storeId}=req.query;
+  if(!activeStore(storeId))return failure(res,'Choisissez un magasin valide.');
+  res.json(localGoalsResetStatus(db.prepare('SELECT * FROM goals_reset_requests WHERE store_id=? ORDER BY rowid DESC LIMIT 1').get(storeId)));
+});
+app.post('/api/admin/goals/reset',requireAdmin,(req,res)=>{
+  const {storeId,departmentId,jobId,confirmation}=req.body||{};
+  if(!activeStore(storeId)||typeof departmentId!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(departmentId)||
+     typeof jobId!=='string'||!/^[A-Za-z0-9_-]{8,80}$/.test(jobId)||confirmation!==GOALS_RESET_CONFIRMATION)
+    return failure(res,'Confirmation, magasin ou département invalide.');
+  const existing=db.prepare('SELECT * FROM goals_reset_requests WHERE job_id=?').get(jobId);
+  if(existing) {
+    if(existing.store_id!==storeId||existing.department_id!==departmentId)return failure(res,'Identifiant de réinitialisation déjà utilisé.',409);
+    const latest=db.prepare('SELECT job_id FROM goals_reset_requests WHERE store_id=? ORDER BY rowid DESC LIMIT 1').get(storeId);
+    return res.json(latest?.job_id===jobId?localGoalsResetStatus(existing):{status:'superseded',jobId,departmentId});
+  }
+  const department=localDepartments(storeId,false).find(d=>d.id===departmentId);
+  if(!department)return failure(res,'Choisissez un département de ce magasin.');
+  const result=db.transaction(()=>{
+    const scope="store_id=? AND COALESCE(NULLIF(department_id,''),'tech')=?";
+    const totalSellers=db.prepare(`SELECT COUNT(*) AS n FROM sellers WHERE ${scope}`).get(storeId,departmentId).n;
+    const resetSellers=db.prepare(`SELECT COUNT(DISTINCT seller_id) AS n FROM seller_goals WHERE store_id=? AND seller_id IN (SELECT id FROM sellers WHERE ${scope})`).get(storeId,storeId,departmentId).n;
+    db.prepare(`DELETE FROM seller_goals WHERE store_id=? AND seller_id IN (SELECT id FROM sellers WHERE ${scope})`).run(storeId,storeId,departmentId);
+    const when=Date.now();
+    db.prepare('INSERT INTO goals_reset_requests(job_id,store_id,department_id,department_name,total_sellers,reset_sellers,completed_at) VALUES (?,?,?,?,?,?,?)')
+      .run(jobId,storeId,departmentId,department.name,totalSellers,resetSellers,when);
+    return {status:'done',jobId,departmentId,departmentName:department.name,totalSellers,processedSellers:totalSellers,resetSellers,startedAt:when,finishedAt:when};
+  })();
+  if(result.resetSellers)broadcast(storeId,{kind:'goals-reset'});
+  res.json(result);
 });
 app.get('/api/admin/goals',requireAdmin,(req,res)=>{
   const {storeId,sellerId}=req.query;

@@ -443,13 +443,13 @@ export default function App() {
     if(CLOUD)return;
     if(!session){setConnection('waiting');return;}
     const source=new EventSource(`/api/events?storeId=${encodeURIComponent(session.storeId)}`);
-    source.addEventListener('ready',()=>{setConnection('live');refresh();queueSummary();});
+    source.addEventListener('ready',()=>{setConnection('live');refresh();loadGoals();queueSummary();});
     source.addEventListener('change',e=>{
       try {
         const event=JSON.parse(e.data);
         if(event.kind==='sale'&&event.clientId!==clientId.current&&(event.departmentId||'tech')===activeDepartmentId){sound.current?.play();flash(saleMessage(event.serviceName,event.sellerName),{tone:'celebrate'});}
-        if(event.kind==='goals'&&Number(event.sellerId)===Number(session.sellerId))loadGoals();
-        if(event.kind==='goals'||event.kind==='config')queueSummary();
+        if(event.kind==='goals-reset'||(event.kind==='goals'&&Number(event.sellerId)===Number(session.sellerId)))loadGoals();
+        if(event.kind==='goals'||event.kind==='goals-reset'||event.kind==='config')queueSummary();
       } catch{}
       refresh();
     });
