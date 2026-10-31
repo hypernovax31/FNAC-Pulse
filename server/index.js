@@ -10,6 +10,7 @@ import { validGoalValues, validWorkdays, normalizeWorkdays } from '../src/goals.
 import { saleMessage } from '../src/sale-message.js';
 import { DEFAULT_DEPARTMENTS, TECH_DEPARTMENT_ID, departmentsForStore, sellerDepartmentId } from '../src/departments.js';
 import { summaryGoals } from '../src/summary-goals.js';
+import { SALES_RESET_CONFIRMATION } from '../src/sales-reset.js';
 import { summarize, earliestDate } from '../src/cloud-stats.js';
 import { DIRECTORY_VERSION, mergeStoreDirectory } from '../src/store-directory.js';
 import directorySnapshot from './fnac-directory.json' with {type:'json'};
@@ -39,6 +40,13 @@ CREATE TABLE IF NOT EXISTS sales (
   business_date TEXT NOT NULL, created_at TEXT NOT NULL, deleted_at TEXT, source TEXT NOT NULL DEFAULT 'sale'
 );
 CREATE INDEX IF NOT EXISTS sales_period ON sales(store_id, business_date, deleted_at);
+-- Marqueurs techniques anonymes : un ancien identifiant ne doit jamais
+-- recréer une vente après sa suppression par un reset.
+CREATE TABLE IF NOT EXISTS reset_sale_requests (request_id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS sales_reset_requests (
+  job_id TEXT PRIMARY KEY, store_id TEXT NOT NULL, deleted_sales INTEGER NOT NULL, completed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sales_reset_store ON sales_reset_requests(store_id, completed_at);
 CREATE TABLE IF NOT EXISTS service_orders (
   store_id TEXT NOT NULL REFERENCES stores(id), service_id INTEGER NOT NULL REFERENCES services(id),
   position INTEGER NOT NULL, PRIMARY KEY(store_id,service_id)
@@ -269,6 +277,7 @@ app.post('/api/sales', (req,res) => {
   if (!store || !seller || !service) return failure(res,'Choisissez un magasin, un vendeur et un service valides.');
   const safeRequest = typeof requestId === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(requestId) ? requestId : null;
   if (safeRequest) {
+    if(db.prepare('SELECT 1 FROM reset_sale_requests WHERE request_id=?').get(safeRequest))return failure(res,'Cette vente a été réinitialisée. Vérifiez le bilan avant de réessayer.',409);
     const existing = db.prepare('SELECT id,store_id,seller_id,service_id FROM sales WHERE request_id=?').get(safeRequest);
     if (existing) {
       if (existing.store_id !== store.id || existing.seller_id !== seller.id || existing.service_id !== service.id) return failure(res,'Identifiant de requête déjà utilisé.',409);
@@ -477,6 +486,34 @@ app.post('/api/admin/services/order',requireAdmin,(req,res)=>{
     serviceIds.forEach((id,index)=>insert.run(storeId,Number(id),index));
   })();
   broadcast(storeId,{kind:'config'});res.json({ok:true});
+});
+function localResetStatus(row) {
+  return row?{status:'done',jobId:row.job_id,deletedSales:row.deleted_sales,startedAt:row.completed_at,finishedAt:row.completed_at}:
+    {status:'idle',jobId:null,deletedSales:0};
+}
+app.get('/api/admin/sales/reset',requireAdmin,(req,res)=>{
+  const {storeId}=req.query;
+  if(!activeStore(storeId))return failure(res,'Choisissez un magasin valide.');
+  const latest=db.prepare('SELECT * FROM sales_reset_requests WHERE store_id=? ORDER BY rowid DESC LIMIT 1').get(storeId);
+  res.json(localResetStatus(latest));
+});
+app.post('/api/admin/sales/reset',requireAdmin,(req,res)=>{
+  const {storeId,jobId,confirmation}=req.body||{};
+  if(!activeStore(storeId)||typeof jobId!=='string'||!/^[A-Za-z0-9_-]{8,80}$/.test(jobId)||confirmation!==SALES_RESET_CONFIRMATION)
+    return failure(res,'Confirmation ou sélection du magasin invalide.');
+  const existing=db.prepare('SELECT * FROM sales_reset_requests WHERE job_id=?').get(jobId);
+  if(existing) {
+    if(existing.store_id!==storeId)return failure(res,'Identifiant de réinitialisation déjà utilisé.',409);
+    const latest=db.prepare('SELECT job_id FROM sales_reset_requests WHERE store_id=? ORDER BY rowid DESC LIMIT 1').get(storeId);
+    return res.json(latest?.job_id===jobId?localResetStatus(existing):{status:'superseded',jobId,deletedSales:0});
+  }
+  const result=db.transaction(()=>{
+    db.prepare('INSERT OR IGNORE INTO reset_sale_requests(request_id) SELECT request_id FROM sales WHERE store_id=? AND request_id IS NOT NULL').run(storeId);
+    const deletedSales=db.prepare('DELETE FROM sales WHERE store_id=?').run(storeId).changes,when=Date.now();
+    db.prepare('INSERT INTO sales_reset_requests(job_id,store_id,deleted_sales,completed_at) VALUES (?,?,?,?)').run(jobId,storeId,deletedSales,when);
+    return {status:'done',jobId,deletedSales,startedAt:when,finishedAt:when};
+  })();
+  broadcast(storeId,{kind:'reset'});res.json(result);
 });
 app.get('/api/admin/counts',requireAdmin,(req,res) => {
   const {storeId,sellerId}=req.query;

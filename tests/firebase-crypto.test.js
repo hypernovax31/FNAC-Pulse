@@ -60,3 +60,15 @@ test('Firestore BatchGet : lots, documents absents et résultats dans le désord
   assert.equal(rows[0].data.value,0);assert.equal(rows[102].data.value,102);assert.equal(rows[103],null);assert.equal(rows[202].data.value,202);
   assert.deepEqual(await db.getMany([]),[]);assert.deepEqual(calls,[100,100,3]);
 });
+
+test('Firestore : pagination par nom avec curseur et filtre de magasin',async()=>{
+  const {FirestoreRest}=await import('../worker/firebase.js');
+  const db=new FirestoreRest({FIREBASE_PROJECT_ID:'demo-fnac'},{token:async()=> 'test'}),calls=[];
+  db.request=async(path,options)=>{calls.push({path,options});return [{document:{name:`${db.name('pulseOutbox')}\/next-id`,fields:{status:{stringValue:'pending'}},updateTime:'v1'}}]};
+  const rows=await db.page('pulseOutbox',{field:'storeId',value:'magasin-test',limit:20,after:'old-id'});
+  assert.equal(rows[0].id,'next-id');assert.equal(calls[0].path,':runQuery');
+  const query=calls[0].options.body.structuredQuery;
+  assert.equal(query.limit,20);assert.equal(query.where.fieldFilter.value.stringValue,'magasin-test');
+  assert.equal(query.orderBy[0].field.fieldPath,'__name__');
+  assert.equal(query.startAt.before,false);assert.equal(query.startAt.values[0].referenceValue,db.name('pulseOutbox/old-id'));
+});

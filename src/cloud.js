@@ -8,6 +8,7 @@ import { earliestDate, parisToday, summarize } from './cloud-stats';
 import { comparePeople, orderServices, sellerStoreId } from './catalog';
 import { createSaleAnnouncer, createSaleSnapshotFilter, isFreshSale } from './live-sales';
 import { sellerDepartmentId, saleDepartmentId } from './departments';
+import { salesGeneration, saleInGeneration } from './sales-reset.js';
 
 export const CLOUD=import.meta.env.VITE_BACKEND==='cloud';
 export const WORKER_URL=(import.meta.env.VITE_WORKER_URL||'').replace(/\/$/,'');
@@ -70,14 +71,21 @@ function presentation(catalog,storeId) {
   };
 }
 export function listenStore(session,day,clientId,onChange,onSale,onError,onGoalsChanged=()=>{},onSummaryChanged=()=>{}) {
-  let catalog=null,sales=[],catalogReady=false,salesReady=false,catalogCache=true,salesCache=true;
-  const freshSales=createSaleSnapshotFilter({day,clientId});
+  let catalog=null,sales=[],generation='',catalogReady=false,salesReady=false,resetReady=false,catalogCache=true,salesCache=true,resetCache=true;
+  const freshSales=createSaleSnapshotFilter({day,clientId}),pendingFresh=new Map();
   const announcer=createSaleAnnouncer(sale=>{
     const self=catalog?.sellers.find(s=>Number(s.id)===Number(session.sellerId)&&sellerStoreId(s)===session.storeId);
     if(self&&isFreshSale(sale,day,clientId)&&saleDepartmentId(sale)===sellerDepartmentId(self))onSale(sale);
   });
+  const flushFresh=()=>{
+    if(!resetReady)return;
+    for(const [id,sale] of pendingFresh) {
+      if(!isFreshSale(sale,day,clientId))pendingFresh.delete(id);
+      else if(saleInGeneration(sale,generation)){pendingFresh.delete(id);announcer.add(sale);}
+    }
+  };
   let goalRevision=Symbol('premier chargement'),summaryRevision=Symbol('premier chargement'),catalogSignature='';
-  const emit=()=>{if(catalogReady&&salesReady){const scoped={...catalog,services:orderServices(catalog.services,catalog.serviceOrders,session.storeId)};onChange({...presentation(scoped,session.storeId),today:day,stats:summarize(scoped,sales,session.sellerId,day)},!(catalogCache||salesCache));}};
+  const emit=()=>{if(catalogReady&&salesReady&&resetReady){const scoped={...catalog,services:orderServices(catalog.services,catalog.serviceOrders,session.storeId)};const current=sales.filter(sale=>saleInGeneration(sale,generation));onChange({...presentation(scoped,session.storeId),today:day,stats:summarize(scoped,current,session.sellerId,day)},!(catalogCache||salesCache||resetCache));}};
   const stopAccess=onSnapshot(doc(db,'pulseStatus',session.uid),{includeMetadataChanges:true},snap=>{
     if(snap.metadata.fromCache)return;
     const access=snap.data();
@@ -97,14 +105,18 @@ export function listenStore(session,day,clientId,onChange,onSale,onError,onGoals
     const revision=snap.data()?.revision||null;
     if(revision!==summaryRevision){summaryRevision=revision;onSummaryChanged();}
   },onError);
+  const stopReset=onSnapshot(doc(db,'pulseStores',session.storeId,'sales','~sales-reset~'),{includeMetadataChanges:true},snap=>{
+    generation=salesGeneration(snap.data());resetCache=snap.metadata.fromCache;resetReady=true;flushFresh();emit();
+  },onError);
   const q=query(collection(db,'pulseStores',session.storeId,'sales'),where('businessDate','>=',earliestDate(day)));
   const stopSales=onSnapshot(q,{includeMetadataChanges:true},snap=>{
     // Le premier état serveur est une base historique, jamais une nouvelle
     // vente : même après un premier instantané vide fourni par le cache.
-    for(const sale of freshSales(snap))announcer.add(sale);
-    sales=snap.docs.map(x=>x.data());salesCache=snap.metadata.fromCache;salesReady=true;emit();
+    // Si une nouvelle vente arrive avant le marqueur, l'annonce attend celui-ci.
+    for(const sale of freshSales(snap))pendingFresh.set(sale.id,sale);
+    flushFresh();sales=snap.docs.map(x=>x.data());salesCache=snap.metadata.fromCache;salesReady=true;emit();
   },onError);
-  return ()=>{stopAccess();stopCatalog();stopSummary();stopSales();};
+  return ()=>{stopAccess();stopCatalog();stopSummary();stopReset();stopSales();};
 }
 async function messaging() {
   if(!VAPID||VAPID==='cle-publique-web-push-firebase')throw new Error('La clé publique Web Push Firebase reste à configurer.');

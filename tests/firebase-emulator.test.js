@@ -169,3 +169,77 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     await assert.rejects(getDocs(collection(db,'pulseStores',other,'sales')),/permission|insufficient/i);
   } finally {await deleteApp(app);}
 });
+
+test('Émulateurs Firebase : reset des ventes, pagination réelle et marqueur en temps réel',{skip:!enabled},async()=>{
+  const project='demo-fnac',store=LEGACY_STORE_ID,uid='seller-reset-emulator';
+  const app=initializeApp({apiKey:'demo-key',projectId:project,appId:'1:1:web:demo'},`reset-${Date.now()}`);
+  const auth=getAuth(app),db=getFirestore(app);
+  connectAuthEmulator(auth,'http://127.0.0.1:9099',{disableWarnings:true});connectFirestoreEmulator(db,'127.0.0.1',8085);
+  const adminUser=(await createUserWithEmailAndPassword(auth,`reset-admin-${Date.now()}@example.test`,'Testing-Password-2026')).user;
+  const adminToken=await adminUser.getIdToken();
+  const storeDb=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'});
+  const queued=[],waits=[],worker=createWorker({createDb:()=>storeDb,verifyIdToken:async(_env,t)=>JSON.parse(Buffer.from(t.split('.')[1],'base64url').toString()),sendFcm:async()=>{}});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:adminUser.uid,PULSE_QUEUE:{async sendBatch(items){queued.push(...items.map(x=>x.body));}}};
+  const ctx={waitUntil(p){waits.push(p)}};
+  const message=body=>({body,acked:false,retried:false,ack(){this.acked=true;},retry(){this.retried=true;}});
+  async function call(path,method='GET',body,token) {
+    const req=new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});
+    const res=await worker.fetch(req,env,ctx),json=await res.json();assert.notEqual(res.status,500,JSON.stringify(json));return {status:res.status,json};
+  }
+  try {
+    await fetch(`http://127.0.0.1:8085/emulator/v1/projects/${project}/databases/(default)/documents`,{method:'DELETE'});
+    const catalog=(await call('/api/bootstrap')).json,other=catalog.stores.find(s=>s.name==='Fnac Bordeaux').id;
+    const claims={role:'seller',storeId:store,sellerId:1,sellerKey:'s1',accessVersion:'version-reset-emulator'};
+    const access={active:true,storeId:store,sellerId:1,sellerKey:'s1',version:claims.accessVersion};
+    await storeDb.commit([storeDb.write(`pulseAccess/${uid}`,access),storeDb.write(`pulseStatus/${uid}`,access),
+      storeDb.write(`pulseGoals/${uid}`,{storeId:store,sellerId:1,goals:{s1:{month:25,revision:'goal-revision'}}}),
+      storeDb.write(`pulseStores/${store}/sales/~summary-goals~`,{revision:'keep-this-goal-marker'}),
+      storeDb.write(`pulseStores/${other}/sales/other-sale-0001`,{id:'other-sale-0001',storeId:other,businessDate:'2025-01-01',sellerId:1,serviceId:1})]);
+    const writes=[];
+    for(let i=0;i<25;i++) {
+      const id=`history-sale-${String(i).padStart(4,'0')}`;
+      writes.push(storeDb.write(`pulseStores/${store}/sales/${id}`,{id,storeId:store,sellerId:1,serviceId:1,businessDate:i%2?'2026-10-30':'2025-01-01',createdAt:'2025-01-01T10:00:00.000Z',deletedAt:null,source:'sale',ownerUid:uid}),
+        storeDb.write(`pulseOutbox/${id}`,{saleId:id,storeId:store,status:'queued',sellerName:'Test',serviceName:'DMax',createdAt:Date.now()}));
+    }
+    await storeDb.commit(writes);
+    const seller=(await signInWithCustomToken(auth,fakeCustomToken(env,uid,claims))).user,idToken=await seller.getIdToken();
+    const marker=doc(db,'pulseStores',store,'sales','~sales-reset~');
+    assert.equal((await getDocFromServer(marker)).exists(),false);
+    await assert.rejects(getDocFromServer(doc(db,'pulseStores',other,'sales','~sales-reset~')),/permission|insufficient/i);
+    let readyResolve,changedResolve;const ready=new Promise(r=>readyResolve=r),changed=new Promise(r=>changedResolve=r);
+    const stop=onSnapshot(marker,{includeMetadataChanges:true},snap=>{if(!snap.metadata.fromCache)readyResolve();if(snap.data()?.generation==='emulator-reset-0001')changedResolve();});
+    await Promise.race([ready,new Promise((_,reject)=>setTimeout(()=>reject(Error('Écoute initiale indisponible')),10000))]);
+    const body={storeId:store,jobId:'emulator-reset-0001',confirmation:'SUPPRIMER'};
+    assert.equal((await call('/api/admin/sales/reset','POST',body,idToken)).status,403);
+    assert.equal((await call('/api/admin/sales/reset','POST',body,adminToken)).json.status,'running');
+    await Promise.race([changed,new Promise((_,reject)=>setTimeout(()=>reject(Error('Marqueur reset non reçu')),10000))]);stop();
+    assert.equal((await getDocFromServer(marker)).data().generation,body.jobId);
+    await assert.rejects(getDocFromServer(doc(db,'pulseSalesResets',store)),/permission|insufficient/i);
+    await assert.rejects(getDocFromServer(doc(db,'pulseSalesResetRequests',body.jobId)),/permission|insufficient/i);
+    assert.equal((await call(`/api/admin/counts?storeId=${store}&sellerId=1`,'GET',undefined,adminToken)).json.counts.length,0);
+    assert.equal((await call('/api/sales','POST',{serviceId:1,requestId:'new-emulator-sale-0001'},idToken)).status,200);
+    await Promise.all(waits.splice(0));
+    // Faire tomber le premier message : le cron doit le remettre dans la file.
+    queued.splice(0,queued.length);
+    await worker.scheduled({cron:'*/2 * * * *'},env,ctx);await Promise.all(waits.splice(0));
+    for(let i=0;i<20;i++) {
+      const state=(await call(`/api/admin/sales/reset?storeId=${store}`,'GET',undefined,adminToken)).json;
+      if(state.status==='done')break;
+      const index=queued.findIndex(x=>x.kind==='sales-reset');assert(index>=0,'reprise de la file');
+      const msg=message(queued.splice(index,1)[0]);await worker.queue({messages:[msg]},env);
+      assert.equal(msg.retried,false);assert.equal(msg.acked,true);
+      if(i===19)assert.fail('pagination inachevée');
+    }
+    const done=(await call(`/api/admin/sales/reset?storeId=${store}`,'GET',undefined,adminToken)).json;
+    assert.equal(done.status,'done');assert.equal(done.deletedSales,25);
+    assert.equal(await storeDb.get(`pulseStores/${store}/sales/history-sale-0000`),null);
+    assert.deepEqual((await storeDb.get('pulseOutbox/history-sale-0000')).data,{status:'reset'});
+    assert.equal((await storeDb.get(`pulseStores/${store}/sales/new-emulator-sale-0001`)).data.generation,body.jobId);
+    assert.equal((await storeDb.get(`pulseStores/${store}/sales/~summary-goals~`)).data.revision,'keep-this-goal-marker');
+    assert(await storeDb.get(`pulseStores/${other}/sales/other-sale-0001`));
+    assert.equal((await storeDb.get(`pulseGoals/${uid}`)).data.goals.s1.month,25);
+    assert.equal((await storeDb.get(`pulseAccess/${uid}`)).data.version,claims.accessVersion);
+    assert.equal((await call('/api/admin/sales/reset','POST',body,adminToken)).json.status,'done');
+    assert(await storeDb.get(`pulseStores/${store}/sales/new-emulator-sale-0001`));
+  } finally {await deleteApp(app);}
+});

@@ -221,3 +221,47 @@ test('SQLite annuaire Fnac : migration non destructive et idempotente des magasi
     assert.equal(check.prepare('SELECT days FROM seller_workdays WHERE seller_id=7').get().days,'[1,3,5]');check.close();
   } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
 });
+
+test('SQLite reset ventes : confirmation, toutes dates, isolation et reprise sans second effacement',async()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'fnac-pulse-reset-')),port=await freePort(),url=`http://127.0.0.1:${port}`;let server;
+  const request=async(route,method='GET',body,token)=>{const r=await fetch(url+route,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,body:await r.json()};};
+  try {
+    server=await start(port,folder);
+    const data=(await request('/api/bootstrap')).body,store=LEGACY_STORE_ID,other=data.stores.find(s=>s.name==='Fnac Bordeaux').id;
+    const [one,two]=data.sellers.slice(0,2).map(x=>x.id),service=data.services[0].id;
+    const admin=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
+    const otherSeller=(await request('/api/admin/entities/sellers','POST',{name:'Autre équipe',storeId:other},admin)).body.id;
+    assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:store,departmentId:'editorial'},admin)).status,200);
+    assert.equal((await request('/api/admin/goals','POST',{storeId:store,sellerId:one,serviceId:service,values:{day:null,week:null,month:25},revision:null},admin)).status,200);
+    const old={storeId:store,sellerId:one,serviceId:service,requestId:'sqlite-old-sale-01'};
+    assert.equal((await request('/api/sales','POST',old)).status,201);
+    assert.equal((await request('/api/sales','POST',{...old,sellerId:two,requestId:'sqlite-old-sale-02'})).status,201);
+    assert.equal((await request('/api/sales','POST',{storeId:other,sellerId:otherSeller,serviceId:service,requestId:'sqlite-other-sale-1'})).status,201);
+    const raw=new Database(path.join(folder,'pulse.sqlite'));
+    raw.prepare('INSERT INTO sales(id,request_id,store_id,seller_id,service_id,business_date,created_at,deleted_at,department_id) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run('old-history-1','sqlite-history-001',store,one,service,'2020-01-01','2020-01-01T12:00:00Z','2020-01-01T13:00:00Z','tech');raw.close();
+    const reset={storeId:store,jobId:'sqlite-reset-job-01',confirmation:'SUPPRIMER'};
+    assert.equal((await request('/api/admin/sales/reset','POST',reset)).status,401);
+    assert.equal((await request('/api/admin/sales/reset','POST',{...reset,confirmation:'OUI'},admin)).status,400);
+    assert.equal((await request('/api/admin/sales/reset','POST',{...reset,storeId:'inconnu'},admin)).status,400);
+    assert.equal((await request(`/api/admin/sales/reset?storeId=${store}`,'GET',undefined,admin)).body.status,'idle');
+    const done=await request('/api/admin/sales/reset','POST',reset,admin);assert.equal(done.status,200);assert.equal(done.body.status,'done');assert.equal(done.body.deletedSales,3);
+    assert.equal((await request(`/api/bootstrap?storeId=${store}&sellerId=${one}`)).body.stats.summary.store.day.total,0);
+    assert.equal((await request(`/api/bootstrap?storeId=${other}&sellerId=${otherSeller}`)).body.stats.day.total,1);
+    assert.equal((await request(`/api/goals?storeId=${store}&sellerId=${one}`)).body.goals[`s${service}`].month,25);
+    assert.equal((await request('/api/sales','POST',old)).status,409);
+    assert.equal((await request('/api/sales','POST',{...old,requestId:'sqlite-new-sale-01'})).status,201);
+    assert.equal((await request('/api/admin/sales/reset','POST',reset,admin)).body.status,'done');
+    assert.equal((await request(`/api/bootstrap?storeId=${store}&sellerId=${one}`)).body.stats.day.total,1);
+    assert.equal((await request('/api/admin/sales/reset','POST',{...reset,storeId:other},admin)).status,409);
+    await stop(server);server=await start(port,folder);
+    const adminAgain=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
+    assert.equal((await request('/api/admin/sales/reset','POST',reset,adminAgain)).body.status,'done');
+    assert.equal((await request(`/api/bootstrap?storeId=${store}&sellerId=${one}`)).body.stats.day.total,1);
+    assert.equal((await request('/api/admin/sales/reset','POST',{...reset,jobId:'sqlite-reset-job-02'},adminAgain)).body.deletedSales,1);
+    assert.equal((await request('/api/sales','POST',{...old,requestId:'sqlite-new-sale-02'})).status,201);
+    assert.equal((await request('/api/admin/sales/reset','POST',reset,adminAgain)).body.status,'superseded');
+    assert.equal((await request(`/api/bootstrap?storeId=${store}&sellerId=${one}`)).body.stats.day.total,1);
+    assert.equal((await request(`/api/bootstrap?storeId=${other}&sellerId=${otherSeller}`)).body.stats.day.total,1);
+  } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
+});

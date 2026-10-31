@@ -8,6 +8,7 @@ import { validGoalValues, GOAL_PERIODS, validWorkdays, normalizeWorkdays } from 
 import { saleMessage } from '../src/sale-message.js';
 import { departmentsForStore, sellerDepartmentId, saleDepartmentId, TECH_DEPARTMENT_ID } from '../src/departments.js';
 import { summaryGoals } from '../src/summary-goals.js';
+import { SALES_RESET_CONFIRMATION, salesGeneration, saleInGeneration } from '../src/sales-reset.js';
 
 const SELLERS=['Morgan','Anthony','Cedric','Philippe','Fabien','Florent','Eric','Tamera','Ikram','Selenia','Johan','Alice'];
 const SERVICES=[['DMax','play'],['Assu Téléph','phone'],['Assu Multim','devices'],['Garantie','shield'],['FVD','package'],['FNAC +','badge'],['TRC','repeat'],['Reprise','refresh'],['Canal +','tv'],['Free','wifi'],['Autre','other']];
@@ -38,6 +39,12 @@ const guardPath=store=>`pulseStores/${store}/private/revision`;
 // donc aucune requête de ventes ne le compte. Le '~' interdit toute collision
 // avec les identifiants de ventes acceptés par l'API. Aucune cible n'est stockée ici.
 const goalsMarkerPath=store=>`pulseStores/${store}/sales/~summary-goals~`;
+// Marqueur public sans donnée personnelle, lisible par les vendeurs du magasin.
+// Les documents de suivi et d'idempotence restent privés au Worker.
+const salesMarkerPath=store=>`pulseStores/${store}/sales/~sales-reset~`;
+const salesResetPath=store=>`pulseSalesResets/${store}`;
+const salesResetRequestPath=id=>`pulseSalesResetRequests/${id}`;
+const RESET_BATCH_SIZE=20;
 function withFlags(data) {
   return {...data,
     sellerFlags:Object.fromEntries(data.sellers.map(s=>[`s${s.id}`,!!s.active])),
@@ -505,10 +512,91 @@ export function createWorker(deps={}) {
     catch(e){if(conflict(e))fail(409,'Une modification simultanée a eu lieu. Réessayez.');throw e;}
     return {id};
   }
-  async function findToday(db,storeId) {
-    const rows=await db.query(`pulseStores/${storeId}/sales`,'businessDate','EQUAL',today(),2001);
+  function resetStatus(record) {
+    const data=record?.data;
+    if(!data)return {status:'idle',jobId:null,deletedSales:0};
+    return {status:data.status,jobId:data.jobId,deletedSales:Number(data.deletedSales)||0,startedAt:data.startedAt,finishedAt:data.finishedAt||null};
+  }
+  async function enqueueSalesReset(env,storeId,jobId) {
+    if(!env.PULSE_QUEUE?.sendBatch)throw new Error('File de réinitialisation indisponible');
+    await env.PULSE_QUEUE.sendBatch([{body:{kind:'sales-reset',storeId,jobId}}]);
+  }
+  async function readSalesReset(db,storeId) {
+    const c=await catalog(db);
+    if(!validStore(c.data,storeId))fail(400,'Choisissez un magasin valide.');
+    return resetStatus(await db.get(salesResetPath(storeId)));
+  }
+  async function startSalesReset(db,env,body) {
+    const {storeId,jobId,confirmation}=body;
+    if(typeof storeId!=='string'||!STORE_ID.test(storeId)||typeof jobId!=='string'||!SAFE_ID.test(jobId)||confirmation!==SALES_RESET_CONFIRMATION)
+      fail(400,'Confirmation ou sélection du magasin invalide.');
+    if(!env.PULSE_QUEUE?.sendBatch)fail(503,'La file de réinitialisation est indisponible.');
+    for(let attempt=0;attempt<8;attempt++) {
+      const [c,request,previous,marker]=await Promise.all([
+        catalog(db),db.get(salesResetRequestPath(jobId)),db.get(salesResetPath(storeId)),db.get(salesMarkerPath(storeId)),
+      ]);
+      if(!validStore(c.data,storeId))fail(400,'Choisissez un magasin valide.');
+      if(request) {
+        if(request.data.storeId!==storeId)fail(409,'Identifiant de réinitialisation déjà utilisé.');
+        if(previous?.data.jobId!==jobId)return {status:'superseded',jobId,deletedSales:0};
+        if(previous.data.status==='running')await enqueueSalesReset(env,storeId,jobId).catch(()=>{});
+        return resetStatus(previous);
+      }
+      if(previous?.data.status==='running')fail(409,'Une réinitialisation est déjà en cours pour ce magasin.');
+      if(previous&&previous.data.status!=='done')fail(503,'État de réinitialisation indisponible. Réessayez plus tard.');
+      const next={status:'running',jobId,phase:'sales',cursor:'',deletedSales:0,startedAt:Date.now()};
+      const writes=[
+        db.verify('pulse/catalog',precondition(c)),
+        db.write(salesResetRequestPath(jobId),{storeId},{exists:false}),
+        db.write(salesResetPath(storeId),next,precondition(previous)),
+        db.write(salesMarkerPath(storeId),{generation:jobId},precondition(marker)),
+        db.write(guardPath(storeId),{revision:crypto.randomUUID()}),
+      ];
+      try {await db.commit(writes);}
+      catch(e){if(conflict(e))continue;throw e;}
+      // Si l’envoi échoue ou si la réponse est perdue après le commit, le cron
+      // retrouve le travail durable. Un même jobId ne peut jamais lancer un second reset.
+      await enqueueSalesReset(env,storeId,jobId).catch(()=>console.warn('PULSE_SALES_RESET_QUEUE indisponible'));
+      return resetStatus({data:next});
+    }
+    fail(409,'Le magasin a changé. Actualisez avant de réessayer.');
+  }
+  async function processSalesReset(db,storeId,jobId) {
+    const path=salesResetPath(storeId),state=await db.get(path);
+    if(!state||state.data.status!=='running'||state.data.jobId!==jobId)return {running:false};
+    const outboxes=state.data.phase==='outboxes',collection=outboxes?'pulseOutbox':`pulseStores/${storeId}/sales`;
+    const rows=await db.page(collection,{...(outboxes?{field:'storeId',value:storeId}:{}),limit:RESET_BATCH_SIZE,after:state.data.cursor||''});
+    let next,writes=[];
+    if(!rows.length) {
+      next=outboxes?{...state.data,status:'done',phase:'done',cursor:'',finishedAt:Date.now()}:
+        {...state.data,phase:'outboxes',cursor:''};
+    } else {
+      let removed=0;
+      for(const row of rows) {
+        if(saleInGeneration(row.data,jobId))continue;
+        if(outboxes) {
+          // Garder seulement un tombstone technique : il empêche un ancien
+          // identifiant de requête de recréer une vente après le reset.
+          writes.push(db.write(`${collection}/${row.id}`,{status:'reset'},precondition(row)));
+        } else if(!row.id.startsWith('~')) {
+          writes.push(db.delete(`${collection}/${row.id}`,precondition(row)));removed++;
+        }
+      }
+      next={...state.data,cursor:rows.at(-1).id,deletedSales:(Number(state.data.deletedSales)||0)+removed};
+    }
+    writes.push(db.write(path,next,precondition(state)));
+    try {await db.commit(writes);}
+    catch(e){if(conflict(e))return {running:true,conflict:true};throw e;}
+    return {running:next.status==='running'};
+  }
+  async function findToday(db,storeId,marker=undefined) {
+    const [rows,resetMarker]=await Promise.all([
+      db.query(`pulseStores/${storeId}/sales`,'businessDate','EQUAL',today(),2001),
+      marker===undefined?db.get(salesMarkerPath(storeId)):Promise.resolve(marker),
+    ]);
     if(rows.length>2000)fail(409,'Plus de 2 000 opérations ce jour : correction indisponible, contactez l’administrateur.');
-    return rows;
+    const generation=salesGeneration(resetMarker?.data);
+    return rows.filter(row=>saleInGeneration(row.data,generation));
   }
   function saleAuthorizationChecks(db,session) {
     return [db.verify(`pulseAccess/${session.claims.sub}`,precondition(session.accessDoc)),db.verify('pulse/catalog',precondition(session.catalogDoc))];
@@ -517,13 +605,14 @@ export function createWorker(deps={}) {
     const s=await seller(req,env,db),service=serviceBy(s.catalog,body.serviceId),requestId=body.requestId;
     if(!service||!SAFE_ID.test(requestId||''))fail(400,'Service ou identifiant de vente invalide.');
     const storeId=s.claims.storeId,sellerId=Number(s.claims.sellerId),person=sellerBy(s.catalog,sellerId,storeId),departmentId=sellerDepartmentId(person);
-    const data={id:requestId,storeId,sellerId,departmentId,serviceId:service.id,createdAt:new Date().toISOString(),businessDate:today(),deletedAt:null,source:'sale',clientId:typeof body.clientId==='string'?body.clientId.slice(0,80):'',ownerUid:s.claims.sub};
-    const outbox={saleId:requestId,storeId,departmentId,sellerName:person.name,serviceName:service.name,status:'pending',createdAt:Date.now(),leaseUntil:0};
-    try {await db.commit([...saleAuthorizationChecks(db,s),db.write(docPath(storeId,requestId),data,{exists:false}),db.write(`pulseOutbox/${requestId}`,outbox,{exists:false}),db.write(guardPath(storeId),{revision:crypto.randomUUID()})]);}
+    const marker=await db.get(salesMarkerPath(storeId)),generation=salesGeneration(marker?.data);
+    const data={id:requestId,storeId,sellerId,departmentId,serviceId:service.id,createdAt:new Date().toISOString(),businessDate:today(),deletedAt:null,source:'sale',clientId:typeof body.clientId==='string'?body.clientId.slice(0,80):'',ownerUid:s.claims.sub,generation};
+    const outbox={saleId:requestId,storeId,departmentId,sellerName:person.name,serviceName:service.name,status:'pending',createdAt:Date.now(),leaseUntil:0,generation};
+    try {await db.commit([...saleAuthorizationChecks(db,s),db.verify(salesMarkerPath(storeId),precondition(marker)),db.write(docPath(storeId,requestId),data,{exists:false}),db.write(`pulseOutbox/${requestId}`,outbox,{exists:false}),db.write(guardPath(storeId),{revision:crypto.randomUUID()})]);}
     catch(e) {
       if(!conflict(e))throw e;
-      const existing=await db.get(docPath(storeId,requestId));
-      if(!existing)fail(409,'Votre accès ou le catalogue a changé. Actualisez avant de réessayer.');
+      const [existing,latest]=await Promise.all([db.get(docPath(storeId,requestId)),db.get(salesMarkerPath(storeId))]);
+      if(!existing||!saleInGeneration(existing.data,salesGeneration(latest?.data)))fail(409,'La vente ne peut pas être confirmée. Si le magasin vient d’être réinitialisé, vérifiez le bilan avant de réessayer.');
       if(existing.data.ownerUid!==s.claims.sub || existing.data.serviceId!==service.id)fail(409,'Identifiant de vente déjà utilisé.');
       ctx.waitUntil(dispatch(env,db,requestId).catch(e=>logPushError('dispatch',e)));return {id:requestId,duplicate:true};
     }
@@ -531,9 +620,10 @@ export function createWorker(deps={}) {
   }
   async function deleteSale(req,env,db,id) {
     if(!SAFE_ID.test(id||''))fail(400,'Vente invalide.');
-    const s=await seller(req,env,db),path=docPath(s.claims.storeId,id),d=await db.get(path);
-    if(!d||d.data.ownerUid!==s.claims.sub||d.data.businessDate!==today()||d.data.deletedAt)fail(409,'Cette vente ne peut plus être annulée.');
-    try {await db.commit([...saleAuthorizationChecks(db,s),db.write(path,{...d.data,deletedAt:new Date().toISOString()},{updateTime:d.updateTime}),db.write(guardPath(s.claims.storeId),{revision:crypto.randomUUID()})]);}
+    const s=await seller(req,env,db),path=docPath(s.claims.storeId,id);
+    const [d,marker]=await Promise.all([db.get(path),db.get(salesMarkerPath(s.claims.storeId))]);
+    if(!d||d.data.ownerUid!==s.claims.sub||d.data.businessDate!==today()||d.data.deletedAt||!saleInGeneration(d.data,salesGeneration(marker?.data)))fail(409,'Cette vente ne peut plus être annulée.');
+    try {await db.commit([...saleAuthorizationChecks(db,s),db.verify(salesMarkerPath(s.claims.storeId),precondition(marker)),db.write(path,{...d.data,deletedAt:new Date().toISOString()},{updateTime:d.updateTime}),db.write(guardPath(s.claims.storeId),{revision:crypto.randomUUID()})]);}
     catch(e){if(conflict(e))fail(409,'Votre accès, le catalogue ou cette vente a changé. Actualisez avant de réessayer.');throw e;}
     return {ok:true,id};
   }
@@ -548,14 +638,15 @@ export function createWorker(deps={}) {
   async function adjust(db,body) {
     const {storeId,sellerId,serviceId,count}=body,c=await catalog(db);
     if(!validStore(c.data,storeId)||!sellerBy(c.data,sellerId,storeId)||!serviceBy(c.data,serviceId)||!Number.isInteger(count)||count<0||count>100)fail(400,'Choisissez une quantité entre 0 et 100.');
-    const guard=await db.get(guardPath(storeId));
-    const rows=(await findToday(db,storeId)).filter(d=>d.data.sellerId===Number(sellerId)&&d.data.serviceId===Number(serviceId)&&!d.data.deletedAt)
+    const [guard,marker]=await Promise.all([db.get(guardPath(storeId)),db.get(salesMarkerPath(storeId))]);
+    const generation=salesGeneration(marker?.data);
+    const rows=(await findToday(db,storeId,marker)).filter(d=>d.data.sellerId===Number(sellerId)&&d.data.serviceId===Number(serviceId)&&!d.data.deletedAt)
       .sort((a,b)=>b.data.createdAt.localeCompare(a.data.createdAt)||b.id.localeCompare(a.id));
     const delta=count-rows.length;if(Math.abs(delta)>100)fail(400,'Modifiez le total par étapes de 100 maximum.');
-    const writes=[db.write(guardPath(storeId),{revision:crypto.randomUUID()},precondition(guard))];
+    const writes=[db.verify(salesMarkerPath(storeId),precondition(marker)),db.verify('pulse/catalog',precondition(c)),db.write(guardPath(storeId),{revision:crypto.randomUUID()},precondition(guard))];
     if(delta<0)for(const d of rows.slice(0,-delta))writes.push(db.write(docPath(storeId,d.id),{...d.data,deletedAt:new Date().toISOString()},{updateTime:d.updateTime}));
     if(delta>0)for(let i=0;i<delta;i++) {
-      const id=crypto.randomUUID();writes.push(db.write(docPath(storeId,id),{id,storeId,sellerId:Number(sellerId),departmentId:sellerDepartmentId(sellerBy(c.data,sellerId,storeId)),serviceId:Number(serviceId),createdAt:new Date().toISOString(),businessDate:today(),deletedAt:null,source:'adjustment',clientId:'',ownerUid:await sellerUid(storeId,Number(sellerId))},{exists:false}));
+      const id=crypto.randomUUID();writes.push(db.write(docPath(storeId,id),{id,storeId,sellerId:Number(sellerId),departmentId:sellerDepartmentId(sellerBy(c.data,sellerId,storeId)),serviceId:Number(serviceId),createdAt:new Date().toISOString(),businessDate:today(),deletedAt:null,source:'adjustment',clientId:'',ownerUid:await sellerUid(storeId,Number(sellerId)),generation},{exists:false}));
     }
     try{await db.commit(writes);}catch(e){if(conflict(e))fail(409,'Les ventes ont changé pendant la correction. Réessayez.');throw e;}
     return {ok:true};
@@ -578,7 +669,12 @@ export function createWorker(deps={}) {
   async function dispatch(env,db,id) {
     if(!env.PULSE_QUEUE)return;
     const path=`pulseOutbox/${id}`,item=await db.get(path),now=Date.now();
-    if(!item||item.data.status==='queued'||(item.data.status==='dispatching'&&item.data.leaseUntil>now))return;
+    if(!item||item.data.status==='reset'||item.data.status==='queued'||(item.data.status==='dispatching'&&item.data.leaseUntil>now))return;
+    const marker=await db.get(salesMarkerPath(item.data.storeId));
+    if(!saleInGeneration(item.data,salesGeneration(marker?.data))) {
+      try{await db.commit([db.write(path,{status:'reset'},precondition(item))]);}catch(e){if(!conflict(e))throw e;}
+      return;
+    }
     if(now-item.data.createdAt>60*60*1000) {await db.commit([db.write(path,{...item.data,status:'expired'},precondition(item))]);return;}
     const claim={...item.data,status:'dispatching',leaseUntil:now+120000};
     try{await db.commit([db.write(path,claim,precondition(item))]);}catch(e){if(conflict(e))return;throw e;}
@@ -606,6 +702,17 @@ export function createWorker(deps={}) {
     }
   }
   async function consume(env,db,msg) {
+    if(msg.body?.kind==='sales-reset') {
+      const {storeId,jobId}=msg.body;
+      if(typeof storeId!=='string'||!STORE_ID.test(storeId)||typeof jobId!=='string'||!SAFE_ID.test(jobId)){msg.ack();return;}
+      try {
+        const result=await processSalesReset(db,storeId,jobId);
+        if(result.conflict){msg.retry({delaySeconds:3});return;}
+        if(result.running)await enqueueSalesReset(env,storeId,jobId);
+        msg.ack();
+      } catch(e){console.warn('PULSE_SALES_RESET',e?.code||e?.name||'error');msg.retry();}
+      return;
+    }
     const {saleId,tokenId,storeId}=msg.body||{};
     if(!SAFE_ID.test(saleId||'')||!PROOF.test(tokenId||'')||!STORE_ID.test(storeId||'')){msg.ack();return;}
     const path=`pulseDeliveries/${saleId}_${tokenId}`,prior=await db.get(path),now=Date.now();
@@ -616,8 +723,9 @@ export function createWorker(deps={}) {
     let stage='load';
     try {
       const skip=async()=>{const current=await db.get(path);if(current)await db.commit([db.write(path,{status:'skipped',leaseUntil:0},precondition(current))]);msg.ack();};
-      const [tokenDoc,outbox]=await Promise.all([db.get(`pulseTokens/${tokenId}`),db.get(`pulseOutbox/${saleId}`)]);
-      if(!tokenDoc || !outbox || tokenDoc.data.storeId!==storeId || outbox.data.storeId!==storeId || Date.now()-outbox.data.createdAt>60*60*1000) {await skip();return;}
+      const [tokenDoc,outbox,marker]=await Promise.all([db.get(`pulseTokens/${tokenId}`),db.get(`pulseOutbox/${saleId}`),db.get(salesMarkerPath(storeId))]);
+      if(!tokenDoc || !outbox || tokenDoc.data.storeId!==storeId || outbox.data.storeId!==storeId ||
+         !saleInGeneration(outbox.data,salesGeneration(marker?.data)) || Date.now()-outbox.data.createdAt>60*60*1000) {await skip();return;}
       stage='authorize';
       const [a,c]=await Promise.all([db.get(`pulseAccess/${tokenDoc.data.uid}`),catalog(db)]);
       const recipient=a?.data&&sellerBy(c.data,a.data.sellerId,storeId);
@@ -680,6 +788,8 @@ export function createWorker(deps={}) {
         return saveWorkdays(db,owner,body);
       }
       if(method==='POST'&&path==='/api/admin/services/order')return saveServiceOrder(db,await readBody(req));
+      if(method==='GET'&&path==='/api/admin/sales/reset')return readSalesReset(db,url.searchParams.get('storeId'));
+      if(method==='POST'&&path==='/api/admin/sales/reset')return startSalesReset(db,env,await readBody(req));
       if(method==='POST'&&path==='/api/admin/stores')return addStore(db,await readBody(req));
       if(method==='POST'&&path==='/api/admin/adjust')return adjust(db,await readBody(req));
       const entity=path.match(/^\/api\/admin\/entities\/(sellers|services)(?:\/(\d+))?$/);
@@ -714,6 +824,12 @@ export function createWorker(deps={}) {
         return;
       }
       ctx.waitUntil((async()=>{
+        // Une opération commencée survit à la fermeture du téléphone et aux
+        // messages de file perdus. Le traitement reste borné par invocation.
+        if(env.PULSE_QUEUE?.sendBatch)try {
+          const resets=await db.query('pulseSalesResets','status','EQUAL','running',10);
+          if(resets.length)await env.PULSE_QUEUE.sendBatch(resets.map(job=>({body:{kind:'sales-reset',storeId:job.id,jobId:job.data.jobId}})));
+        } catch(e){console.warn('PULSE_SALES_RESET_RECOVERY',e?.code||e?.name||'error');}
         for(const status of ['pending','dispatching']) {
           const jobs=await db.query('pulseOutbox','status','EQUAL',status,1);
           for(const j of jobs)await dispatch(env,db,j.id).catch(e=>logPushError('dispatch',e));

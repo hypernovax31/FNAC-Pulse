@@ -5,6 +5,7 @@ import { CLOUD, adminLogin, adminLogout, changeAdminPassword } from './cloud';
 import { sellersForStore, orderServices } from './catalog';
 import { departmentsForStore, sellerDepartmentId } from './departments';
 import { GoalForm, WorkdaysForm } from './Goals';
+import { SalesResetPanel } from './SalesReset';
 import { normalizeWorkdays } from './goals.js';
 
 function directoryDate(value) {
@@ -61,6 +62,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [counts,setCounts]=useState({});
   const [countsFor,setCountsFor]=useState('');
   const [countsLoading,setCountsLoading]=useState(false);
+  const [countsRevision,setCountsRevision]=useState(0);
   const [adminGoals,setAdminGoals]=useState(null);
   const [adminWorkdays,setAdminWorkdays]=useState(null);
   const [adminWorkdaysRevision,setAdminWorkdaysRevision]=useState(null);
@@ -90,7 +92,7 @@ export default function Admin({onClose,data,session,onChanged}) {
       if(!cancelled){setCounts(Object.fromEntries(result.counts.map(item=>[item.serviceId,item.count])));setCountsFor(`${adminStore}:${adminSeller}`);}
     }).catch(e=>{if(!cancelled)setError(e.message)}).finally(()=>{if(!cancelled)setCountsLoading(false)});
     return ()=>{cancelled=true};
-  },[token,adminStore,adminSeller,tab]);
+  },[token,adminStore,adminSeller,tab,countsRevision]);
 
   function applyAdminGoals(result) {
     setAdminGoals(result.goals);setAdminWorkdays(normalizeWorkdays(result.workdays));setAdminWorkdaysRevision(result.workdaysRevision||null);
@@ -196,6 +198,7 @@ export default function Admin({onClose,data,session,onChanged}) {
           {activeServices.map(s=><div className="admin-count-row" key={s.id}><strong>{s.name}</strong><div><input type="number" min="0" max={CLOUD?100:999} aria-label={`Nombre de ventes ${s.name}`} value={counts[s.id]??0} onChange={e=>setCounts(c=>({...c,[s.id]:e.target.value}))}/><button disabled={busy} className="small-outline-button" onClick={()=>run(async()=>{const n=Number(counts[s.id]??0);if(!Number.isInteger(n)||n<0||n>(CLOUD?100:999))throw new Error(`La quantité doit être comprise entre 0 et ${CLOUD?100:999}.`);await api('/api/admin/adjust',{method:'POST',token,body:{storeId:adminStore,sellerId:Number(adminSeller),serviceId:s.id,count:n}})},'Total mis à jour.')}>Enregistrer</button></div></div>)}
         </div>:<div className="empty-admin">{countsLoading?'Chargement des ventes…':'Ventes indisponibles. Réessayez en changeant de sélection.'}</div>:<div className="empty-admin">Sélectionnez un magasin et un vendeur pour modifier les ventes.</div>}
         <div className="admin-note"><Info size={15}/> Les corrections ne déclenchent pas de notification de vente.</div>
+        <SalesResetPanel key={adminStore} storeId={adminStore} storeName={adminStoreName} token={token} disabled={busy} onUpdate={()=>{setCountsRevision(value=>value+1);onChanged();}}/>
       </>}
       {tab==='goals'&&adminStore&&<>
         <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Choisissez les jours travaillés, puis les objectifs par service. Les autres périodes sont calculées automatiquement.</p></div></div>

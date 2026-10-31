@@ -841,3 +841,34 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .remembered-profile strong,[data-theme='dark'] .account-profile strong { color:#eff1e9; }
 [data-theme='dark'] .remembered-profile span,[data-theme='dark'] .remembered-profile small,[data-theme='dark'] .account-profile span,[data-theme='dark'] .account-help,[data-theme='dark'] .profile-unavailable p,[data-theme='dark'] .pin-status,[data-theme='dark'] .pin-help { color:#b7bcae; }
 [data-theme='dark'] .profile-status-error { color:#f2b6ad; }
+
+/* Réinitialisation volontaire et irréversible des ventes d'un magasin. */
+.sales-reset { margin-top:20px; padding:15px; border:1px solid #efd9d3; border-radius:9px; background:#fffaf8; }
+.sales-reset-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.sales-reset-heading > div { min-width:0; }
+.sales-reset-heading h4 { color:#6a3831; font-size:12px; line-height:1.35; }
+.sales-reset-heading p,.sales-reset-progress,.sales-reset-recovery p { margin-top:5px; color:#7f716c; font-size:11px; line-height:1.5; }
+.sales-reset-button,.sales-reset-danger { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:9px 13px; border:1px solid #c77d70; border-radius:7px; color:#963b2d; background:#fff; font-size:11px; font-weight:750; }
+.sales-reset-button { flex-shrink:0; }
+.sales-reset-danger { background:#a34132; border-color:#a34132; color:#fff; }
+.sales-reset-button:disabled,.sales-reset-danger:disabled { opacity:.5; cursor:not-allowed; }
+.sales-reset-confirm { margin-top:15px; padding:14px; border:1px solid #e5b6ad; border-radius:8px; background:#fff; }
+.sales-reset-warning { display:flex; align-items:flex-start; gap:9px; color:#9b4638; }
+.sales-reset-warning > svg { flex:0 0 auto; }
+.sales-reset-warning strong { color:#79372d; font-size:12px; line-height:1.4; }
+.sales-reset-warning p { margin-top:7px; color:#72534b; font-size:11px; line-height:1.5; }
+.sales-reset-confirm form { display:flex; flex-direction:column; gap:12px; margin-top:16px; }
+.sales-reset-confirm .text-input { width:100%; }
+.sales-reset-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; }
+.sales-reset-error { margin-top:10px; color:#963b2d; font-size:11px; line-height:1.5; }
+.sales-reset-error button { color:inherit; background:transparent; text-decoration:underline; font-weight:750; }
+.sales-reset-recovery { margin-top:10px; }
+.sales-reset-recovery .outline-button { margin-top:8px; min-height:44px; }
+@media (max-width:520px) { .sales-reset-heading { flex-direction:column; } .sales-reset-actions > button { flex:1 1 100%; } }
+[data-theme='dark'] .sales-reset { background:#302520; border-color:#69463d; }
+[data-theme='dark'] .sales-reset-heading h4,[data-theme='dark'] .sales-reset-warning strong { color:#ffd3ca; }
+[data-theme='dark'] .sales-reset-heading p,[data-theme='dark'] .sales-reset-progress,[data-theme='dark'] .sales-reset-recovery p,[data-theme='dark'] .sales-reset-warning p { color:#e0c2ba; }
+[data-theme='dark'] .sales-reset-confirm { background:#26221f; border-color:#8b5a50; }
+[data-theme='dark'] .sales-reset-button { background:#382825; border-color:#bc8176; color:#ffd5cc; }
+[data-theme='dark'] .sales-reset-danger { background:#b24d3d; border-color:#b24d3d; color:#fff; }
+[data-theme='dark'] .sales-reset-warning,[data-theme='dark'] .sales-reset-error { color:#ffb7a9; }

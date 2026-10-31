@@ -22,6 +22,11 @@ class MemoryDb {
     for(const w of writes){if(w.check)continue;if(w.del)this.docs.delete(w.path);else this.docs.set(w.path,{id:w.path.split('/').pop(),name:w.path,data:structuredClone(w.data),updateTime:String(++this.n)});}
   }
   async query(path,field,op,value,limit=1000){return [...this.docs].filter(([k])=>k.startsWith(path+'/')&&!k.slice(path.length+1).includes('/')).map(([,v])=>structuredClone(v)).filter(x=>!field||(op==='EQUAL'?x.data[field]===value:x.data[field]>=value)).slice(0,limit);}
+  async page(path,{field,op='EQUAL',value,limit=20,after=''}={}) {
+    return [...this.docs].filter(([k])=>k.startsWith(path+'/')&&!k.slice(path.length+1).includes('/'))
+      .map(([,v])=>structuredClone(v)).filter(x=>(!field||(op==='EQUAL'?x.data[field]===value:x.data[field]>=value))&&x.id>after)
+      .sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0).slice(0,limit);
+  }
 }
 function makeMessage(body){return {body,acked:false,retried:false,ack(){this.acked=true},retry(){this.retried=true}};}
 async function activateSeller(req,storeId,sellerId,newProof,adminToken) {
@@ -698,4 +703,150 @@ test('Annuaire cloud : refus, essai mensuel, succès simulé concurrent et liste
   await worker.scheduled({cron:'0 6 1 * *'},env,ctx);await Promise.all(waiting.splice(0));
   after=(await db.get('pulse/catalog')).data;
   assert.equal(after.directorySync.lastResult,'incomplete');assert.deepEqual(after.stores,safe);
+});
+
+test('Reset ventes cloud : confirmation, magasin isolé, toutes dates, nouvelles ventes et reprise idempotente',async()=>{
+  const db=new MemoryDb(),queued=[],sent=[],waits=[];
+  const identities=new Map([['admin-reset',{sub:'administrator'}],['vendeur-reset',{sub:'seller-reset',role:'seller',storeId:LEGACY_STORE_ID,sellerId:1,accessVersion:'version-reset'}]]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!identities.has(t))throw Error();return identities.get(t)},sendFcm:async(...args)=>sent.push(args)});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(messages){queued.push(...messages.map(x=>x.body));}}};
+  const ctx={waitUntil(p){waits.push(p)}};
+  async function req(path,method='GET',body,token){
+    const response=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:response.status,body:await response.json()};
+  }
+  const base=(await req('/api/bootstrap')).body,store=LEGACY_STORE_ID,other=base.stores.find(s=>s.name==='Fnac Bordeaux').id,day=parisToday();
+  const uid='seller-reset',tokenId='a'.repeat(43),oldId='old-sale-00000000';
+  await db.commit([
+    db.write(`pulseAccess/${uid}`,{active:true,version:'version-reset',storeId:store,sellerId:1,sellerKey:'s1'}),
+    db.write(`pulseStatus/${uid}`,{active:true,version:'version-reset',storeId:store,sellerId:1}),
+    db.write(`pulseGoals/${uid}`,{storeId:store,sellerId:1,goals:{s1:{month:20,revision:'revision-0001'}}}),
+    db.write(`pulseStores/${store}/sales/~summary-goals~`,{revision:'goal-revision'}),
+    db.write(`pulseStores/${other}/sales/other-sale-0001`,{id:'other-sale-0001',businessDate:day,storeId:other,sellerId:1,serviceId:1}),
+    db.write(`pulseTokens/${tokenId}`,{token:'fake-token',uid,storeId:store,accessVersion:'version-reset'}),
+  ]);
+  for(let i=0;i<65;i++) {
+    const id=`old-sale-${String(i).padStart(8,'0')}`;
+    await db.commit([db.write(`pulseStores/${store}/sales/${id}`,{id,storeId:store,sellerId:i%2+1,departmentId:i%2?'tech':'caisse',serviceId:1,
+      businessDate:i%2?day:'2025-02-10',createdAt:'2025-02-10T10:00:00.000Z',deletedAt:i%5===0?'2025-02-10T11:00:00.000Z':null,source:'sale',ownerUid:uid}),
+      db.write(`pulseOutbox/${id}`,{saleId:id,storeId:store,departmentId:'tech',sellerName:'Personne test',serviceName:'DMax',createdAt:Date.now(),status:'queued'})]);
+  }
+  const reset={storeId:store,jobId:'reset-job-00000001',confirmation:'SUPPRIMER'};
+  assert.equal((await req('/api/admin/sales/reset','POST',reset)).status,401);
+  assert.equal((await req('/api/admin/sales/reset','POST',reset,'vendeur-reset')).status,403);
+  assert.equal((await req('/api/admin/sales/reset','POST',{...reset,confirmation:'oui'},'admin-reset')).status,400);
+  assert.equal((await req('/api/admin/sales/reset','POST',{...reset,storeId:'not-an-active-store'},'admin-reset')).status,400);
+  assert.equal((await req('/api/admin/sales/reset','POST',{...reset,jobId:123456789},'admin-reset')).status,400);
+  assert.equal((await req(`/api/admin/sales/reset?storeId=${store}`,'GET',undefined,'admin-reset')).body.status,'idle');
+  assert.equal((await db.get(`pulseStores/${store}/sales/${oldId}`)).data.sellerId,1);
+  const start=await req('/api/admin/sales/reset','POST',reset,'admin-reset');
+  assert.equal(start.status,200);assert.equal(start.body.status,'running');
+  assert.equal((await db.get(`pulseStores/${store}/sales/~sales-reset~`)).data.generation,reset.jobId);
+  assert.equal((await req('/api/admin/sales/reset','POST',{...reset,jobId:'reset-job-other-00002'},'admin-reset')).status,409);
+  assert.equal((await req('/api/admin/sales/reset','POST',{...reset,storeId:other},'admin-reset')).status,409);
+  assert.equal((await req(`/api/admin/counts?storeId=${store}&sellerId=1`,'GET',undefined,'admin-reset')).body.counts.length,0);
+  // Une vente créée après le marqueur est conservée et visible immédiatement.
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'000-new-sale-0001'},'vendeur-reset')).status,200);
+  await Promise.all(waits.splice(0));
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:oldId},'vendeur-reset')).status,409);
+  assert.equal((await req('/api/admin/adjust','POST',{storeId:store,sellerId:1,serviceId:1,count:2},'admin-reset')).status,200);
+  assert.equal((await req(`/api/admin/counts?storeId=${store}&sellerId=1`,'GET',undefined,'admin-reset')).body.counts[0].count,2);
+  // Une notification en attente pour une vente antérieure est annulée.
+  const oldNotification=makeMessage({saleId:oldId,tokenId,storeId:store});
+  await worker.queue({messages:[oldNotification]},env);assert.equal(oldNotification.acked,true);assert.equal(sent.length,0);
+  const first=queued.findIndex(x=>x.kind==='sales-reset');assert(first>=0);
+  const duplicate=queued.splice(first,1)[0],a=makeMessage(duplicate),b=makeMessage(duplicate);
+  await Promise.all([worker.queue({messages:[a]},env),worker.queue({messages:[b]},env)]);
+  if(a.retried)queued.push(a.body);if(b.retried)queued.push(b.body);
+  // Ces IDs tombent respectivement avant et après le curseur de pagination.
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'aaa-new-sale-0002'},'vendeur-reset')).status,200);
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'zzz-new-sale-0003'},'vendeur-reset')).status,200);
+  await Promise.all(waits.splice(0));
+  for(let steps=0;steps<100;steps++) {
+    const status=(await req(`/api/admin/sales/reset?storeId=${store}`,'GET',undefined,'admin-reset')).body;
+    if(status.status==='done')break;
+    let index=queued.findIndex(x=>x.kind==='sales-reset');
+    if(index<0){await worker.scheduled({cron:'*/2 * * * *'},env,ctx);await Promise.all(waits.splice(0));index=queued.findIndex(x=>x.kind==='sales-reset');}
+    assert(index>=0,'la reprise planifiée doit retrouver le reset');
+    const message=makeMessage(queued.splice(index,1)[0]);await worker.queue({messages:[message]},env);if(message.retried)queued.push(message.body);
+    if(steps===99)assert.fail('le reset aurait dû se terminer');
+  }
+  const done=(await req(`/api/admin/sales/reset?storeId=${store}`,'GET',undefined,'admin-reset')).body;
+  assert.equal(done.status,'done');assert.equal(done.deletedSales,65);
+  for(let i=0;i<65;i++) {
+    const id=`old-sale-${String(i).padStart(8,'0')}`;
+    assert.equal(await db.get(`pulseStores/${store}/sales/${id}`),null);
+    assert.deepEqual((await db.get(`pulseOutbox/${id}`)).data,{status:'reset'});
+  }
+  for(const id of ['000-new-sale-0001','aaa-new-sale-0002','zzz-new-sale-0003']) {
+    assert.equal((await db.get(`pulseStores/${store}/sales/${id}`)).data.generation,reset.jobId);
+    assert.equal((await db.get(`pulseOutbox/${id}`)).data.generation,reset.jobId);
+  }
+  assert(await db.get(`pulseStores/${other}/sales/other-sale-0001`));
+  assert.equal((await db.get(`pulseStores/${store}/sales/~summary-goals~`)).data.revision,'goal-revision');
+  assert.equal((await db.get(`pulseGoals/${uid}`)).data.goals.s1.month,20);
+  assert.equal((await db.get(`pulseAccess/${uid}`)).data.version,'version-reset');
+  assert.equal((await req('/api/admin/sales/reset','POST',reset,'admin-reset')).body.status,'done');
+  assert(await db.get(`pulseStores/${store}/sales/zzz-new-sale-0003`)); // même demande rejouée : aucun nouveau reset
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:oldId},'vendeur-reset')).status,409);
+  // Un reset ultérieur est distinct ; l'ancien job ne peut plus l'annuler ni le relancer.
+  const second={...reset,jobId:'reset-job-00000002'};
+  assert.equal((await req('/api/admin/sales/reset','POST',second,'admin-reset')).body.status,'running');
+  assert.equal((await req('/api/admin/sales/reset','POST',reset,'admin-reset')).body.status,'superseded');
+  assert.equal((await db.get(`pulseStores/${store}/sales/~sales-reset~`)).data.generation,second.jobId);
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'new-after-second-1'},'vendeur-reset')).status,200);
+  await Promise.all(waits.splice(0));queued.splice(0); // message perdu : reprise par le cron
+  await worker.scheduled({cron:'*/2 * * * *'},env,ctx);await Promise.all(waits.splice(0));
+  for(let steps=0;steps<40;steps++) {
+    const state=(await req(`/api/admin/sales/reset?storeId=${store}`,'GET',undefined,'admin-reset')).body;
+    if(state.status==='done')break;
+    const index=queued.findIndex(x=>x.kind==='sales-reset');assert(index>=0);
+    const msg=makeMessage(queued.splice(index,1)[0]);await worker.queue({messages:[msg]},env);if(msg.retried)queued.push(msg.body);
+    if(steps===39)assert.fail('le second reset aurait dû se terminer');
+  }
+  assert.equal((await req(`/api/admin/sales/reset?storeId=${store}`,'GET',undefined,'admin-reset')).body.status,'done');
+  assert.equal(await db.get(`pulseStores/${store}/sales/zzz-new-sale-0003`),null);
+  assert.equal((await db.get(`pulseStores/${store}/sales/new-after-second-1`)).data.generation,second.jobId);
+  assert.equal((await req('/api/admin/sales/reset','POST',reset,'admin-reset')).body.status,'superseded');
+  assert(await db.get(`pulseStores/${store}/sales/new-after-second-1`));
+});
+
+test('Reset ventes cloud : une vente en cours ne traverse pas le changement de génération',async()=>{
+  const db=new MemoryDb(),queued=[],waits=[];
+  const claims={sub:'seller-race',role:'seller',storeId:LEGACY_STORE_ID,sellerId:1,accessVersion:'version-race'};
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>t==='admin'?{sub:'administrator'}:t==='vendeur'?claims:Promise.reject(Error())});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(xs){queued.push(...xs.map(x=>x.body));}}};
+  const ctx={waitUntil(p){waits.push(p)}};
+  async function req(path,method='GET',body,token){const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{'content-type':'application/json',...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};}
+  await req('/api/bootstrap');
+  await db.commit([db.write('pulseAccess/seller-race',{active:true,version:'version-race',storeId:LEGACY_STORE_ID,sellerId:1,sellerKey:'s1'})]);
+  let entered,release;const enteredSale=new Promise(r=>entered=r),continueSale=new Promise(r=>release=r),original=db.commit.bind(db);
+  db.commit=async writes=>{if(writes.some(w=>w.path===`pulseStores/${LEGACY_STORE_ID}/sales/racing-sale-0001`&&!w.del)){entered();await continueSale;}return original(writes);};
+  const sale=req('/api/sales','POST',{serviceId:1,requestId:'racing-sale-0001'},'vendeur');
+  await enteredSale;
+  const reset=await req('/api/admin/sales/reset','POST',{storeId:LEGACY_STORE_ID,jobId:'racing-reset-0001',confirmation:'SUPPRIMER'},'admin');
+  assert.equal(reset.status,200);release();
+  assert.equal((await sale).status,409);
+  assert.equal(await db.get(`pulseStores/${LEGACY_STORE_ID}/sales/racing-sale-0001`),null);
+  assert.equal(await db.get('pulseOutbox/racing-sale-0001'),null);
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'next-race-sale-01'},'vendeur')).status,200);
+  await Promise.all(waits.splice(0));
+});
+
+test('Reset ventes cloud : demandes administrateur simultanées et indisponibilité temporaire de la file',async()=>{
+  const db=new MemoryDb(),queued=[];
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>t==='admin'?{sub:'administrator'}:Promise.reject(Error())});
+  let queueFails=true;
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(xs){if(queueFails)throw Error('queue down');queued.push(...xs.map(x=>x.body));}}};
+  const waits=[],ctx={waitUntil(p){waits.push(p)}};
+  async function req(path,method='GET',body){const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{'content-type':'application/json',authorization:'Bearer admin'},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};}
+  await req('/api/bootstrap');
+  const store=LEGACY_STORE_ID,first={storeId:store,jobId:'parallel-reset-0001',confirmation:'SUPPRIMER'},second={...first,jobId:'parallel-reset-0002'};
+  const requests=await Promise.all([req('/api/admin/sales/reset','POST',first),req('/api/admin/sales/reset','POST',second)]);
+  assert.deepEqual(requests.map(x=>x.status).sort(),[200,409]);
+  const active=requests.find(x=>x.status===200).body;
+  assert.equal(active.status,'running');assert.equal((await db.get(`pulseStores/${store}/sales/~sales-reset~`)).data.generation,active.jobId);
+  assert.equal(queued.length,0);queueFails=false;
+  await worker.scheduled({cron:'*/2 * * * *'},env,ctx);await Promise.all(waits.splice(0));
+  assert(queued.some(job=>job.kind==='sales-reset'&&job.jobId===active.jobId));
 });

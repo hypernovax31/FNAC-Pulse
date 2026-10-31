@@ -138,6 +138,17 @@ export class FirestoreRest {
     const rows=await this.request(`${parent}:runQuery`,{method:'POST',body:{structuredQuery}});
     return rows.filter(row=>row.document).map(row=>readDocument(row.document));
   }
+  // Pagination stable par nom de document. Le curseur peut désigner un document
+  // déjà supprimé : les nouvelles ventes d'une autre génération restent intactes.
+  async page(collectionPath,{field,op='EQUAL',value,limit=20,after=''}={}) {
+    const parts=collectionPath.split('/'),collection=parts.pop();
+    const parent=parts.length?'/'+parts.map(encodeURIComponent).join('/'):'';
+    const structuredQuery={from:[{collectionId:collection}],limit,orderBy:[{field:{fieldPath:'__name__'},direction:'ASCENDING'}]};
+    if(field)structuredQuery.where={fieldFilter:{field:{fieldPath:field},op,value:encodeValue(value)}};
+    if(after)structuredQuery.startAt={values:[{referenceValue:this.name(`${collectionPath}/${after}`)}],before:false};
+    const rows=await this.request(`${parent}:runQuery`,{method:'POST',body:{structuredQuery}});
+    return rows.filter(row=>row.document).map(row=>readDocument(row.document));
+  }
   write(path,data,precondition) {
     return {update:{name:this.name(path),fields:encodeFields(data)},...(precondition?{currentDocument:precondition}:{})};
   }
