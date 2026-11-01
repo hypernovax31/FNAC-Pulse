@@ -13,11 +13,11 @@ const render=(component,props={})=>renderToStaticMarkup(React.createElement(comp
 
 test('En-tête : son séparé, cloche barrée et aucun point vert de direct',()=>{
   const off=render(Header,{connected:'live',notificationsEnabled:false,soundEnabled:false});
-  assert.match(off,/aria-label="Activer le son des ventes"/);assert.match(off,/lucide-volume-x/);
+  assert.match(off,/aria-label="Activer la signature au lancement"/);assert.match(off,/lucide-volume-x/);
   assert.match(off,/aria-label="Notifications non activées"/);assert.match(off,/lucide-bell-off/);
   assert.doesNotMatch(off,/live-dot/);assert.match(off,/aria-label="Apparence"/);
   const on=render(Header,{connected:'live',notificationsEnabled:true,soundEnabled:true});
-  assert.match(on,/aria-label="Couper le son des ventes"/);assert.match(on,/aria-label="Notifications activées"/);
+  assert.match(on,/aria-label="Couper la signature au lancement"/);assert.match(on,/aria-label="Notifications activées"/);
 });
 
 test('Navigation et date : Objectifs et semaine ISO visibles',()=>{

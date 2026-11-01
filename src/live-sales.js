@@ -1,3 +1,10 @@
+// Une annonce d'équipe ne concerne jamais une vente du vendeur connecté,
+// même lorsque celle-ci a été saisie sur un autre appareil ou onglet.
+export function isOtherSellerSale(sale,sellerId) {
+  const author=Number(sale?.sellerId),viewer=Number(sellerId);
+  return Number.isSafeInteger(author)&&author>0&&Number.isSafeInteger(viewer)&&viewer>0&&author!==viewer;
+}
+
 // Une vente reçue avec retard après reconnexion n'est pas un événement en direct.
 export function isFreshSale(sale,day,clientId,now=Date.now()) {
   const created=Date.parse(sale?.createdAt||'');

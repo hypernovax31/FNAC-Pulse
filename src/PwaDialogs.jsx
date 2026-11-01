@@ -45,9 +45,9 @@ export function NotificationsDialog({permission,enabled,checkError,unconfirmed,p
   } else {
     note=unconfirmed?'L’autorisation est accordée, mais l’abonnement Fnac Pulse n’est pas confirmé. Appuyez pour l’activer sur cet appareil.':permission==='granted'?'L’autorisation est accordée. Activez les notifications pour inscrire cet appareil auprès de Fnac Pulse.':'Un appui est nécessaire pour demander l’autorisation au navigateur. Les notifications concernent votre magasin et votre département.';button=onEnable;label='Activer les notifications';
   }
-  return <Modal title="Notifications d’équipe" subtitle="Ne manquez aucune nouvelle vente de votre département." onClose={onClose}>
-    <div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{enabled===true?'Notifications activées':checking?'Vérification des notifications':'Restez informés'}</strong><p>Chaque nouvelle vente peut vous être signalée sur cet appareil, même lorsque l’application est fermée.</p></div></div>
-    <div className="notification-details"><div><Check size={16}/> Une notification pour chaque nouvelle vente</div><div><Check size={16}/> Uniquement pour votre magasin et votre département</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div>
+  return <Modal title="Notifications d’équipe" subtitle="Suivez les ventes des autres vendeurs de votre département." onClose={onClose}>
+    <div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{enabled===true?'Notifications activées':checking?'Vérification des notifications':'Restez informés'}</strong><p>Les ventes de vos collègues peuvent vous être signalées sur cet appareil, même lorsque l’application est fermée.</p></div></div>
+    <div className="notification-details"><div><Check size={16}/> Pas d’alerte pour vos propres ventes</div><div><Check size={16}/> Uniquement pour votre magasin et votre département</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div>
     <div className="notification-device-note"><Info size={15}/><span>{note}</span></div>
     <button type="button" className={enabled===true?'outline-button full-button':'primary-button full-button'} disabled={busy||disabled} onClick={button}>{busy?'Un instant…':label} {enabled===true?<BellOff size={16}/>:<Bell size={16}/>}</button>
     {enabled!==true&&<button type="button" className="notification-later" onClick={onClose}>Plus tard</button>}

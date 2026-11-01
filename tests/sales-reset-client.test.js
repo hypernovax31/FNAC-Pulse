@@ -25,7 +25,7 @@ test('Reset client : les anciennes ventes disparaissent immédiatement, les nouv
   const previous=Object.getOwnPropertyDescriptor(globalThis,'__resetListeners');globalThis.__resetListeners=new Map();
   const store='shop-test',day=parisToday(),updates=[],announcements=[],errors=[];
   const session={storeId:store,sellerId:1,uid:'seller-test',accessVersion:'valid-version'};
-  const catalog={stores:[{id:store,name:'Magasin test',active:true}],sellers:[{id:1,name:'Morgan',active:true,storeId:store,departmentId:'tech'}],services:[{id:1,name:'DMax',active:true}],serviceOrders:{}};
+  const catalog={stores:[{id:store,name:'Magasin test',active:true}],sellers:[{id:1,name:'Morgan',active:true,storeId:store,departmentId:'tech'},{id:2,name:'Camille',active:true,storeId:store,departmentId:'tech'}],services:[{id:1,name:'DMax',active:true}],serviceOrders:{}};
   const old={id:'old-sale',storeId:store,sellerId:1,serviceId:1,businessDate:day,createdAt:new Date().toISOString(),source:'sale',clientId:'other',departmentId:'tech'};
   try {
     const stop=listenStore(session,day,'this-device',(data,live)=>updates.push({data,live}),sale=>announcements.push(sale),error=>errors.push(error));
@@ -39,14 +39,17 @@ test('Reset client : les anciennes ventes disparaissent immédiatement, les nouv
     assert.equal(updates.at(-1).data.stats.day.total,1);assert.equal(announcements.length,0); // historique initial
     emit(`pulseStores/${store}/sales/~sales-reset~`,snapshot({generation:'reset-job-1'}));
     assert.equal(updates.at(-1).data.stats.day.total,0);
-    const fresh={...old,id:'new-sale-1',generation:'reset-job-1'};
+    const fresh={...old,id:'new-sale-1',sellerId:2,generation:'reset-job-1'};
     emit(`pulseStores/${store}/sales?query`,salesSnapshot([old,fresh],[fresh]));
     assert.equal(updates.at(-1).data.stats.day.total,1);assert.equal(announcements.length,1);
-    const newer={...old,id:'new-sale-2',generation:'reset-job-2'};
+    const newer={...old,id:'new-sale-2',sellerId:2,generation:'reset-job-2'};
     emit(`pulseStores/${store}/sales?query`,salesSnapshot([old,fresh,newer],[newer]));
     assert.equal(updates.at(-1).data.stats.day.total,1);assert.equal(announcements.length,1);
     emit(`pulseStores/${store}/sales/~sales-reset~`,snapshot({generation:'reset-job-2'}));
     assert.equal(updates.at(-1).data.stats.day.total,1);assert.equal(announcements.length,2);assert.equal(announcements[1].id,'new-sale-2');
+    const own={...old,id:'own-other-device',generation:'reset-job-2'};
+    emit(`pulseStores/${store}/sales?query`,salesSnapshot([old,fresh,newer,own],[own]));
+    assert.equal(updates.at(-1).data.stats.day.total,2);assert.equal(announcements.length,2);
     emit(`pulseStores/${store}/sales/~sales-reset~`,snapshot({generation:'reset-job-2'},true));
     assert.equal(updates.at(-1).live,false);assert.deepEqual(errors,[]);
     stop();assert.equal(globalThis.__resetListeners.size,0);

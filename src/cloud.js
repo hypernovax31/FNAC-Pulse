@@ -6,7 +6,8 @@ import { firebaseConfig } from './firebase-config';
 import { createPinSalt, pinProof } from './pin';
 import { earliestDate, parisToday, summarize } from './cloud-stats';
 import { comparePeople, orderServices, sellerStoreId } from './catalog';
-import { createSaleAnnouncer, createSaleSnapshotFilter, isFreshSale } from './live-sales';
+import { createSaleAnnouncer, createSaleSnapshotFilter, isFreshSale, isOtherSellerSale } from './live-sales';
+import { rememberPushOrigin, clearPushOrigin } from './push-origin.js';
 import { sellerDepartmentId, saleDepartmentId } from './departments';
 import { salesGeneration, saleInGeneration } from './sales-reset.js';
 
@@ -109,7 +110,7 @@ export function listenStore(session,day,clientId,onChange,onSale,onError,onGoals
   const freshSales=createSaleSnapshotFilter({day,clientId}),pendingFresh=new Map();
   const announcer=createSaleAnnouncer(sale=>{
     const self=catalog?.sellers.find(s=>Number(s.id)===Number(session.sellerId)&&sellerStoreId(s)===session.storeId);
-    if(self&&isFreshSale(sale,day,clientId)&&saleDepartmentId(sale)===sellerDepartmentId(self))onSale(sale);
+    if(self&&isOtherSellerSale(sale,session.sellerId)&&isFreshSale(sale,day,clientId)&&saleDepartmentId(sale)===sellerDepartmentId(self))onSale(sale);
   });
   const flushFresh=()=>{
     if(!resetReady)return;
@@ -175,6 +176,8 @@ export async function subscribeFcm(api,{signal}={}) {
   if(!token)throw new Error('Impossible de créer l’abonnement aux notifications.');
   await api('/api/push/subscribe',{method:'POST',body:{token},signal});
   requireActiveCheck(signal);
+  await rememberPushOrigin(token,undefined,undefined,signal);
+  requireActiveCheck(signal);
   localStorage.setItem('fnac-pulse-fcm-enabled','1');
 }
 export async function unsubscribeFcm(api) {
@@ -183,7 +186,7 @@ export async function unsubscribeFcm(api) {
   const token=await getToken(m,{vapidKey:VAPID,serviceWorkerRegistration:registration});
   let failure=null;
   try {if(token)await api('/api/push/subscribe',{method:'DELETE',body:{token}});} catch(e) {failure=e;}
-  try {await deleteToken(m);} finally {localStorage.removeItem('fnac-pulse-fcm-enabled');}
+  try {await deleteToken(m);} finally {clearPushOrigin();localStorage.removeItem('fnac-pulse-fcm-enabled');}
   if(failure)throw failure;
 }
 export function notificationsWanted() {try{return localStorage.getItem('fnac-pulse-fcm-enabled')==='1';}catch{return false;}}

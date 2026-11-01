@@ -401,3 +401,28 @@ test('Émulateurs Firebase : suppression vendeur paginée, session révoquée et
     assert.equal((await call('/api/admin/sellers/delete','POST',deletion)).json.status,'done');
   } finally {await deleteApp(app);}
 });
+
+test('Émulateur Firestore : notifications seulement aux collègues et ancienne file protégée',{skip:!enabled},async()=>{
+  const project='demo-fnac',store=LEGACY_STORE_ID;
+  const db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'}),queued=[],sent=[],waits=[];
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({role:'seller',sub:'author-emulator',storeId:store,sellerId:1,accessVersion:'v1'}),sendFcm:async(_env,token)=>sent.push(token)});
+  const env={FIREBASE_PROJECT_ID:project,PULSE_QUEUE:{async sendBatch(xs){queued.push(...xs.map(x=>x.body));}}},ctx={waitUntil(p){waits.push(p)}};
+  await fetch(`http://127.0.0.1:8085/emulator/v1/projects/${project}/databases/(default)/documents`,{method:'DELETE'});
+  assert.equal((await worker.fetch(new Request('https://worker.test/api/bootstrap'),env,ctx)).status,200);
+  const tokens={a:'author-device-1-emulator-123456',b:'author-device-2-emulator-123456',peer:'peer-device-emulator-123456'};
+  const ids=Object.fromEntries(await Promise.all(Object.entries(tokens).map(async([k,v])=>[k,await digestBase64(v)])));
+  await db.commit([db.write('pulseAccess/author-emulator',{active:true,storeId:store,sellerId:1,version:'v1'}),
+    db.write('pulseAccess/peer-emulator',{active:true,storeId:store,sellerId:2,version:'v2'}),
+    ...['a','b'].map(k=>db.write(`pulseTokens/${ids[k]}`,{token:tokens[k],uid:'author-emulator',storeId:store,accessVersion:'v1'})),
+    db.write(`pulseTokens/${ids.peer}`,{token:tokens.peer,uid:'peer-emulator',storeId:store,accessVersion:'v2'})]);
+  const saleId='firestore-notification-0001';
+  const req=new Request('https://worker.test/api/sales',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer author'},body:JSON.stringify({serviceId:1,requestId:saleId,originTokenId:ids.a})});
+  assert.equal((await worker.fetch(req,env,ctx)).status,200);await Promise.all(waits.splice(0));
+  assert.deepEqual(queued.map(x=>x.tokenId),[ids.peer]);
+  const consume=async tokenId=>{const msg={body:{saleId,tokenId,storeId:store},acked:false,ack(){this.acked=true},retry(){throw Error('retry inattendu')}};await worker.queue({messages:[msg]},env);assert(msg.acked);};
+  await consume(ids.b);assert.deepEqual(sent,[]); // ancien message déjà en file pour l'auteur
+  await consume(ids.peer);assert.deepEqual(sent,[tokens.peer]);
+  await db.commit([db.write(`pulseTokens/${ids.a}`,{token:tokens.a,uid:'peer-emulator',storeId:store,accessVersion:'v2'})]);
+  await consume(ids.a);assert.deepEqual(sent,[tokens.peer]); // téléphone émetteur réaffecté
+  assert.equal((await db.get(`pulseOutbox/${saleId}`)).data.originTokenId,ids.a);
+});

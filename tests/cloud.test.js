@@ -77,17 +77,21 @@ test('Cloud : PIN, isolation, corrections, administration et notifications en fi
   assert.equal((await req('/api/auth/login','POST',{storeId:other,sellerId:1,proof})).status,401);
   assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:1,proof})).body.customToken,'custom-test-token');
   const claims=identities.get('seller-token');assert.equal(claims.storeId,store);
-  const token='a-very-long-firebase-registration-token-01';
+  const token='a-very-long-firebase-registration-token-01',peerToken='a-valid-colleague-notification-token-02';
   assert.equal((await req('/api/push/subscribe','POST',{token},'seller-token')).status,200);
-  const requestId='test-sale-00000001';
-  let r=await req('/api/sales','POST',{storeId:other,sellerId:12,serviceId:1,requestId,clientId:'one'},'seller-token');
+  await db.commit([db.write('pulseAccess/fixture-peer',{active:true,storeId:store,sellerId:2,version:'peer-v1'}),
+    db.write(`pulseTokens/${await digestBase64(peerToken)}`,{token:peerToken,uid:'fixture-peer',storeId:store,accessVersion:'peer-v1'})]);
+  const requestId='test-sale-00000001',originTokenId=await digestBase64(token);
+  let r=await req('/api/sales','POST',{storeId:other,sellerId:12,serviceId:1,requestId,clientId:'one',originTokenId},'seller-token');
   assert.equal(r.status,200);assert.equal(r.body.id,requestId);
   await Promise.all(waits.splice(0));assert.equal(queued.length,1);
   const created=await db.get(`pulseStores/${store}/sales/${requestId}`);assert.equal(created.data.storeId,store);assert.equal(created.data.sellerId,1);
+  assert.equal(created.data.originTokenId,undefined);assert.equal((await db.get(`pulseOutbox/${requestId}`)).data.originTokenId,originTokenId);
+  assert.equal(queued[0].tokenId,await digestBase64(peerToken));
   assert.equal(await db.get(`pulseStores/${other}/sales/${requestId}`),null);
   r=await req('/api/sales','POST',{serviceId:1,requestId},'seller-token');assert.equal(r.body.duplicate,true);await Promise.all(waits.splice(0));assert.equal(queued.length,1);
   const message=makeMessage(queued[0]);await worker.queue({messages:[message]},env);assert.equal(message.acked,true);assert.equal(sent.length,1);
-  assert.equal(sent[0].sale.sellerName,'Morgan');assert.equal(sent[0].sale.serviceName,'DMax');
+  assert.equal(sent[0].token,peerToken);assert.equal(sent[0].sale.sellerName,'Morgan');assert.equal(sent[0].sale.serviceName,'DMax');
   const same=makeMessage(queued[0]);await worker.queue({messages:[same]},env);assert.equal(same.acked,true);assert.equal(sent.length,1);
   assert.equal((await req('/api/sales/test-sale-00000001','DELETE',{},'seller-token')).status,200);
   assert.equal((await req('/api/sales/test-sale-00000001','DELETE',{},'seller-token')).status,409);
@@ -105,6 +109,56 @@ test('Cloud : PIN, isolation, corrections, administration et notifications en fi
   assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId:1,proof:newProof})).status,200);
   assert.equal((await req('/api/admin/entities/sellers/1','PATCH',{active:false},'admin-token')).status,200);
   assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'test-sale-00000003'},'seller-token')).status,403);
+});
+
+test('Notifications : auteur exclu sur tous appareils, anciens messages et changement de profil',async()=>{
+  const db=new MemoryDb(),queued=[],sent=[],waits=[],store=LEGACY_STORE_ID;
+  const claims={role:'seller',sub:'author',storeId:store,sellerId:1,accessVersion:'v1'};
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async()=>claims,sendFcm:async(_env,token)=>sent.push(token)});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',PULSE_QUEUE:{async sendBatch(messages){queued.push(...messages.map(x=>x.body));}}};
+  const ctx={waitUntil(p){waits.push(p)}};
+  const base=await (await worker.fetch(new Request('https://worker.test/api/bootstrap'),env,ctx)).json();
+  const other=base.stores.find(s=>s.name==='Fnac Bordeaux').id;
+  const catalog=(await db.get('pulse/catalog')).data;
+  catalog.sellers.find(s=>s.id===3).departmentId='editorial';
+  catalog.sellers.find(s=>s.id===4).storeId=other;catalog.sellerStores.s4=other;
+  await db.commit([db.write('pulse/catalog',catalog),
+    db.write('pulseAccess/author',{active:true,storeId:store,sellerId:1,version:'v1'}),
+    db.write('pulseAccess/peer',{active:true,storeId:store,sellerId:2,version:'v2'}),
+    db.write('pulseAccess/editorial',{active:true,storeId:store,sellerId:3,version:'v3'}),
+    db.write('pulseAccess/other',{active:true,storeId:other,sellerId:4,version:'v4'})]);
+  const tokens={phone:'notification-token-author-phone-123456',tablet:'notification-token-author-tablet-123456',peer1:'notification-token-peer-phone-123456',peer2:'notification-token-peer-tablet-123456',editorial:'notification-token-editorial-123456',other:'notification-token-other-store-123456'};
+  const ids=Object.fromEntries(await Promise.all(Object.entries(tokens).map(async([k,v])=>[k,await digestBase64(v)])));
+  for(const [key,uid,version,targetStore] of [['phone','author','v1',store],['tablet','author','v1',store],['peer1','peer','v2',store],['peer2','peer','v2',store],['editorial','editorial','v3',store],['other','other','v4',other]])
+    await db.commit([db.write(`pulseTokens/${ids[key]}`,{token:tokens[key],uid,storeId:targetStore,accessVersion:version})]);
+  async function add(requestId,originTokenId) {
+    const request=new Request('https://worker.test/api/sales',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer author'},body:JSON.stringify({serviceId:1,requestId,clientId:'phone',originTokenId})});
+    const res=await worker.fetch(request,env,ctx);assert.equal(res.status,200);await Promise.all(waits.splice(0));
+  }
+  const saleId='notify-author-00001';await add(saleId,ids.phone);
+  assert.deepEqual(queued.map(m=>m.tokenId).sort(),[ids.peer1,ids.peer2].sort());
+  const consume=async body=>{const m=makeMessage(body);await worker.queue({messages:[m]},env);assert(m.acked);return m;};
+  // Un ancien message déjà en file pour un autre appareil de l'auteur est ignoré.
+  await consume({saleId,tokenId:ids.tablet,storeId:store});assert.deepEqual(sent,[]);
+  await consume(queued.find(m=>m.tokenId===ids.peer1));assert.deepEqual(sent,[tokens.peer1]);
+  // Un appareil destiné au collègue a changé de profil et appartient désormais à l'auteur.
+  await db.commit([db.write(`pulseTokens/${ids.peer2}`,{token:tokens.peer2,uid:'author',storeId:store,accessVersion:'v1'})]);
+  await consume(queued.find(m=>m.tokenId===ids.peer2));assert.deepEqual(sent,[tokens.peer1]);
+  // L'appareil qui a saisi la vente est confié à un collègue avant réception.
+  await db.commit([db.write(`pulseTokens/${ids.phone}`,{token:tokens.phone,uid:'peer',storeId:store,accessVersion:'v2'})]);
+  await consume({saleId,tokenId:ids.phone,storeId:store});assert.deepEqual(sent,[tokens.peer1]);
+  // Impossible d'exclure le téléphone d'un collègue en forgeant son empreinte.
+  queued.length=0;await add('notify-forged-0001',ids.peer1);
+  assert.equal((await db.get('pulseOutbox/notify-forged-0001')).data.originTokenId,undefined);
+  assert(queued.some(m=>m.tokenId===ids.peer1));
+  // Reprise d'une outbox ancienne sans sellerId : l'auteur est lu dans la vente.
+  queued.length=0;
+  await db.commit([db.write(`pulseStores/${store}/sales/legacy-notify-0001`,{id:'legacy-notify-0001',storeId:store,sellerId:1}),
+    db.write('pulseOutbox/legacy-notify-0001',{saleId:'legacy-notify-0001',storeId:store,departmentId:'tech',status:'pending',createdAt:Date.now()})]);
+  await worker.scheduled({cron:'*/2 * * * *'},env,ctx);await Promise.all(waits.splice(0));
+  assert(queued.some(m=>m.saleId==='legacy-notify-0001'&&m.tokenId===ids.peer1));
+  assert(!queued.some(m=>[ids.tablet,ids.peer2,ids.editorial,ids.other].includes(m.tokenId)));
+  await consume({saleId:'legacy-notify-0001',tokenId:ids.tablet,storeId:store});assert.deepEqual(sent,[tokens.peer1]);
 });
 
 test('Cloud : verrouillage durable après cinq PIN erronés',async()=>{
@@ -145,7 +199,7 @@ test('Cloud : reprise FCM, limitation des doublons et profil archivé',async()=>
   await db.commit([
     db.write(`pulseAccess/${uid}`,{active:true,storeId:store,sellerId:1,version:'v1'}),
     db.write(`pulseTokens/${tokenId}`,{token,uid,storeId:store,accessVersion:'v1'}),
-    db.write(`pulseStores/${store}/sales/sale-test-0001`,{id:'sale-test-0001',storeId:store,sellerId:1}),
+    db.write(`pulseStores/${store}/sales/sale-test-0001`,{id:'sale-test-0001',storeId:store,sellerId:2}),
     db.write('pulseOutbox/sale-test-0001',{saleId:'sale-test-0001',storeId:store,status:'queued',createdAt:Date.now()})
   ]);
   const first=makeMessage({saleId:'sale-test-0001',storeId:store,tokenId});
@@ -435,16 +489,17 @@ test('Cloud départements : affectations, agrégats privés, historique et notif
   assert.equal((await req('/api/admin/departments','POST',{storeId:store,name:'univers PHOTO'},'admin')).status,409);
   assert.equal((await req(`/api/admin/departments/${added.body.id}`,'PATCH',{storeId:store,name:'Image'},'admin')).status,200);
   assert.equal((await req('/api/admin/entities/sellers/2','PATCH',{storeId:store,departmentId:'editorial'},'admin')).status,200);
+  assert.equal((await req('/api/admin/entities/sellers/4','PATCH',{storeId:store,departmentId:'editorial'},'admin')).status,200);
   assert.equal((await req('/api/admin/departments/editorial','PATCH',{storeId:store,active:false},'admin')).status,409);
   assert.equal((await req('/api/admin/entities/sellers/3','PATCH',{storeId:other,departmentId:'editorial'},'admin')).status,400);
   assert.equal((await req('/api/admin/entities/sellers','POST',{storeId:other,name:'Autre équipe',departmentId:'tech'},'admin')).status,200);
   const otherSeller=(await req(`/api/bootstrap?storeId=${other}`)).body.sellers.find(s=>s.storeId===other).id;
-  const pins={1:'73628519',2:'59386271',[otherSeller]:'48275196'};
+  const pins={1:'73628519',2:'59386271',3:'67289415',4:'78234691',[otherSeller]:'48275196'};
   for(const [id,pin] of Object.entries(pins)) {
     const sid=Number(id),targetStore=sid===otherSeller?other:store,proof=await pinProof('demo-fnac',targetStore,sid,pin);
     await activateSeller(req,targetStore,sid,proof,'admin');
     if(sid===2)assert.equal((await req('/api/auth/login','POST',{storeId:targetStore,sellerId:sid,departmentId:'tech',proof})).status,401);
-    assert.equal((await req('/api/auth/login','POST',{storeId:targetStore,sellerId:sid,departmentId:sid===2?'editorial':'tech',proof})).status,200);
+    assert.equal((await req('/api/auth/login','POST',{storeId:targetStore,sellerId:sid,departmentId:sid===2||sid===4?'editorial':'tech',proof})).status,200);
     assert.equal((await req('/api/push/subscribe','POST',{token:`registration-token-for-seller-${sid}-123456`},`seller-${sid}`)).status,200);
   }
   for(const [sid,month] of [[1,10],[2,20]])assert.equal((await req('/api/admin/goals','POST',{
@@ -463,20 +518,21 @@ test('Cloud départements : affectations, agrégats privés, historique et notif
   assert(!JSON.stringify(aggregate.body).includes('workdays'));assert(!JSON.stringify(aggregate.body).includes('Morgan'));
   assert.equal((await req(`/api/goals?storeId=${store}&sellerId=2`,'GET',undefined,'seller-1')).status,403);
   assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'tech-sale-000001'},'seller-1')).status,200);
-  assert.equal(await flush(),1);assert.deepEqual(sent.map(x=>x.token),['registration-token-for-seller-1-123456']);
+  assert.equal(await flush(),1);assert.deepEqual(sent.map(x=>x.token),['registration-token-for-seller-3-123456']);
   assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'editorial-sale-00001'},'seller-2')).status,200);
-  assert.equal(await flush(),1);assert.equal(sent.at(-1).token,'registration-token-for-seller-2-123456');
+  assert.equal(await flush(),1);assert.equal(sent.at(-1).token,'registration-token-for-seller-4-123456');
   assert.equal((await db.get(`pulseStores/${store}/sales/tech-sale-000001`)).data.departmentId,'tech');
   assert.equal((await db.get(`pulseStores/${store}/sales/editorial-sale-00001`)).data.departmentId,'editorial');
   // An queued target may move before delivery; the consumer rechecks membership.
   assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'before-move-sale-001'},'seller-1')).status,200);
   await Promise.all(waits.splice(0));assert.equal(queued.length,1);
+  assert.equal((await req('/api/admin/entities/sellers/3','PATCH',{storeId:store,departmentId:'editorial'},'admin')).status,200);
   assert.equal((await req('/api/admin/entities/sellers/1','PATCH',{storeId:store,departmentId:'editorial'},'admin')).status,200);
   const movedMessage=makeMessage(queued.shift());await worker.queue({messages:[movedMessage]},env);assert(movedMessage.acked);assert.equal(sent.length,2);
   const oldSale=(await db.get(`pulseStores/${store}/sales/tech-sale-000001`)).data;assert.equal(oldSale.departmentId,'tech');
   assert.equal((await req('/api/sales/remove','POST',{serviceId:1},'seller-1')).status,409);
   assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'after-move-sale-0001'},'seller-1')).status,200);
-  assert.equal(await flush(),2);assert.equal(sent.length,4);
+  assert.equal(await flush(),3);assert.equal(sent.length,5);
   const allSales=(await db.query(`pulseStores/${store}/sales`)).map(d=>d.data).filter(s=>s.businessDate);
   const catalog=(await db.get('pulse/catalog')).data,stats=summarize(catalog,allSales,1,parisToday(),store);
   assert.equal(stats.day.total,2);assert.equal(stats.mineTotal,3); // Total personnel, y compris l'ancien département.

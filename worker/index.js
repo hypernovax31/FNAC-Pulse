@@ -873,7 +873,15 @@ export function createWorker(deps={}) {
     const storeId=s.claims.storeId,sellerId=Number(s.claims.sellerId),person=sellerBy(s.catalog,sellerId,storeId),departmentId=sellerDepartmentId(person);
     const marker=await db.get(salesMarkerPath(storeId)),generation=salesGeneration(marker?.data);
     const data={id:requestId,storeId,sellerId,departmentId,serviceId:service.id,createdAt:new Date().toISOString(),businessDate:today(),deletedAt:null,source:'sale',clientId:typeof body.clientId==='string'?body.clientId.slice(0,80):'',ownerUid:s.claims.sub,generation};
-    const outbox={saleId:requestId,storeId,departmentId,sellerName:person.name,serviceName:service.name,status:'pending',createdAt:Date.now(),leaseUntil:0,generation};
+    // Identifiant haché du jeton de l'appareil émetteur, uniquement si ce jeton
+    // appartient bien au vendeur. Il reste privé dans l'outbox et permet aussi
+    // d'éviter un push tardif après un changement de profil sur le téléphone.
+    let originTokenId='';
+    if(typeof body.originTokenId==='string'&&PROOF.test(body.originTokenId)) {
+      const originToken=await db.get(`pulseTokens/${body.originTokenId}`);
+      if(originToken?.data.uid===s.claims.sub&&originToken.data.storeId===storeId&&originToken.data.accessVersion===s.claims.accessVersion)originTokenId=body.originTokenId;
+    }
+    const outbox={saleId:requestId,storeId,sellerId,departmentId,sellerName:person.name,serviceName:service.name,status:'pending',createdAt:Date.now(),leaseUntil:0,generation,...(originTokenId?{originTokenId}:{})};
     try {await db.commit([...saleAuthorizationChecks(db,s),db.verify(salesMarkerPath(storeId),precondition(marker)),db.write(docPath(storeId,requestId),data,{exists:false}),db.write(`pulseOutbox/${requestId}`,outbox,{exists:false}),db.write(guardPath(storeId),{revision:crypto.randomUUID()})]);}
     catch(e) {
       if(!conflict(e))throw e;
@@ -952,11 +960,18 @@ export function createWorker(deps={}) {
       // Ne mettre en file que les appareils du département concerné. Les accès
       // sont lus par lots pour rester sous les limites de sous-requêtes du Worker.
       const paths=[...new Set(tokens.map(t=>`pulseAccess/${t.data.uid}`))];
-      const [c,accesses]=await Promise.all([catalog(db),db.getMany?db.getMany(paths):Promise.all(paths.map(p=>db.get(p)))]);
+      // Les anciens messages n'ont pas sellerId dans l'outbox : relire la vente
+      // avant la mise en file. Sans auteur identifiable, ne pas diffuser.
+      const [c,accesses,originSale]=await Promise.all([
+        catalog(db),db.getMany?db.getMany(paths):Promise.all(paths.map(p=>db.get(p))),
+        isId(item.data.sellerId)?Promise.resolve(null):db.get(docPath(item.data.storeId,id)),
+      ]);
+      const authorId=isId(item.data.sellerId)?Number(item.data.sellerId):Number(originSale?.data.sellerId);
       const byPath=new Map(paths.map((p,i)=>[p,accesses[i]?.data]));
       const eligible=tokens.filter(t=>{
         const a=byPath.get(`pulseAccess/${t.data.uid}`),recipient=a&&sellerBy(c.data,a.sellerId,item.data.storeId);
-        return a?.active&&a.version===t.data.accessVersion&&a.storeId===item.data.storeId&&recipient&&validStore(c.data,item.data.storeId)&&
+        return isId(authorId)&&Number(a?.sellerId)!==authorId&&t.id!==item.data.originTokenId&&
+          a?.active&&a.version===t.data.accessVersion&&a.storeId===item.data.storeId&&recipient&&validStore(c.data,item.data.storeId)&&
           sellerDepartmentId(recipient)===saleDepartmentId(item.data);
       });
       for(let i=0;i<eligible.length;i+=100)await env.PULSE_QUEUE.sendBatch(eligible.slice(i,i+100).map(t=>({body:{saleId:id,tokenId:t.id,storeId:item.data.storeId}})));
@@ -1020,7 +1035,10 @@ export function createWorker(deps={}) {
       const [a,c]=await Promise.all([db.get(`pulseAccess/${tokenDoc.data.uid}`),catalog(db)]);
       const recipient=a?.data&&sellerBy(c.data,a.data.sellerId,storeId);
       const author=originSale&&c.data.sellers.find(s=>Number(s.id)===Number(originSale.data.sellerId)&&sellerStoreId(s)===storeId);
+      // Revérifier au dernier moment, notamment pour les messages déjà en file
+      // avant cette mise à jour ou les abonnements réaffectés entre-temps.
       if(!originSale||!author||author.deletingJob||!a?.data.active||a.data.version!==tokenDoc.data.accessVersion||a.data.storeId!==storeId||!recipient||!validStore(c.data,storeId)||
+         Number(a.data.sellerId)===Number(originSale.data.sellerId)||tokenId===outbox.data.originTokenId||
          sellerDepartmentId(recipient)!==saleDepartmentId(outbox.data)){await skip();return;}
       stage='fcm';await send(env,tokenDoc.data.token,outbox.data);
       stage='mark';const current=await db.get(path);if(current)await db.commit([db.write(path,{status:'sent',leaseUntil:0,sentAt:Date.now()},precondition(current))]);

@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {calendarChip} from '../src/calendar.js';
-import {isFreshSale,createSaleSnapshotFilter,createSaleAnnouncer} from '../src/live-sales.js';
+import {isFreshSale,createSaleSnapshotFilter,createSaleAnnouncer,isOtherSellerSale} from '../src/live-sales.js';
 import {summarize} from '../src/cloud-stats.js';
 
 const DAY='2026-10-29',NOW=Date.parse('2026-10-29T15:30:00Z');
@@ -26,6 +26,14 @@ test('Ventes en direct : pas de son au chargement ni au retour des anciennes don
   const changes=[['added',fresh],['added',old],['added',sale({clientId:'moi'})],['added',sale({deletedAt:'2026-10-29'})],['added',sale({businessDate:'2026-10-28'})],['modified',sale({id:'correction'})]];
   assert.deepEqual(filter(snap(false,changes)),[fresh]);
   assert.equal(isFreshSale(sale({createdAt:new Date(NOW+6000).toISOString()}),DAY,'moi',NOW),false);
+});
+
+test('Annonce : exclure le vendeur auteur sur tous ses appareils, pas les collègues',()=>{
+  assert.equal(isOtherSellerSale(sale({sellerId:1,clientId:'autre-appareil'}),1),false);
+  assert.equal(isOtherSellerSale(sale({sellerId:2}),1),true);
+  assert.equal(isOtherSellerSale(sale({sellerId:'2'}),'1'),true);
+  assert.equal(isOtherSellerSale(sale({sellerId:null}),1),false);
+  assert.equal(isOtherSellerSale(sale(),null),false);
 });
 
 test('Annonce : catalogue tardif sans fuite des noms et sans perdre la vente',()=>{

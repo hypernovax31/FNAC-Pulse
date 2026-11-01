@@ -210,6 +210,10 @@ p,h1,h2,h3 { margin:0; }
 .notification-card p { color:#a19d8e; font-size:10px; line-height:1.4; margin-top:4px; }
 .notification-card button { display:flex; align-items:center; gap:3px; color:#876700; font-weight:750; font-size:10px; background:none; padding:3px 0; }
 .notification-prompt { margin-bottom:23px; }
+.startup-sound-prompt { margin-bottom:20px; text-align:left; }
+.startup-sound-prompt > div button { min-height:38px; margin-top:3px; }
+.notification-card .startup-sound-close { display:grid; place-items:center; width:32px; height:32px; padding:0; flex:0 0 auto; }
+.app-loading .startup-sound-prompt { width:min(90%,420px); }
 .notification-later { width:100%; min-height:42px; margin-top:7px; background:transparent; color:#777a6e; font-size:11px; font-weight:700; }
 .summary-panel { padding:22px; }
 .summary-heading { align-items:center; }

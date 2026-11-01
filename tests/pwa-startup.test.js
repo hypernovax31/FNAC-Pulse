@@ -68,6 +68,7 @@ test('Modale notifications : action utilisateur, état bloqué, profil et erreur
   const base={permission:'default',enabled:false,checkError:'',pushAvailable:true,platform:{os:'android'},installed:true,hasSession:true,busy:false};
   const normal=render(NotificationsDialog,base);
   assert.match(normal,/Activer les notifications/);assert.match(normal,/Un appui est nécessaire/);assert.match(normal,/votre magasin et votre département/);
+  assert.match(normal,/Pas d’alerte pour vos propres ventes/);assert.match(normal,/ventes de vos collègues/);
   const blocked=render(NotificationsDialog,{...base,permission:'denied'});
   assert.match(blocked,/Notifications bloquées/);assert.match(blocked,/<button[^>]+disabled=""[^>]*>Notifications bloquées/);
   const missingProfile=render(NotificationsDialog,{...base,hasSession:false});assert.match(missingProfile,/Choisir mon profil/);

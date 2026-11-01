@@ -11,6 +11,7 @@ import { GOALS_RESET_CONFIRMATION } from '../src/goals-reset.js';
 import { SELLER_DELETE_CONFIRMATION } from '../src/seller-delete.js';
 import { cleanSellerName, sameSellerName, validSellerName } from '../src/seller-registration.js';
 import { saleMessage } from '../src/sale-message.js';
+import { localPushTargets } from './push-targets.js';
 import { DEFAULT_DEPARTMENTS, TECH_DEPARTMENT_ID, departmentsForStore, sellerDepartmentId } from '../src/departments.js';
 import { summaryGoals } from '../src/summary-goals.js';
 import { SALES_RESET_CONFIRMATION } from '../src/sales-reset.js';
@@ -321,9 +322,7 @@ app.post('/api/sales', (req,res) => {
   res.status(201).json({ id });
   // Only real new sales trigger pushes; corrections and administrative adjustments do not.
   const payload = JSON.stringify({ title:'Une vente pour l’équipe !', body:saleMessage(service.name,seller.name), tag:`sale-${id}`, url:'/' });
-  const rows = db.prepare(`SELECT subscriptions.endpoint,subscriptions.subscription_json FROM subscriptions
-    JOIN sellers ON sellers.id=subscriptions.seller_id AND sellers.store_id=subscriptions.store_id
-    WHERE subscriptions.store_id=? AND sellers.active=1 AND sellers.department_id=?`).all(store.id,departmentId);
+  const rows = localPushTargets(db,store.id,departmentId,seller.id);
   for (const row of rows) {
     // A broken or expired subscription must not prevent delivery to the rest of the team.
     Promise.resolve().then(() => webpush.sendNotification(JSON.parse(row.subscription_json),payload,{TTL:3600, urgency:'normal'})).catch(error => {
