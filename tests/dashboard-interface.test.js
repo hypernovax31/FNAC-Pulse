@@ -20,6 +20,21 @@ test('En-tête : son séparé, cloche barrée et aucun point vert de direct',()=
   assert.match(on,/aria-label="Couper la signature au lancement"/);assert.match(on,/aria-label="Notifications activées"/);
 });
 
+test('Premier lancement PWA : l’accueil tactile masque le tableau de bord avant le geste',()=>{
+  const oldWindow=globalThis.window,oldStorage=globalThis.localStorage;
+  globalThis.window={navigator:{standalone:true},isSecureContext:false};
+  globalThis.localStorage={getItem(){return null;},setItem(){},removeItem(){}};
+  try {
+    const html=render(App);
+    assert.match(html,/Touchez pour ouvrir votre espace/);assert.match(html,/Bienvenue sur/);
+    assert.match(html,/class="startup-start" disabled=""/);
+    assert.doesNotMatch(html,/class="app-shell"/);assert.doesNotMatch(html,/Continuer sans son/);
+  } finally {
+    if(oldWindow===undefined)delete globalThis.window;else globalThis.window=oldWindow;
+    if(oldStorage===undefined)delete globalThis.localStorage;else globalThis.localStorage=oldStorage;
+  }
+});
+
 test('Navigation et date : Objectifs et semaine ISO visibles',()=>{
   const nav=render(MobileNav,{active:'objectifs',onNavigate:()=>{},onSession:()=>{}});
   assert.match(nav,/>Objectifs</);assert.doesNotMatch(nav,/>Accueil</);

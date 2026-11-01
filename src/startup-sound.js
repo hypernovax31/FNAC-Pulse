@@ -1,68 +1,62 @@
-// Garder la clé historique : une personne qui avait coupé le son ne doit pas
-// le réentendre après la mise à jour.
+// Conserver la préférence historique : une personne qui avait coupé le son ne
+// doit pas le réentendre sans l'avoir réactivé elle-même.
 export const SOUND_KEY='fnac-pulse-sale-sound-v1';
-export const STARTUP_SOUND_KEY='fnac-pulse-first-startup-sound-v1';
+// Un nouveau parcours exigeant un geste est proposé une fois après cette mise
+// à jour, y compris si l'ancienne invitation avait déjà été fermée.
+export const STARTUP_SOUND_KEY='fnac-pulse-touch-welcome-v1';
 export function soundEnabled(storage) {
   try {return (storage??globalThis.localStorage)?.getItem(SOUND_KEY)!=='off';} catch {return true;}
 }
 export function saveSound(enabled,storage) {
   try {(storage??globalThis.localStorage)?.setItem(SOUND_KEY,enabled?'on':'off');} catch {}
 }
+export function needsStartupTouch({standalone=false,storage}={}) {
+  if(!standalone)return false;
+  try {return (storage??globalThis.localStorage)?.getItem(STARTUP_SOUND_KEY)!=='done';} catch {return true;}
+}
 
 export function createStartupSound({base='/',AudioClass=globalThis.Audio,storage}={}) {
-  let audio=null,disposed=false,started=false,awaitingGesture=false,enabled=soundEnabled(storage);
-  function readState() {try{return (storage??globalThis.localStorage)?.getItem(STARTUP_SOUND_KEY)||'';}catch{return '';}}
+  let audio=null,disposed=false,waiting=false,finished=false,version=0,enabled=soundEnabled(storage);
   function writeState(value) {try{(storage??globalThis.localStorage)?.setItem(STARTUP_SOUND_KEY,value);}catch{}}
+  function finish() {finished=true;writeState('done');}
   function getAudio() {
     if(audio||!AudioClass)return audio;
     try {audio=new AudioClass(`${base}FNAC%20-%20SIGNATURE.mp3`);audio.preload='auto';} catch {audio=null;}
     return audio;
   }
-  function tryPlay() {
-    const player=getAudio();
-    if(!player){writeState('done');return Promise.resolve('unavailable');}
-    try {
-      // L'appel reste synchrone lorsqu'il provient du bouton : c'est nécessaire
-      // pour les navigateurs qui exigent un véritable geste de l'utilisateur.
-      return Promise.resolve(player.play()).then(()=>{
-        if(!disposed&&enabled){awaitingGesture=false;writeState('done');return 'played';}
-        return 'ignored';
-      },error=>{
-        if(!disposed&&enabled&&error?.name==='NotAllowedError'){awaitingGesture=true;return 'gesture';}
-        if(!disposed&&enabled)writeState('done');
-        return 'unavailable';
-      });
-    } catch(error) {
-      if(!disposed&&enabled&&error?.name==='NotAllowedError'){awaitingGesture=true;return Promise.resolve('gesture');}
-      if(!disposed&&enabled)writeState('done');
-      return Promise.resolve('unavailable');
-    }
+  function stop() {
+    version++;waiting=false;
+    if(audio){try{audio.pause();audio.currentTime=0;}catch{}}
   }
   return {
-    // Ne rien marquer ni lire dans un onglet ou lorsque l'application est cachée.
-    start({standalone=false,visible=true}={}) {
-      if(disposed||started||!standalone||!visible)return Promise.resolve('ignored');
-      started=true;
-      const state=readState();
-      if(state==='done')return Promise.resolve('ignored');
-      if(!enabled){writeState('done');return Promise.resolve('muted');}
-      // Une lecture refusée précédemment ne reprend jamais toute seule : seul un
-      // appui explicite peut alors déclencher la signature, une fois.
-      if(state==='pending'){awaitingGesture=true;return Promise.resolve('gesture');}
+    // Cette méthode doit être appelée directement par le gestionnaire du bouton,
+    // sans await ni temporisation avant play(), pour respecter le geste iOS.
+    playFromGesture({standalone=false,visible=true}={}) {
+      if(disposed||!standalone||!visible)return Promise.resolve('ignored');
+      if(finished||!needsStartupTouch({standalone:true,storage}))return Promise.resolve('done');
+      if(!enabled){finish();return Promise.resolve('muted');}
+      if(waiting)return Promise.resolve('busy');
       writeState('pending');
-      return tryPlay();
+      const player=getAudio();if(!player)return Promise.resolve('unavailable');
+      const current=++version;waiting=true;
+      try {
+        return Promise.resolve(player.play()).then(()=>{
+          if(disposed||current!==version)return 'ignored';
+          waiting=false;finish();return 'played';
+        },()=>{
+          if(disposed||current!==version)return 'ignored';
+          waiting=false;return 'unavailable';
+        });
+      } catch {
+        if(current===version)waiting=false;
+        return Promise.resolve('unavailable');
+      }
     },
-    playFromGesture() {
-      if(disposed||!enabled||!awaitingGesture)return Promise.resolve('ignored');
-      awaitingGesture=false;
-      return tryPlay();
-    },
-    dismiss() {awaitingGesture=false;writeState('done');},
-    setEnabled(value) {
-      enabled=!!value;
-      if(!enabled&&started){awaitingGesture=false;writeState('done');}
-    },
-    stop() {if(audio){audio.pause();try{audio.currentTime=0;}catch{}}},
-    dispose() {disposed=true;awaitingGesture=false;if(audio)audio.pause();},
+    // Utilisable seulement après un échec : l'accès à la PWA ne doit pas rester
+    // bloqué si le navigateur, le réseau ou le lecteur audio sont indisponibles.
+    dismiss() {stop();finish();},
+    setEnabled(value) {enabled=!!value;if(!enabled)stop();},
+    stop,
+    dispose() {disposed=true;stop();},
   };
 }
