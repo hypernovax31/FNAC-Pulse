@@ -99,6 +99,7 @@ p,h1,h2,h3 { margin:0; }
 .select-wrap { height:40px; display:flex; align-items:center; gap:8px; border:1px solid #e8e8df; background:#fff; border-radius:6px; padding-left:11px; color:#a8a99d; min-width:0; }
 .select-wrap:focus-within { border-color:#d7b735; }
 .select-wrap select { min-width:0; flex:1; color:#50524b; background:transparent; appearance:none; border:0; outline:0; font-size:11px; font-weight:600; height:100%; text-overflow:ellipsis; cursor:pointer; }
+.name-wrap input { min-width:0; width:100%; flex:1; color:#50524b; background:transparent; border:0; outline:0; font-size:13px; font-weight:600; height:100%; padding:0 9px 0 0; }
 .select-chevron { flex:0 0 auto; margin-right:9px; pointer-events:none; color:#a3a59b; }
 .locate-button { flex:0 0 40px; height:40px; display:grid; place-items:center; border:1px solid #e8e8df; border-radius:6px; background:#fff; color:#9e8d50; }
 .locate-button:hover { border-color:#d9b72b; color:#806700; }
@@ -404,6 +405,8 @@ p,h1,h2,h3 { margin:0; }
   .session-fields .department-field,.session-fields .seller-field { grid-column:1/-1; }
   .session-fields .session-submit { grid-column:1/-1; width:100%; }
   .session-field > span { font-size:9px; }
+  /* Évite le zoom automatique de Safari iOS lors de la saisie. */
+  .session-form .name-wrap input,.session-form .text-input,.session-form .select-wrap select { font-size:16px; }
   .select-wrap,.locate-button { height:43px; }
   .session-submit { height:43px; }
   .section-overline { margin:23px 0 11px; }
@@ -591,7 +594,7 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .admin-count-row input,
 [data-theme='dark'] .outline-button,
 [data-theme='dark'] .small-outline-button { background:#292d27; border-color:#484e43; color:#f0f1e9; }
-[data-theme='dark'] .select-wrap select { color:#f0f1e9; }
+[data-theme='dark'] .select-wrap select,[data-theme='dark'] .name-wrap input { color:#f0f1e9; }
 [data-theme='dark'] .text-input::placeholder { color:#a7aca0; }
 [data-theme='dark'] .primary-button:disabled { background:#514a35; color:#c1bbaa; }
 [data-theme='dark'] .install-app-preview { background:#29291f; border-color:#50472c; }

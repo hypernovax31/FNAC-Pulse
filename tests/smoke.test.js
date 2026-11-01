@@ -308,3 +308,20 @@ test('SQLite reset objectifs : département isolé, objectifs non renseignés, r
     assert.equal((await request(`/api/goals?storeId=${store}&sellerId=${one}`)).body.goals[`s${service}`].month,42);
   } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
 });
+
+test('SQLite local : création autonome du profil, prénom existant et persistance',async()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'fnac-pulse-register-')),port=await freePort(),url=`http://127.0.0.1:${port}`;let server=await start(port,folder);
+  async function request(route,method='GET',body,token){const r=await fetch(url+route,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,value:await r.json()};}
+  try {
+    const initial=(await request('/api/bootstrap')).value,store=LEGACY_STORE_ID,other=initial.stores.find(x=>x.name==='Fnac Bordeaux').id;
+    assert.equal((await request('/api/auth/register','POST',{storeId:store,departmentId:'absent',name:'Ariane'})).status,400);
+    const created=await request('/api/auth/register','POST',{storeId:store,departmentId:'editorial',name:'  Ariane   Test  '});assert.equal(created.status,200);
+    assert.equal((await request('/api/auth/register','POST',{storeId:store,departmentId:'tech',name:'ariane test'})).status,409);
+    assert.equal((await request('/api/auth/register','POST',{storeId:other,departmentId:'tech',name:'Ariane Test'})).status,200);
+    assert.equal((await request('/api/auth/register','POST',{storeId:store,departmentId:'tech',name:'morgan'})).status,409);
+    const updated=(await request('/api/bootstrap')).value,person=updated.sellers.find(x=>x.id===created.value.sellerId);
+    assert.equal(person.name,'Ariane Test');assert.equal(person.departmentId,'editorial');assert.equal(person.storeId,store);
+    await stop(server);server=await start(port,folder);
+    assert.equal((await request('/api/bootstrap')).value.sellers.find(x=>x.id===person.id).name,'Ariane Test');
+  } finally {await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
+});

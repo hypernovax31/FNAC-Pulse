@@ -3,7 +3,7 @@ import { getAuth, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndP
 import { getFirestore, doc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { getMessaging, getToken, deleteToken, isSupported } from 'firebase/messaging';
 import { firebaseConfig } from './firebase-config';
-import { pinProof } from './pin';
+import { createPinSalt, pinProof } from './pin';
 import { earliestDate, parisToday, summarize } from './cloud-stats';
 import { comparePeople, orderServices, sellerStoreId } from './catalog';
 import { createSaleAnnouncer, createSaleSnapshotFilter, isFreshSale } from './live-sales';
@@ -38,15 +38,49 @@ async function completeSellerLogin(result,session,pinJustSaved=false) {
   if(claims.role!=='seller'||claims.storeId!==session.storeId||claims.sellerId!==session.sellerId||typeof claims.accessVersion!=='string'||!claims.accessVersion){await signOut(auth);throw new Error('Connexion invalide. Réessayez.');}
   return {storeId:claims.storeId,sellerId:claims.sellerId,uid:user.uid,accessVersion:claims.accessVersion};
 }
-export async function sellerLogin(api,session,pin) {
-  const proof=await pinProof(firebaseConfig.projectId,session.storeId,session.sellerId,pin);
-  const result=await api('/api/auth/login',{method:'POST',body:{...session,openPinFlow:true,proof}});
+export async function sellerLogin(api,session,pin,pinSalt='') {
+  const proof=await pinProof(firebaseConfig.projectId,session.storeId,session.sellerId,pin,pinSalt);
+  const result=await api('/api/auth/login',{method:'POST',body:{...session,openPinFlow:true,pinFlowVersion:2,proof}});
   return completeSellerLogin(result,session);
 }
 export async function sellerChoosePin(api,session,pin) {
-  const newProof=await pinProof(firebaseConfig.projectId,session.storeId,session.sellerId,pin);
-  const result=await api('/api/auth/claim',{method:'POST',body:{...session,newProof}});
+  const newProof=await pinProof(firebaseConfig.projectId,session.storeId,session.sellerId,pin);let result;
+  try {result=await api('/api/auth/claim',{method:'POST',body:{...session,newProof,pinLength:4}});}
+  catch(error) {
+    if(error.status&&error.status<500&&error.status!==409)throw error;
+    // Une réponse perdue peut masquer une revendication réussie ; ne jamais
+    // réécrire le PIN, seulement tenter de se connecter avec ce même dérivé.
+    try {result=await api('/api/auth/login',{method:'POST',body:{...session,proof:newProof,openPinFlow:true,pinFlowVersion:2}});}
+    catch {if(error.status===409)throw error;throw new Error('Votre PIN a peut-être été enregistré. Recherchez votre profil et connectez-vous avec ce code.');}
+  }
   return completeSellerLogin(result,session,true);
+}
+export async function sellerMigratePin(api,session,oldPin,newPin,pinSalt='') {
+  const [oldProof,newProof]=await Promise.all([
+    pinProof(firebaseConfig.projectId,session.storeId,session.sellerId,oldPin,pinSalt),
+    pinProof(firebaseConfig.projectId,session.storeId,session.sellerId,newPin,pinSalt),
+  ]);
+  const body={...session,oldProof,newProof};let result;
+  try {result=await api('/api/auth/pin/change',{method:'POST',body});}
+  catch(error){
+    if(error.status&&error.status<500)throw error;
+    try {result=await api('/api/auth/pin/change',{method:'POST',body});}
+    catch {throw new Error('Le nouveau PIN a peut-être été enregistré. Vérifiez votre profil et connectez-vous avec le code à 4 chiffres.');}
+  }
+  return completeSellerLogin(result,session,true);
+}
+export async function sellerRegister(api,selection,name,pin) {
+  const pinSalt=createPinSalt(),registrationId=createPinSalt();
+  const newProof=await pinProof(firebaseConfig.projectId,selection.storeId,null,pin,pinSalt);
+  const body={storeId:selection.storeId,departmentId:selection.departmentId,name,pinSalt,registrationId,newProof};let result;
+  try {result=await api('/api/auth/register',{method:'POST',body});}
+  catch(error){
+    if(error.status&&error.status<500)throw error;
+    try {result=await api('/api/auth/register',{method:'POST',body});}
+    catch {throw new Error('Votre profil a peut-être été créé. Recherchez votre prénom et connectez-vous avec votre PIN à 4 chiffres.');}
+  }
+  if(!Number.isSafeInteger(result?.sellerId)||result.sellerId<=0)throw new Error('Votre profil a peut-être été créé. Recherchez votre prénom et connectez-vous.');
+  return completeSellerLogin(result,{...selection,sellerId:result.sellerId},true);
 }
 export async function sellerLogout() {await signOut(auth);}
 export async function adminLogin(email,password) {

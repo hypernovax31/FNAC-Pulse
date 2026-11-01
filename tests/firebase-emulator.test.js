@@ -76,10 +76,17 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
       storeDb.write(`pulseStatus/${uid}`,{active:true,storeId:store,sellerId:1,sellerKey:'s1',version:oldVersion,goalsRevision:'goals-before-reset'})]);
     const oldUser=(await signInWithCustomToken(auth,fakeCustomToken(env,uid,{role:'seller',storeId:store,sellerId:1,sellerKey:'s1',accessVersion:oldVersion}))).user;
     const oldToken=await oldUser.getIdToken();assert.equal((await getDocFromServer(doc(db,'pulse','catalog'))).exists(),true);
-    assert.deepEqual((await call('/api/auth/status','POST',{storeId:store,sellerId:1})).json,{needsPin:true});
+    // Même si le marqueur historique est absent, l'initialisation actuelle ne
+    // lance plus de remise à zéro globale et préserve la session existante.
+    assert.deepEqual((await call('/api/auth/status','POST',{storeId:store,sellerId:1})).json,{needsPin:false});
+    assert.equal((await getDocFromServer(doc(db,'pulse','catalog'))).exists(),true);
+    assert.equal((await call('/api/goals','GET',undefined,oldToken)).status,200);
+    assert.equal((await storeDb.get(`pulseStatus/${uid}`)).data.goalsRevision,'goals-before-reset');
+    // Seule une action ciblée et authentifiée de l'administrateur révoque ici.
+    assert.equal((await call('/api/admin/pin-reset','POST',{storeId:store,sellerId:1},adminToken)).status,200);
     await assert.rejects(getDocFromServer(doc(db,'pulse','catalog')),/permission|insufficient/i);
     assert.equal((await call('/api/goals','GET',undefined,oldToken)).status,403);
-    assert.equal((await storeDb.get(`pulseStatus/${uid}`)).data.goalsRevision,'goals-before-reset');
+    assert.deepEqual((await call('/api/auth/status','POST',{storeId:store,sellerId:1})).json,{needsPin:true});
     assert.equal((await call('/api/auth/claim','POST',{storeId:store,sellerId:1,newProof:proof})).status,200);
     const login=await call('/api/auth/login','POST',{storeId:store,sellerId:1,proof});assert.equal(login.status,200);
     const seller=(await signInWithCustomToken(auth,login.json.customToken)).user;
@@ -297,5 +304,46 @@ test('Émulateurs Firebase : reset des objectifs ciblé, permissions et mises à
     assert.notEqual((await getDocFromServer(doc(db,'pulseStores',store,'sales','~summary-goals~'))).data().revision,'marker-before');
     assert.equal((await call('/api/admin/goals/reset','POST',reset,adminToken)).json.status,'done');
     assert.equal((await storeDb.get(`pulseGoals/${uid}`)).data.goals.s1.month,45);
+  } finally {await deleteApp(app);}
+});
+
+test('Émulateurs Firebase : inscription atomique et transition sans déconnexion des autres sessions',{skip:!enabled},async()=>{
+  const project='demo-fnac',store=LEGACY_STORE_ID,app=initializeApp({apiKey:'demo-key',projectId:project,appId:'1:1:web:demo'},`pin4-${Date.now()}`);
+  const auth=getAuth(app),db=getFirestore(app);connectAuthEmulator(auth,'http://127.0.0.1:9099',{disableWarnings:true});connectFirestoreEmulator(db,'127.0.0.1',8085);
+  const storeDb=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'});
+  const env={FIREBASE_PROJECT_ID:project,PIN_PEPPER:Buffer.alloc(32,27).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true};}}},ctx={waitUntil(){}};
+  const worker=createWorker({createDb:()=>storeDb,makeCustomToken:fakeCustomToken,verifyIdToken:async(_env,t)=>JSON.parse(Buffer.from(t.split('.')[1],'base64url').toString())});
+  async function call(path,method='GET',body,token){const req=new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});const res=await worker.fetch(req,env,ctx),json=await res.json();assert.notEqual(res.status,500,JSON.stringify(json));return {status:res.status,json};}
+  try {
+    await fetch(`http://127.0.0.1:8085/emulator/v1/projects/${project}/databases/(default)/documents`,{method:'DELETE'});
+    assert.equal((await call('/api/bootstrap')).status,200);assert.equal((await call('/api/auth/initialize','POST',{})).status,200);
+    const oldProof=await pinProof(project,store,1,'42683179'),newProof=await pinProof(project,store,1,'7294');
+    const claim=await call('/api/auth/claim','POST',{storeId:store,sellerId:1,newProof:oldProof});assert.equal(claim.status,200);
+    const oldUser=(await signInWithCustomToken(auth,claim.json.customToken)).user,oldToken=await oldUser.getIdToken(),oldClaims=(await oldUser.getIdTokenResult()).claims;
+    const uid=oldUser.uid;assert.equal((await call('/api/goals','POST',{serviceId:1,values:{day:1,week:4,month:18},revision:null},oldToken)).status,200);
+    const statusBefore=(await storeDb.get(`pulseStatus/${uid}`)).data,goalBefore=(await storeDb.get(`pulseGoals/${uid}`)).data;
+    const migration=await call('/api/auth/pin/change','POST',{storeId:store,departmentId:'tech',sellerId:1,oldProof,newProof});assert.equal(migration.status,200);
+    assert.equal((await storeDb.get(`pulseAccess/${uid}`)).data.version,oldClaims.accessVersion);
+    assert.equal((await storeDb.get(`pulseStatus/${uid}`)).data.goalsRevision,statusBefore.goalsRevision);
+    assert.deepEqual((await storeDb.get(`pulseGoals/${uid}`)).data,goalBefore);
+    assert.equal((await call('/api/goals','GET',undefined,oldToken)).status,200);
+    assert.equal((await getDocFromServer(doc(db,'pulse','catalog'))).exists(),true);
+    assert.equal((await call('/api/auth/login','POST',{storeId:store,sellerId:1,proof:newProof,openPinFlow:true})).status,409);
+    assert.equal((await call('/api/auth/login','POST',{storeId:store,sellerId:1,proof:newProof,openPinFlow:true,pinFlowVersion:2})).status,200);
+    const salt='firebase-salt-register-001',proof=await pinProof(project,store,null,'4519',salt),body={storeId:store,departmentId:'editorial',name:'Aurélie Émulateur',pinSalt:salt,registrationId:'firebase-register-0001',newProof:proof};
+    const registered=await call('/api/auth/register','POST',body);assert.equal(registered.status,200);
+    assert.equal((await call('/api/auth/register','POST',body)).json.sellerId,registered.json.sellerId);
+    assert.equal((await call('/api/auth/register','POST',{...body,name:'aurelie emulateur',registrationId:'firebase-register-0002'})).status,409);
+    const createdUser=(await signInWithCustomToken(auth,registered.json.customToken)).user,createdToken=await createdUser.getIdToken();
+    assert.equal((await call('/api/goals','GET',undefined,createdToken)).status,200);
+    assert.equal((await getDocFromServer(doc(db,'pulse','catalog'))).data().sellers.filter(x=>x.name===body.name).length,1);
+    await assert.rejects(getDocFromServer(doc(db,'pulseAccess',createdUser.uid)),/permission|insufficient/i);
+    await assert.rejects(getDocFromServer(doc(db,'pulseRegistrations',body.registrationId)),/permission|insufficient/i);
+    const a={...body,name:'Concurrent Firebase',registrationId:'firebase-concurrent-0001',pinSalt:'firebase-salt-concurrent-1'};
+    a.newProof=await pinProof(project,store,null,'1648',a.pinSalt);
+    const b={...a,registrationId:'firebase-concurrent-0002',pinSalt:'firebase-salt-concurrent-2'};b.newProof=await pinProof(project,store,null,'2958',b.pinSalt);
+    const concurrent=await Promise.all([call('/api/auth/register','POST',a),call('/api/auth/register','POST',b)]);
+    assert.deepEqual(concurrent.map(x=>x.status).sort(),[200,409]);
+    assert.equal((await storeDb.get('pulse/catalog')).data.sellers.filter(s=>s.name===a.name).length,1);
   } finally {await deleteApp(app);}
 });

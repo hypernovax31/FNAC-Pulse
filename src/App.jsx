@@ -7,11 +7,12 @@ import {
 } from 'lucide-react';
 import Admin, { Modal } from './Admin';
 import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
-import { CLOUD, observeVendor, sellerLogin, sellerChoosePin, sellerLogout, listenStore, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
+import { CLOUD, observeVendor, sellerLogin, sellerChoosePin, sellerMigratePin, sellerRegister, sellerLogout, listenStore, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
 import { parisToday } from './cloud-stats';
 import { sellerStoreId } from './catalog';
 import { storeSelectionGroups } from './store-directory.js';
 import { departmentsForStore, sellerDepartmentId, sellersForDepartment } from './departments';
+import { cleanSellerName, sameSellerName, validSellerName } from './seller-registration.js';
 import { serviceIconKey } from './service-icons';
 import { THEME_KEY, readTheme, applyTheme } from './theme';
 import { createSaleSound, saleSoundEnabled, saveSaleSound, SALE_SOUND_KEY } from './sale-sound';
@@ -61,7 +62,7 @@ function DateChip({today}) {
   </time>;
 }
 
-function SessionForm({data,initialSession,initialProfile,onSubmit,onForgetProfile,onRefreshProfile,modal=false}) {
+export function SessionForm({data,initialSession,initialProfile,onSubmit,onForgetProfile,onRefreshProfile,modal=false}) {
   const rememberedPerson=initialProfile&&data.sellers.find(s=>Number(s.id)===Number(initialProfile.sellerId)&&sellerStoreId(s)===initialProfile.storeId);
   const rememberedStore=initialProfile&&data.stores.find(s=>s.id===initialProfile.storeId);
   const fixed=!!(CLOUD&&rememberedPerson&&rememberedStore);
@@ -70,44 +71,51 @@ function SessionForm({data,initialSession,initialProfile,onSubmit,onForgetProfil
   const initialPerson=data.sellers.find(s=>Number(s.id)===Number(start?.sellerId)&&sellerStoreId(s)===start?.storeId);
   const [store,setStore]=useState(start?.storeId||'');
   const [department,setDepartment]=useState(initialPerson?sellerDepartmentId(initialPerson):start?.departmentId||'');
-  const [seller,setSeller]=useState(String(start?.sellerId||''));
+  const [name,setName]=useState(initialPerson?.name||'');
   const [geoText,setGeoText]=useState(''),[geoBusy,setGeoBusy]=useState(false);
-  const [pinMode,setPinMode]=useState(CLOUD?'idle':'login'),[statusError,setStatusError]=useState(''),[statusRetry,setStatusRetry]=useState(0);
+  const [pinMode,setPinMode]=useState(CLOUD?'idle':'local'),[pinSalt,setPinSalt]=useState(''),[statusError,setStatusError]=useState(''),[statusRetry,setStatusRetry]=useState(0);
   const [pin,setPin]=useState(''),[newPin,setNewPin]=useState(''),[confirmPin,setConfirmPin]=useState('');
   const [formBusy,setFormBusy]=useState(false),[formError,setFormError]=useState('');
   const geoRequest=useRef(0);
+  const departments=store?departmentsForStore(data,store):[];
+  const storeSellers=department?sellersForDepartment(data.sellers,store,department):[];
+  const typed=cleanSellerName(name);
+  const matches=!fixed&&typed&&store?data.sellers.filter(s=>sellerStoreId(s)===store&&sameSellerName(s.name,typed)):[];
+  const matched=matches.find(s=>sellerDepartmentId(s)===department);
+  const otherDepartment=!!department&&!matched&&matches.length>0;
+  const seller=fixed?String(rememberedPerson.id):matched?String(matched.id):'';
+  const registerable=!fixed&&!!store&&!!department&&validSellerName(typed)&&!matches.length;
+  const storeGroups=storeSelectionGroups(data.stores,data.sellers,{selectedId:store});
   useEffect(()=>()=>{geoRequest.current++;},[]);
   useEffect(()=>{if(fixed&&rememberedPerson)setDepartment(sellerDepartmentId(rememberedPerson));},[fixed,rememberedPerson?.departmentId]);
   useEffect(()=>{
     if(!CLOUD)return;
-    if(unavailable||!store||!department||!seller){setPinMode('idle');setStatusError('');return;}
+    if(unavailable||!store||!department||!seller){setPinMode(registerable?'register':'idle');setPinSalt('');setStatusError('');return;}
     const controller=new AbortController();let cancelled=false,timer,retries=0;
-    setPinMode('loading');setStatusError('');setFormError('');
+    setPinMode('loading');setPinSalt('');setStatusError('');setFormError('');
     const check=()=>api('/api/auth/status',{method:'POST',body:{storeId:store,departmentId:department,sellerId:Number(seller)},signal:controller.signal}).then(result=>{
       if(cancelled)return;
       if(typeof result?.needsPin!=='boolean')throw new Error('Vérification du profil impossible. Réessayez.');
-      setPinMode(result.needsPin?'setup':'login');
+      if(result.pinSalt!==undefined&&typeof result.pinSalt!=='string')throw new Error('Informations du profil invalides.');
+      setPinSalt(result.pinSalt||'');setPinMode(result.needsPin?'setup':result.pinLength===4?'login':'migrate');
     }).catch(error=>{
       if(cancelled)return;
       if(error.status===503&&retries++<8){timer=setTimeout(check,750);return;}
       setPinMode('error');setStatusError(error.message||'Vérification du profil impossible. Réessayez.');
     });
     check();return ()=>{cancelled=true;clearTimeout(timer);controller.abort();};
-  },[store,department,seller,statusRetry,unavailable]);
-  const departments=store?departmentsForStore(data,store):[];
-  const storeSellers=department?sellersForDepartment(data.sellers,store,department):[];
-  const storeGroups=storeSelectionGroups(data.stores,data.sellers,{selectedId:store});
+  },[store,department,seller,registerable,statusRetry,unavailable]);
   function clearSecrets(){setPin('');setNewPin('');setConfirmPin('');setFormError('');}
   function cancelLocate(){geoRequest.current++;setGeoBusy(false);setGeoText('');}
-  const changeStore=value=>{if(value!==store){setDepartment('');setSeller('');clearSecrets();}setStore(value);};
-  const changeDepartment=value=>{if(value!==department){setSeller('');clearSecrets();}setDepartment(value);};
+  const changeStore=value=>{if(value!==store){setDepartment('');setName('');clearSecrets();}setStore(value);};
+  const changeDepartment=value=>{if(value!==department){setName('');clearSecrets();}setDepartment(value);};
   const locate=()=>{
     if(!navigator.geolocation){setGeoText('La géolocalisation n’est pas disponible sur cet appareil.');return;}
     const request=++geoRequest.current;
     setGeoBusy(true);setGeoText('Recherche du magasin le plus proche…');
     navigator.geolocation.getCurrentPosition(({coords})=>{
       if(request!==geoRequest.current)return;
-      const located=storeGroups.all.filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon)).map(s=>({ ...s, distance:kmBetween(coords.latitude,coords.longitude,s.lat,s.lon) })).sort((a,b)=>a.distance-b.distance);
+      const located=storeGroups.all.filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon)).map(s=>({...s,distance:kmBetween(coords.latitude,coords.longitude,s.lat,s.lon)})).sort((a,b)=>a.distance-b.distance);
       setGeoBusy(false);
       if(!located.length){setGeoText('Aucun magasin géolocalisé dans la liste.');return;}
       const nearest=located[0];changeStore(nearest.id);
@@ -116,58 +124,69 @@ function SessionForm({data,initialSession,initialProfile,onSubmit,onForgetProfil
     {enableHighAccuracy:false,timeout:12000,maximumAge:300000});
   };
   async function submit(event) {
-    event.preventDefault();if(!store||!department||!seller||formBusy)return;
-    cancelLocate();const first=CLOUD&&pinMode==='setup';
-    if(CLOUD&&!['setup','login'].includes(pinMode))return;
-    if(first&&newPin!==confirmPin){setFormError('Les deux codes PIN ne correspondent pas.');return;}
+    event.preventDefault();if(!store||!department||(!seller&&!registerable)||formBusy)return;
+    cancelLocate();const mode=CLOUD?pinMode:registerable?'register':'local';
+    if(!['register','setup','migrate','login','local'].includes(mode))return;
+    if(['register','setup','migrate'].includes(mode)) {
+      if(newPin.length!==4||confirmPin.length!==4){setFormError('Choisissez un PIN de 4 chiffres.');return;}
+      if(newPin!==confirmPin){setFormError('Les deux codes PIN ne correspondent pas.');return;}
+    }
+    if(mode==='migrate'&&pin.length!==8)return;
+    if(mode==='login'&&pin.length!==4)return;
     setFormBusy(true);setFormError('');
-    const selection={storeId:store,departmentId:department,sellerId:Number(seller)};
+    const selection={storeId:store,departmentId:department,...(seller?{sellerId:Number(seller)}:{})};
     try {
-      await onSubmit(selection,first?newPin:pin,first?{firstTime:true}:null);
+      await onSubmit(selection,mode==='login'?pin:newPin,{mode,name:typed,oldPin:mode==='migrate'?pin:'',pinSalt});
       clearSecrets();
     } catch(error){
-      if(first&&error.status===409){setPinMode('error');setStatusError(`${error.message} Vérifiez le profil avant de continuer.`);}
-      else if(first&&(!error.status||error.status>=500)){
-        setPinMode('error');setStatusError('Connexion interrompue. Vérifiez le profil : si votre PIN a été enregistré, reconnectez-vous avec ce code.');
-      } else if(CLOUD&&!first&&error.status===401){
-        // L'administrateur a peut-être réinitialisé l'accès pendant l'affichage du formulaire.
+      if(mode==='register') {
+        onRefreshProfile?.();setNewPin('');setConfirmPin('');setFormError(error.message||'Inscription impossible.');
+      } else if(['setup','migrate'].includes(mode)&&(error.status===409||!error.status||error.status>=500)){
+        setPinMode('error');setStatusError(error.message||'Vérifiez votre profil avant de continuer.');onRefreshProfile?.();
+      } else if(CLOUD&&['login','migrate'].includes(mode)&&error.status===401){
         try {const status=await api('/api/auth/status',{method:'POST',body:selection});
           if(status.needsPin){setPin('');setPinMode('setup');setFormError('Votre accès a été réinitialisé. Choisissez votre nouveau PIN.');}
+          else if(status.pinLength===4&&mode==='migrate'){setPin('');setPinSalt(status.pinSalt||'');setPinMode('login');setFormError('Ce profil utilise maintenant un PIN à 4 chiffres. Connectez-vous avec ce code.');}
           else setFormError(error.message);
         } catch {setFormError(error.message);}
-      } else setFormError(error.message);
+      } else setFormError(error.message||'Connexion impossible.');
     }finally{setFormBusy(false);}
   }
   if(unavailable)return <div className="profile-unavailable" role="alert"><p>Le profil enregistré sur cet appareil n’est plus disponible. Contactez votre responsable.</p><button type="button" className="outline-button" onClick={onForgetProfile}>Retirer le profil de cet appareil</button></div>;
+  const mode=CLOUD?pinMode:registerable?'register':'local',setup=['register','setup','migrate'].includes(mode);
+  const optionsId=`seller-names-${modal?'dialog':'welcome'}`;
   return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={submit}>
     {fixed&&<div className="remembered-profile"><Avatar name={rememberedPerson.name} id={rememberedPerson.id}/><div><span>VOTRE PROFIL SUR CET APPAREIL</span><strong>{rememberedPerson.name}</strong><small>{rememberedStore.name} · {departments.find(d=>d.id===department)?.name||'Votre département'}</small></div></div>}
     <div className="session-fields">
       {!fixed&&<>
-        <label className="session-field store-field"><span>VOTRE MAGASIN</span><div className="select-wrap"><MapPin size={16}/><select aria-label="Votre magasin Fnac" value={store} onChange={e=>{cancelLocate();changeStore(e.target.value);}} disabled={formBusy} required><option value="">Choisir un magasin</option>{storeGroups.official.length>0&&<optgroup label="Annuaire Fnac">{storeGroups.official.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>}{storeGroups.other.length>0&&<optgroup label="Magasins ajoutés ou historiques">{storeGroups.other.map(s=><option key={s.id} value={s.id}>{s.name}{s.directoryStatus==='historical'?' · ancien catalogue':''}</option>)}</optgroup>}{data.directoryRegions?.length>0&&<optgroup label="Régions sans fiche magasin · relevé 2026">{data.directoryRegions.map(name=><option key={name} value="" disabled>{name} · magasin non précisé</option>)}</optgroup>}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+        <label className="session-field store-field"><span>VOTRE MAGASIN</span><div className="select-wrap"><MapPin size={16}/><select aria-label="Votre magasin Fnac" value={store} onChange={e=>{cancelLocate();changeStore(e.target.value);}} disabled={formBusy} required><option value="">Choisir un magasin</option>{storeGroups.official.length>0&&<optgroup label="Annuaire Fnac">{storeGroups.official.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>}{storeGroups.other.length>0&&<optgroup label="Magasins ajoutés ou historiques">{storeGroups.other.map(s=><option key={s.id} value={s.id}>{s.name}{s.directoryStatus==='historical'?' · ancien catalogue':''}</option>)}</optgroup>}{data.directoryRegions?.length>0&&<optgroup label="Régions sans fiche magasin · relevé 2026">{data.directoryRegions.map(item=><option key={item} value="" disabled>{item} · magasin non précisé</option>)}</optgroup>}</select><ChevronDown size={15} className="select-chevron"/></div></label>
         <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver un magasin proche" title="Trouver un magasin proche parmi ceux géolocalisés" disabled={geoBusy||formBusy}><Crosshair size={17}/></button>
         <label className="session-field department-field"><span>VOTRE DÉPARTEMENT</span><div className="select-wrap"><UsersRound size={16}/><select aria-label="Votre département" value={department} onChange={e=>{cancelLocate();changeDepartment(e.target.value);}} disabled={formBusy||!store||!departments.length} required><option value="">Choisir un département</option>{departments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
-        <label className="session-field seller-field"><span>VOTRE PROFIL</span><div className="select-wrap"><UserRound size={16}/><select aria-label="Votre profil vendeur" value={seller} onChange={e=>{cancelLocate();setSeller(e.target.value);clearSecrets();}} disabled={formBusy||!department||!storeSellers.length} required><option value="">{department&&!storeSellers.length?'Aucun vendeur dans ce département':'Choisir un vendeur'}</option>{storeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
+        <label className="session-field seller-field"><span>VOTRE PRÉNOM</span><div className="select-wrap name-wrap"><UserRound size={16}/><input aria-label="Votre prénom" list={optionsId} type="text" autoComplete="given-name" maxLength={60} placeholder="Saisissez votre prénom" value={name} onChange={e=>{cancelLocate();setName(e.target.value);clearSecrets();}} disabled={formBusy||!department} required/><datalist id={optionsId}>{storeSellers.map(s=><option key={s.id} value={s.name}/>)}</datalist></div></label>
       </>}
-      {CLOUD&&pinMode==='login'&&<label className="session-field pin-field"><span>CODE PIN PERSONNEL</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} placeholder="8 chiffres" disabled={formBusy} required/></label>}
-      {(!CLOUD||pinMode==='login')&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==8)}>{formBusy?'Connexion…':modal?'Enregistrer':'Se connecter'} <ArrowRight size={16}/></button>}
+      {CLOUD&&mode==='login'&&<label className="session-field pin-field"><span>CODE PIN PERSONNEL</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{4}" maxLength={4} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} placeholder="4 chiffres" disabled={formBusy} required/></label>}
+      {(mode==='local'||mode==='login')&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==4)}>{formBusy?'Connexion…':modal?'Enregistrer':'Se connecter'} <ArrowRight size={16}/></button>}
     </div>
-    {CLOUD&&pinMode==='loading'&&<p className="pin-status" role="status">Vérification de votre profil…</p>}
-    {CLOUD&&pinMode==='error'&&<div className="profile-status-error" role="alert"><span>{statusError}</span><button type="button" className="text-button" onClick={()=>{clearSecrets();onRefreshProfile?.();setStatusRetry(x=>x+1);}}>Vérifier à nouveau</button></div>}
-    {CLOUD&&pinMode==='setup'&&<div className="pin-setup">
-      <div className="pin-setup-intro"><ShieldCheck size={19}/><div><strong>Première connexion : choisissez votre PIN</strong><p>Choisissez un code personnel de 8 chiffres et gardez-le secret. Il sera demandé après une déconnexion.</p></div></div>
-      <div className="pin-setup-fields"><label><span className="form-label">VOTRE CODE PIN</span><input className="text-input" aria-label="Votre nouveau code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label><label><span className="form-label">CONFIRMER LE PIN</span><input className="text-input" aria-label="Confirmer votre code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={confirmPin} onChange={e=>setConfirmPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label></div>
-      <div className="pin-setup-actions"><button className="primary-button" type="submit" disabled={!store||!department||!seller||formBusy||newPin.length!==8||confirmPin.length!==8}>{formBusy?'Enregistrement…':'Enregistrer mon PIN'} <ArrowRight size={15}/></button></div>
+    {!fixed&&matched&&<p className="pin-status">Profil existant : {matched.name}. Votre historique est conservé.</p>}
+    {otherDepartment&&<p className="profile-status-error" role="alert">Ce prénom existe déjà dans un autre département de ce magasin. Vérifiez le département ou contactez votre responsable.</p>}
+    {typed&&!validSellerName(typed)&&!fixed&&<p className="profile-status-error" role="alert">Saisissez un prénom valide (lettres, espaces ou traits d’union).</p>}
+    {CLOUD&&mode==='loading'&&<p className="pin-status" role="status">Vérification de votre profil…</p>}
+    {CLOUD&&mode==='error'&&<div className="profile-status-error" role="alert"><span>{statusError}</span><button type="button" className="text-button" onClick={()=>{clearSecrets();onRefreshProfile?.();setStatusRetry(x=>x+1);}}>Vérifier à nouveau</button></div>}
+    {setup&&<div className="pin-setup">
+      <div className="pin-setup-intro"><ShieldCheck size={19}/><div><strong>{mode==='migrate'?'Passez à un PIN de 4 chiffres':mode==='register'?'Créez votre profil':'Première connexion : choisissez votre PIN'}</strong><p>{mode==='migrate'?'Saisissez votre ancien PIN à 8 chiffres, puis choisissez votre nouveau code à 4 chiffres. Vos données restent intactes.':mode==='register'?'Votre prénom sera enregistré dans le magasin et le département choisis. Choisissez un PIN personnel de 4 chiffres.':'Choisissez un code personnel de 4 chiffres. Il sera demandé après une déconnexion.'}</p></div></div>
+      {mode==='migrate'&&<label className="pin-setup-code"><span className="form-label">ANCIEN PIN À 8 CHIFFRES</span><input className="text-input" aria-label="Ancien code PIN à 8 chiffres" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label>}
+      <div className="pin-setup-fields"><label><span className="form-label">VOTRE PIN À 4 CHIFFRES</span><input className="text-input" aria-label="Votre nouveau code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4}" maxLength={4} placeholder="4 chiffres" value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label><label><span className="form-label">CONFIRMER LE PIN</span><input className="text-input" aria-label="Confirmer votre code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4}" maxLength={4} placeholder="4 chiffres" value={confirmPin} onChange={e=>setConfirmPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label></div>
+      <div className="pin-setup-actions"><button className="primary-button" type="submit" disabled={!store||!department||(!seller&&!registerable)||formBusy||newPin.length!==4||confirmPin.length!==4||(mode==='migrate'&&pin.length!==8)}>{formBusy?'Enregistrement…':mode==='register'?'Créer mon profil':'Enregistrer mon PIN'} <ArrowRight size={15}/></button></div>
     </div>}
-    {CLOUD&&pinMode==='login'&&<p className="pin-help">PIN oublié ? Demandez à votre responsable de réinitialiser votre accès.</p>}
+    {CLOUD&&['login','migrate'].includes(mode)&&<p className="pin-help">PIN oublié ? Demandez à votre responsable de réinitialiser votre accès.</p>}
     {fixed&&<button type="button" className="profile-switch" disabled={formBusy} onClick={()=>{if(window.confirm('Changer de profil sur cet appareil ? Le profil mémorisé sera retiré de cet appareil.'))onForgetProfile?.();}}>Changer de profil sur cet appareil</button>}
-    {department&&!storeSellers.length&&!fixed&&<p className="no-store-sellers">Aucun vendeur dans ce département. Un administrateur peut y affecter des profils.</p>}
     {formError&&<div className="form-error session-error" role="alert">{formError}</div>}
     {geoText&&<div className="geo-message" role="status"><MapPin size={13}/>{geoText}</div>}
   </form>;
 }
 function WelcomePanel({data,onSubmit,deviceProfile,onForgetProfile,onRefreshProfile}) {
   return <section className="welcome-panel" id="selection">
-    <div className="welcome-copy"><div className="welcome-icon"><Sparkles size={20}/></div><div><div className="micro-label">VOTRE ESPACE DE VENTE</div><h2>On se lance ?</h2><p>{deviceProfile?'Retrouvez votre profil sur cet appareil.':'Choisissez votre magasin, votre département et votre profil.'}</p></div></div>
+    <div className="welcome-copy"><div className="welcome-icon"><Sparkles size={20}/></div><div><div className="micro-label">VOTRE ESPACE DE VENTE</div><h2>On se lance ?</h2><p>{deviceProfile?'Retrouvez votre profil sur cet appareil.':'Choisissez votre magasin, votre département et saisissez votre prénom.'}</p></div></div>
     <SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'nouvel-appareil'} data={data} initialProfile={deviceProfile} onSubmit={onSubmit} onForgetProfile={onForgetProfile} onRefreshProfile={onRefreshProfile}/>
   </section>;
 }
@@ -508,12 +527,22 @@ export default function App() {
   useEffect(()=>()=>clearTimeout(toastTimer.current),[]);
 
   async function selectSession(next,pin,setup=null){
-    const authenticated=CLOUD?(setup?.firstTime?await sellerChoosePin(api,next,pin):await sellerLogin(api,next,pin)):next;
-    if(CLOUD){const profile=saveDeviceProfile(authenticated);if(profile)setDeviceProfile(profile);}
+    let authenticated;
+    if(CLOUD) {
+      if(setup?.mode==='register')authenticated=await sellerRegister(api,next,setup.name,pin);
+      else if(setup?.mode==='setup')authenticated=await sellerChoosePin(api,next,pin);
+      else if(setup?.mode==='migrate')authenticated=await sellerMigratePin(api,next,setup.oldPin,pin,setup.pinSalt);
+      else authenticated=await sellerLogin(api,next,pin,setup?.pinSalt);
+      const profile=saveDeviceProfile(authenticated);if(profile)setDeviceProfile(profile);
+    } else if(setup?.mode==='register') {
+      const result=await api('/api/auth/register',{method:'POST',body:{storeId:next.storeId,departmentId:next.departmentId,name:setup.name}});
+      authenticated={...next,sellerId:result.sellerId};
+    } else authenticated=next;
     localStorage.setItem(SESSION_KEY,JSON.stringify(authenticated));
     setData(d=>d?{...d,stats:null}:d);setSession(authenticated);setSessionModal(false);setActiveNav('objectifs');
     window.scrollTo({top:0,behavior:'smooth'});
-    const person=data?.sellers.find(s=>s.id===next.sellerId);flash(`Bienvenue${person?`, ${person.name}`:''} ! Votre espace est prêt.`);
+    const person=data?.sellers.find(s=>s.id===authenticated.sellerId),name=person?.name||setup?.name;
+    flash(`Bienvenue${name?`, ${name}`:''} ! Votre espace est prêt.`);
   }
   function forgetDeviceProfile(){clearDeviceProfile();setDeviceProfile(null);}
   async function logoutSeller(){

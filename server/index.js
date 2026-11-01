@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { LEGACY_STORE_ID, comparePeople, orderServices } from '../src/catalog.js';
 import { validGoalValues, validWorkdays, normalizeWorkdays } from '../src/goals.js';
 import { GOALS_RESET_CONFIRMATION } from '../src/goals-reset.js';
+import { cleanSellerName, sameSellerName, validSellerName } from '../src/seller-registration.js';
 import { saleMessage } from '../src/sale-message.js';
 import { DEFAULT_DEPARTMENTS, TECH_DEPARTMENT_ID, departmentsForStore, sellerDepartmentId } from '../src/departments.js';
 import { summaryGoals } from '../src/summary-goals.js';
@@ -240,6 +241,21 @@ app.get('/api/bootstrap', (req,res) => {
   const store = req.query.storeId ? activeStore(req.query.storeId) : null;
   const stats = store ? statsFor(store.id,req.query.sellerId,today) : null;
   res.json({ stores, sellers, services, directoryRegions:directorySnapshot.unlinkedRegions.map(({name})=>name), departmentsByStore:localDepartmentsByStore(), today, stats, pushPublicKey:vapid.publicKey });
+});
+
+// Mode de développement SQLite uniquement : il ne protège pas les sessions
+// avec un PIN. La production utilise exclusivement l'inscription du Worker.
+app.post('/api/auth/register',(req,res)=>{
+  const {storeId,departmentId}=req.body||{},name=cleanSellerName(req.body?.name);
+  if(typeof req.body?.name!=='string'||req.body.name.length>80||!validSellerName(name)||!activeStore(storeId)||!localDepartments(storeId).some(d=>d.id===departmentId))
+    return failure(res,'Prénom, magasin ou département invalide.');
+  if(db.prepare('SELECT name FROM sellers WHERE store_id=?').all(storeId).some(s=>sameSellerName(s.name,name)))
+    return failure(res,'Ce prénom existe déjà dans ce magasin. Choisissez le profil existant ou contactez votre responsable.',409);
+  const count=db.prepare('SELECT COUNT(*) AS n FROM sellers').get().n;
+  if(count>=1000)return failure(res,'Nombre maximal de vendeurs atteint.');
+  const order=db.prepare('SELECT COALESCE(MAX(sort_order),-1)+1 AS n FROM sellers').get().n;
+  const result=db.prepare('INSERT INTO sellers(name,sort_order,store_id,department_id) VALUES (?,?,?,?)').run(name,order,storeId,departmentId);
+  broadcast(null,{kind:'config'});res.json({sellerId:Number(result.lastInsertRowid)});
 });
 
 function localGoals(storeId,sellerId) {

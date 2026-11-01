@@ -10,14 +10,15 @@ import { departmentsForStore, sellerDepartmentId, saleDepartmentId, TECH_DEPARTM
 import { summaryGoals } from '../src/summary-goals.js';
 import { SALES_RESET_CONFIRMATION, salesGeneration, saleInGeneration } from '../src/sales-reset.js';
 import { GOALS_RESET_CONFIRMATION } from '../src/goals-reset.js';
+import { cleanSellerName, sameSellerName, validSellerName } from '../src/seller-registration.js';
 
 const SELLERS=['Morgan','Anthony','Cedric','Philippe','Fabien','Florent','Eric','Tamera','Ikram','Selenia','Johan','Alice'];
 const SERVICES=[['DMax','play'],['Assu Téléph','phone'],['Assu Multim','devices'],['Garantie','shield'],['FVD','package'],['FNAC +','badge'],['TRC','repeat'],['Reprise','refresh'],['Canal +','tv'],['Free','wifi'],['Autre','other']];
 const PROOF=/^[A-Za-z0-9_-]{43}$/;
-// Migration explicitement demandée : efface une fois tous les anciens PIN,
-// sans toucher aux ventes, aux vendeurs, aux plannings ou aux objectifs.
+const PIN_SALT=/^[A-Za-z0-9_-]{16,80}$/;
+// Identifiant historique conservé pour reconnaître les réinitialisations
+// ciblées. Le reset global de 2026 est terminé et ne peut plus être relancé.
 const OPEN_PIN_RESET='open-pin-reset-2026-10-29';
-const RESET_PATH=`pulseMigrations/${OPEN_PIN_RESET}`;
 const SAFE_ID=/^[A-Za-z0-9_-]{8,80}$/;
 const STORE_ID=/^[A-Za-z0-9_-]{1,80}$/;
 // Diagnostics anonymes : aucun jeton, identifiant ou texte utilisateur dans les journaux.
@@ -143,7 +144,10 @@ function accessStatus(access,previous) {
   if(previous?.data?.goalsRevision)status.goalsRevision=previous.data.goalsRevision;
   return status;
 }
-async function recordFailure(db,uid) {
+// Réserver une tentative avant de vérifier le dérivé : même en cas de requêtes
+// simultanées, cinq essais au plus peuvent atteindre la comparaison du PIN.
+// Une vérification réussie efface ensuite le compteur.
+async function reservePinAttempt(db,uid) {
   const path=`pulseAttempts/${uid}`;
   for(let i=0;i<8;i++) {
     const current=await db.get(path), now=Date.now();
@@ -188,7 +192,6 @@ export function createWorker(deps={}) {
   const custom=deps.makeCustomToken || makeCustomToken;
   const send=deps.sendFcm || sendFcm;
   const directoryFetch=deps.fetchDirectory || fetch;
-  let resetComplete=false;
 
   async function refreshDirectory(db) {
     const started=Date.now(),when=new Date(started).toISOString();
@@ -253,91 +256,35 @@ export function createWorker(deps={}) {
     const claims={role:'seller',storeId:access.storeId,sellerId:access.sellerId,sellerKey:access.sellerKey,accessVersion:access.version};
     return {customToken:await custom(env,uid,claims)};
   }
-  // Migration idempotente et reprenable : un seul appel peut la détenir à la
-  // fois. Chaque lot vérifie le catalogue et modifie accès/statut atomiquement.
-  // Les profils non encore traités sont repris par l'appel suivant. Aucune
-  // donnée de vente ni d'objectif n'est réécrite.
-  async function ensureOpenPinReset(db) {
-    if(resetComplete)return;
-    let lockId='',marker;
-    for(let i=0;i<6;i++) {
-      marker=await db.get(RESET_PATH);
-      if(marker?.data?.state==='done'){resetComplete=true;return;}
-      if(marker?.data?.lockUntil>Date.now())fail(503,'Mise à jour des accès en cours. Réessayez dans un instant.');
-      lockId=crypto.randomUUID();
-      const next={state:'running',cursor:Number(marker?.data?.cursor)||0,lockId,lockUntil:Date.now()+45000};
-      try {await db.commit([db.write(RESET_PATH,next,precondition(marker))]);break;}
-      catch(e){lockId='';if(!conflict(e))throw e;}
-    }
-    if(!lockId)fail(503,'Mise à jour des accès en cours. Réessayez dans un instant.');
-    try {
-      let completedGroups=0,collisions=0;
-      while(completedGroups<4) {
-        marker=await db.get(RESET_PATH);
-        if(marker?.data?.lockId!==lockId)fail(503,'Mise à jour des accès en cours. Réessayez dans un instant.');
-        const c=await catalog(db),cursor=Number(marker.data.cursor)||0;
-        const remaining=c.data.sellers.filter(s=>Number(s.id)>cursor).sort((a,b)=>Number(a.id)-Number(b.id));
-        const group=remaining.slice(0,80);
-        const profiles=await Promise.all(group.map(async person=>({person,storeId:sellerStoreId(person),uid:await sellerUid(sellerStoreId(person),person.id)})));
-        const paths=profiles.flatMap(({uid})=>[`pulseAccess/${uid}`,`pulseStatus/${uid}`,`pulseAttempts/${uid}`]);
-        const records=paths.length?await db.getMany(paths):[];
-        const writes=[db.verify('pulse/catalog',precondition(c))];
-        for(let i=0;i<profiles.length;i++) {
-          const {person,storeId,uid}=profiles[i],[old,status,attempt]=records.slice(i*3,i*3+3);
-          const access={active:false,storeId,sellerId:Number(person.id),sellerKey:`s${Number(person.id)}`,version:crypto.randomUUID(),resetGeneration:OPEN_PIN_RESET};
-          writes.push(db.write(`pulseAccess/${uid}`,access,precondition(old)),db.write(`pulseStatus/${uid}`,accessStatus(access,status),precondition(status)));
-          if(attempt)writes.push(db.delete(`pulseAttempts/${uid}`,precondition(attempt)));
-        }
-        const finished=remaining.length<=group.length;
-        const next=finished?{state:'done',finishedAt:Date.now(),cursor:group.length?Number(group.at(-1).id):cursor}:
-          {state:'running',cursor:Number(group.at(-1).id),lockId,lockUntil:Date.now()+45000};
-        writes.push(db.write(RESET_PATH,next,precondition(marker)));
-        try {await db.commit(writes);}
-        catch(e){if(conflict(e)&&collisions++<8)continue;throw e;}
-        if(finished){resetComplete=true;return;}
-        completedGroups++;
-      }
-      // Une grande équipe peut dépasser la limite de sous-requêtes Workers Free.
-      // Libérer le verrou pour qu'un appel suivant reprenne au curseur enregistré.
-      marker=await db.get(RESET_PATH);
-      if(marker?.data?.lockId===lockId)await db.commit([db.write(RESET_PATH,{state:'running',cursor:marker.data.cursor,lockUntil:0},precondition(marker))]);
-      fail(503,'Mise à jour des accès en cours. Réessayez dans un instant.');
-    } catch(e) {
-      // Une panne après un lot ne peut pas l'annuler ; le curseur transactionnel
-      // permet de reprendre sans réinitialiser de nouveau les profils traités.
-      try {marker=await db.get(RESET_PATH);if(marker?.data?.lockId===lockId)await db.commit([db.write(RESET_PATH,{state:'running',cursor:marker.data.cursor||0,lockUntil:0},precondition(marker))]);}catch{}
-      throw e;
-    }
-  }
   async function login(req,env,db,body) {
     const {storeId,sellerId,proof}=body;
     if(!STORE_ID.test(storeId||'')||!isId(sellerId)||!PROOF.test(proof||''))fail(400,'Sélection ou code PIN invalide.');
     const uid=await sellerUid(storeId,Number(sellerId));
     await limitAuthentication(env,uid);
-    const [attempt,a,c]=await Promise.all([db.get(`pulseAttempts/${uid}`),db.get(`pulseAccess/${uid}`),catalog(db)]);
-    if(attempt?.data?.lockUntil>Date.now())fail(429,'Trop de tentatives. Réessayez dans 15 minutes.');
-    // Une ancienne interface ne sait pas créer le nouveau PIN après remise à zéro.
-    // Lui demander de se mettre à jour plutôt que de bloquer le profil par erreurs.
+    const [a,c]=await Promise.all([db.get(`pulseAccess/${uid}`),catalog(db)]);
+    // Ne pas compter les anciennes interfaces qui ne savent pas utiliser le
+    // nouveau parcours : elles reçoivent seulement l'invitation à se mettre à jour.
     if(!a?.data?.active&&a?.data?.resetGeneration===OPEN_PIN_RESET&&body.openPinFlow!==true)
       fail(409,'Votre accès a été réinitialisé. Fermez puis rouvrez Fnac Pulse pour choisir un nouveau PIN.');
-    if(!a?.data?.active||!selectedProfile(c,body)||!(await verifyPin(env,uid,proof,a.data.pinMac||''))) {
-      await recordFailure(db,uid);fail(401,'Profil ou code PIN incorrect.');
-    }
+    if(a?.data?.active&&a.data.pinLength===4&&body.pinFlowVersion!==2)
+      fail(409,'Fermez puis rouvrez Fnac Pulse en ligne pour utiliser votre PIN à 4 chiffres.');
+    await reservePinAttempt(db,uid);
+    if(!a?.data?.active||!selectedProfile(c,body)||!(await verifyPin(env,uid,proof,a.data.pinMac||'')))
+      fail(401,'Profil ou code PIN incorrect.');
     await clearFailures(db,uid);
     return signedIn(env,uid,a.data);
   }
   async function pinStatus(db,body) {
     const {storeId,sellerId}=body;
     if(!STORE_ID.test(storeId||'')||!isId(sellerId))fail(400,'Sélectionnez votre magasin et votre profil.');
-    await ensureOpenPinReset(db);
     const uid=await sellerUid(storeId,Number(sellerId)),[a,c]=await Promise.all([db.get(`pulseAccess/${uid}`),catalog(db)]);
     if(!selectedProfile(c,body))fail(400,'Ce profil n’est plus disponible. Contactez votre responsable.');
-    return {needsPin:!a?.data?.active};
+    const active=!!a?.data?.active;
+    return {needsPin:!active,...(active&&a.data.pinLength===4?{pinLength:4,...(a.data.pinSalt?{pinSalt:a.data.pinSalt}:{})}:{})};
   }
   async function resetPin(db,body) {
     const {storeId,sellerId}=body;
     if(!STORE_ID.test(storeId||'')||!isId(sellerId)||body.pin!==undefined||body.proof!==undefined||body.newProof!==undefined)fail(400,'Choisissez un magasin et un vendeur.');
-    await ensureOpenPinReset(db);
     const uid=await sellerUid(storeId,Number(sellerId)),accessPath=`pulseAccess/${uid}`,statusPath=`pulseStatus/${uid}`;
     for(let retry=0;retry<8;retry++) {
       const [old,status,c]=await Promise.all([db.get(accessPath),db.get(statusPath),catalog(db)]);
@@ -352,8 +299,7 @@ export function createWorker(deps={}) {
   }
   async function claimPin(env,db,body) {
     const {storeId,sellerId,newProof}=body;
-    if(!STORE_ID.test(storeId||'')||!isId(sellerId)||!PROOF.test(newProof||''))fail(400,'Sélection ou code PIN invalide.');
-    await ensureOpenPinReset(db);
+    if(!STORE_ID.test(storeId||'')||!isId(sellerId)||!PROOF.test(newProof||'')||![undefined,4].includes(body.pinLength)||body.pin!==undefined)fail(400,'Sélection ou code PIN invalide.');
     const uid=await sellerUid(storeId,Number(sellerId)),accessPath=`pulseAccess/${uid}`,statusPath=`pulseStatus/${uid}`;
     await limitAuthentication(env,uid);
     for(let retry=0;retry<8;retry++) {
@@ -362,7 +308,7 @@ export function createWorker(deps={}) {
       if(!selectedProfile(c,body))fail(400,'Ce profil n’est plus disponible. Contactez votre responsable.');
       if(a?.data?.active)fail(409,'Ce profil possède déjà un PIN. Connectez-vous avec ce code.');
       const access={active:true,storeId,sellerId:Number(sellerId),sellerKey:`s${Number(sellerId)}`,version:crypto.randomUUID(),
-        pinPersonal:true,resetGeneration:OPEN_PIN_RESET,pinMac:await pinMac(env,uid,newProof)};
+        pinPersonal:true,resetGeneration:OPEN_PIN_RESET,pinMac:await pinMac(env,uid,newProof),...(body.pinLength===4?{pinLength:4}:{})};
       try {
         // La première création l'emporte : un second appareil ne peut ni remplacer
         // le PIN choisi, ni obtenir un jeton avec son propre PIN.
@@ -371,6 +317,79 @@ export function createWorker(deps={}) {
       } catch(e){if(!conflict(e))throw e;}
     }
     fail(409,'Accès modifié simultanément. Recommencez la connexion.');
+  }
+  // Création libre d'un vendeur : catalogue, accès et suivi idempotent sont
+  // enregistrés ensemble. Aucun PIN ni dérivé réutilisable n'est stocké en clair.
+  async function registerSeller(req,env,db,body) {
+    const {storeId,departmentId,registrationId,pinSalt,newProof}=body,name=cleanSellerName(body.name);
+    if(typeof body.name!=='string'||body.name.length>80||!validSellerName(name)||!STORE_ID.test(storeId||'')||!STORE_ID.test(departmentId||'')||
+       !SAFE_ID.test(registrationId||'')||!PIN_SALT.test(pinSalt||'')||!PROOF.test(newProof||'')||body.pin!==undefined||body.confirmPin!==undefined)
+      fail(400,'Prénom, magasin, département ou code PIN invalide.');
+    // Limiter les créations publiques par magasin et par adresse Cloudflare.
+    const address=req.headers.get('cf-connecting-ip')||'unknown';
+    await Promise.all([limitAuthentication(env,`register-store:${storeId}`),limitAuthentication(env,`register-ip:${address}`)]);
+    const requestPath=`pulseRegistrations/${registrationId}`;
+    for(let attempt=0;attempt<8;attempt++) {
+      const [c,request]=await Promise.all([catalog(db),db.get(requestPath)]);
+      if(request) {
+        const r=request.data;
+        if(r.storeId!==storeId||r.departmentId!==departmentId||r.pinSalt!==pinSalt||r.name!==name)
+          fail(409,'Cette demande d’inscription a déjà été utilisée.');
+        await limitAuthentication(env,r.uid);
+        const access=await db.get(`pulseAccess/${r.uid}`);
+        await reservePinAttempt(db,r.uid);
+        if(!access?.data?.active||access.data.pinLength!==4||access.data.pinSalt!==pinSalt||!selectedProfile(c,{storeId,departmentId,sellerId:r.sellerId})||!(await verifyPin(env,r.uid,newProof,access.data.pinMac||'')))
+          fail(409,'Ce profil existe déjà. Reconnectez-vous avec votre PIN.');
+        await clearFailures(db,r.uid);
+        return {...await signedIn(env,r.uid,access.data),sellerId:r.sellerId};
+      }
+      if(!validStore(c.data,storeId)||!departmentsForStore(c.data,storeId).some(d=>d.id===departmentId))fail(400,'Choisissez un magasin et un département actifs.');
+      // Un profil archivé doit être restauré par l'administrateur, et non dupliqué.
+      if(c.data.sellers.some(s=>sellerStoreId(s)===storeId&&sameSellerName(s.name,name)))
+        fail(409,'Ce prénom existe déjà dans ce magasin. Choisissez le profil existant ou contactez votre responsable.');
+      if(c.data.sellers.length>=1000)fail(400,'Nombre maximal de vendeurs atteint. Contactez votre responsable.');
+      const sellerId=Number(c.data.nextSellerId);
+      if(!isId(sellerId)||c.data.sellers.some(s=>Number(s.id)===sellerId))fail(503,'Création du profil indisponible. Contactez votre responsable.');
+      const uid=await sellerUid(storeId,sellerId),accessPath=`pulseAccess/${uid}`,statusPath=`pulseStatus/${uid}`;
+      const access={active:true,storeId,sellerId,sellerKey:`s${sellerId}`,version:crypto.randomUUID(),pinPersonal:true,
+        resetGeneration:OPEN_PIN_RESET,pinLength:4,pinSalt,pinMac:await pinMac(env,uid,newProof)};
+      const next=withFlags({...c.data,sellers:[...c.data.sellers,{id:sellerId,name,active:true,storeId,departmentId}],nextSellerId:sellerId+1});
+      try {
+        await db.commit([db.write('pulse/catalog',next,precondition(c)),db.write(accessPath,access,{exists:false}),
+          db.write(statusPath,accessStatus(access,null),{exists:false}),
+          db.write(requestPath,{storeId,departmentId,name,sellerId,uid,pinSalt},{exists:false})]);
+        return {...await signedIn(env,uid,access),sellerId};
+      } catch(e){if(!conflict(e))throw e;}
+    }
+    fail(409,'Le magasin a changé pendant l’inscription. Actualisez puis réessayez.');
+  }
+  // Après déconnexion, l'ancien code vérifie la propriété du profil avant de
+  // passer à quatre chiffres ; la version d'accès ne change pas afin de ne pas
+  // déconnecter les autres appareils déjà authentifiés.
+  async function changeLegacyPin(env,db,body) {
+    const {storeId,sellerId,oldProof,newProof}=body;
+    if(!STORE_ID.test(storeId||'')||!isId(sellerId)||!PROOF.test(oldProof||'')||!PROOF.test(newProof||'')||body.pin!==undefined)
+      fail(400,'Sélection ou code PIN invalide.');
+    const uid=await sellerUid(storeId,Number(sellerId)),accessPath=`pulseAccess/${uid}`,statusPath=`pulseStatus/${uid}`;
+    await limitAuthentication(env,uid);
+    await reservePinAttempt(db,uid);
+    for(let attempt=0;attempt<8;attempt++) {
+      const [a,c,status]=await Promise.all([db.get(accessPath),catalog(db),db.get(statusPath)]);
+      if(!a?.data?.active||!selectedProfile(c,body))fail(401,'Profil ou ancien PIN incorrect.');
+      if(a.data.pinLength===4) {
+        // Si la réponse du premier changement a été perdue, le nouveau dérivé
+        // permet de récupérer la même session sans modifier le profil une seconde fois.
+        if(await verifyPin(env,uid,newProof,a.data.pinMac||'')){await clearFailures(db,uid);return signedIn(env,uid,a.data);}
+        fail(401,'Profil ou code PIN incorrect.');
+      }
+      if(!(await verifyPin(env,uid,oldProof,a.data.pinMac||'')))fail(401,'Profil ou ancien PIN incorrect.');
+      const next={...a.data,pinLength:4,pinMac:await pinMac(env,uid,newProof)};
+      try {
+        await db.commit([db.verify('pulse/catalog',precondition(c)),db.write(accessPath,next,precondition(a)),db.write(statusPath,accessStatus(next,status),precondition(status))]);
+        await clearFailures(db,uid);return signedIn(env,uid,next);
+      } catch(e){if(!conflict(e))throw e;}
+    }
+    fail(409,'Ce profil a changé simultanément. Réessayez.');
   }
   // Les objectifs sont privés : seuls le Worker et l'administrateur peuvent lire
   // pulseGoals. pulseStatus ne reçoit qu'un marqueur pour signaler un changement.
@@ -850,9 +869,12 @@ export function createWorker(deps={}) {
     if(method==='GET'&&path==='/api/health')return {ok:true};
     if(method==='GET'&&path==='/api/bootstrap')return publicCatalog((await catalog(db)).data,url.searchParams.get('storeId'));
     if(method==='POST'&&path==='/api/auth/login')return login(req,env,db,await readBody(req));
-    if(method==='POST'&&path==='/api/auth/initialize'){await ensureOpenPinReset(db);return {ok:true};}
+    // Compatibilité avec les PWA précédentes : aucune migration ou révocation globale.
+    if(method==='POST'&&path==='/api/auth/initialize')return {ok:true};
     if(method==='POST'&&path==='/api/auth/status')return pinStatus(db,await readBody(req));
     if(method==='POST'&&path==='/api/auth/claim')return claimPin(env,db,await readBody(req));
+    if(method==='POST'&&path==='/api/auth/register')return registerSeller(req,env,db,await readBody(req));
+    if(method==='POST'&&path==='/api/auth/pin/change')return changeLegacyPin(env,db,await readBody(req));
     if(method==='POST'&&(path==='/api/auth/activate'||path==='/api/auth/personal-pin'))fail(409,'Mettez Fnac Pulse à jour en la fermant puis en la rouvrant.');
     if((method==='GET'||method==='POST')&&path==='/api/goals') {
       const s=await seller(req,env,db);
