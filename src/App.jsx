@@ -168,8 +168,11 @@ export function SessionForm({data,initialSession,initialProfile,onSubmit,onForge
       {(mode==='local'||mode==='login')&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==4)}>{formBusy?'Connexion…':modal?'Enregistrer':'Se connecter'} <ArrowRight size={16}/></button>}
     </div>
     {!fixed&&matched&&<p className="pin-status">Profil existant : {matched.name}. Votre historique est conservé.</p>}
-    {otherDepartment&&<p className="profile-status-error" role="alert">Ce prénom existe déjà dans un autre département de ce magasin. Vérifiez le département ou contactez votre responsable.</p>}
-    {typed&&!validSellerName(typed)&&!fixed&&<p className="profile-status-error" role="alert">Saisissez un prénom valide (lettres, espaces ou traits d’union).</p>}
+    {otherDepartment&&<div className="profile-status-error" role="alert"><span>Ce prénom existe déjà dans un autre département de ce magasin. Vérifiez le département ou contactez votre responsable.</span>{matches.map(person=>{
+      const target=departments.find(d=>d.id===sellerDepartmentId(person));
+      return target?<button type="button" className="text-button" key={person.id} onClick={()=>{setDepartment(target.id);setName(person.name);clearSecrets();}}>Utiliser le profil {person.name} · {target.name}</button>:null;
+    })}</div>}
+    {typed&&!validSellerName(typed)&&!fixed&&!matched&&!otherDepartment&&<p className="profile-status-error" role="alert">Saisissez un prénom valide (lettres, espaces ou traits d’union).</p>}
     {CLOUD&&mode==='loading'&&<p className="pin-status" role="status">Vérification de votre profil…</p>}
     {CLOUD&&mode==='error'&&<div className="profile-status-error" role="alert"><span>{statusError}</span><button type="button" className="text-button" onClick={()=>{clearSecrets();onRefreshProfile?.();setStatusRetry(x=>x+1);}}>Vérifier à nouveau</button></div>}
     {setup&&<div className="pin-setup">

@@ -53,7 +53,9 @@ test('Profil existant sans PIN : premier code à 4 chiffres ; mauvais départeme
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(SessionForm,{data,onSubmit:async()=>{}}));});await chooseScope(tree);await change(tree,'Votre prénom','Elodie');
     assert.match(text(tree.toJSON()),/autre département/);assert.equal(click(tree,'Créer mon profil'),undefined);
-    await change(tree,'Votre prénom','Morgan');assert.match(text(tree.toJSON()),/Première connexion/);assert.equal(field(tree,'Votre nouveau code PIN').props.maxLength,4);assert.equal(click(tree,'Créer mon profil'),undefined);
+    await act(async()=>{click(tree,'Utiliser le profil Élodie · Éditorial').props.onClick();await tick();});
+    assert.equal(field(tree,'Votre département').props.value,'editorial');assert.match(text(tree.toJSON()),/Profil existant : Élodie/);assert.match(text(tree.toJSON()),/Première connexion/);
+    await change(tree,'Votre département','tech');await change(tree,'Votre prénom','Morgan');assert.match(text(tree.toJSON()),/Première connexion/);assert.equal(field(tree,'Votre nouveau code PIN').props.maxLength,4);assert.equal(click(tree,'Créer mon profil'),undefined);
   } finally {if(tree)await act(async()=>tree.unmount());restore();}
 });
 
@@ -64,5 +66,13 @@ test('Profil mémorisé : connexion à 4 chiffres sans redemander le prénom',as
     assert.equal(tree.root.findAllByProps({'aria-label':'Votre prénom'}).length,0);assert.match(text(tree.toJSON()),/VOTRE PROFIL SUR CET APPAREIL/);assert.equal(field(tree,'Code PIN personnel').props.maxLength,4);
     await change(tree,'Code PIN personnel','4829');await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();});
     assert.equal(submissions[0][2].mode,'login');assert.equal(submissions[0][2].pinSalt,'salt-profil-1234567890');
+  } finally {if(tree)await act(async()=>tree.unmount());restore();}
+});
+
+test('Un nom existant saisi par l’administrateur reste utilisable même avec un caractère particulier',async()=>{
+  const restore=apiMock(async()=>({needsPin:false,pinLength:4})),custom={...data,sellers:[...data.sellers,{id:3,name:'Jean/Léo',storeId:'store-1',departmentId:'tech',active:true}]};let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(SessionForm,{data:custom,onSubmit:async()=>{}}));});await chooseScope(tree);await change(tree,'Votre prénom','Jean/Léo');
+    assert.match(text(tree.toJSON()),/Profil existant : Jean\/Léo/);assert(!text(tree.toJSON()).includes('Saisissez un prénom valide'));assert.equal(field(tree,'Code PIN personnel').props.maxLength,4);
   } finally {if(tree)await act(async()=>tree.unmount());restore();}
 });
