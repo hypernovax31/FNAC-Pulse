@@ -15,7 +15,7 @@ function formReference(entry) {
 }
 
 // Utilisé par le vendeur et par l'administration pour garder les mêmes règles.
-export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCancel,disabled=false,date=parisToday()}) {
+export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCancel,disabled=false,showPlanning=false,date=parisToday()}) {
   const initial=services.find(s=>String(s.id)===String(initialServiceId))?.id||services[0]?.id||'';
   const entry=goals?.[`s${initial}`],initialReference=formReference(entry);
   const [service,setService]=useState(String(initial));
@@ -72,7 +72,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
       <label><span className="form-label">CIBLE</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min="0" max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={busy||disabled||!service} onChange={e=>{setAmount(e.target.value);setNotice('');}} required/></label>
     </div>
     <div className="goal-preview" aria-live="polite"><span className="form-label">CIBLES CALCULÉES POUR LA PÉRIODE EN COURS</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PREVIEW_LABELS[period]}</span><strong>{preview?formatNumber(preview[period]):'—'}</strong></div>)}</div><p className="goal-preview-hint">Ces quantités sont des objectifs à atteindre, pas les ventes déjà réalisées.</p></div>
-    <details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. L’administrateur peut modifier ces jours. Les jours fériés sont inclus ; la répartition en nombres entiers peut donner 0 certains jours. Si vous changez de période de référence, vérifiez la quantité saisie avant d’enregistrer.</p></details>
+    {showPlanning&&<details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Modifiez ces jours dans le bloc Jours travaillés ci-dessus. Les jours fériés sont inclus ; la répartition en nombres entiers peut donner 0 certains jours. Si vous changez de période de référence, vérifiez la quantité saisie avant d’enregistrer.</p></details>}
     {stale&&<div className="goal-conflict" role="alert"><span>Cet objectif a été modifié ailleurs.</span><button type="button" onClick={()=>loadService(service)}><RotateCw size={13}/> Recharger les valeurs</button></div>}
     {error&&<div className="form-error" role="alert">{error}</div>}
     {notice&&<div className="goal-saved" role="status">{notice}</div>}
@@ -160,7 +160,7 @@ export function GoalCards({rows,period,stats,offline,onEdit}) {
   })}</div>;
 }
 
-export function GoalsPanel({seller,services,goals,workdays,workdaysDefault=false,stats,loading,error,offline,onEdit,onRetry,date=parisToday()}) {
+export function GoalsPanel({services,goals,workdays,stats,loading,error,offline,onEdit,onRetry,date=parisToday()}) {
   const [period,setPeriod]=useState('day');
   const configured=services.filter(service=>hasGoal(goals?.[`s${service.id}`]));
   const nextService=services.find(service=>!hasGoal(goals?.[`s${service.id}`]));
@@ -185,7 +185,6 @@ export function GoalsPanel({seller,services,goals,workdays,workdaysDefault=false
       {invalidDate?<div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>Les cibles {periodName} sont indisponibles.</strong><p>Impossible de calculer les objectifs sans une date valide. Actualisez votre espace.</p>{!offline&&<button type="button" onClick={onRetry}>Réessayer</button>}</div></div>
       :rows.length?<GoalCards rows={rows} period={period} stats={stats} offline={offline} onEdit={onEdit}/>
       :<div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>{services.length?emptyTitle:'Aucun service disponible.'}</strong><p>{services.length?'Les cibles à 0 et les services sans objectif sont masqués, sans modifier vos données.':'Les services actifs apparaîtront ici lorsqu’ils seront disponibles.'}</p>{configured.length===0&&services.length>0&&<button type="button" onClick={()=>onEdit(nextService?.id||null)} disabled={offline}>Définir un objectif <ArrowRight size={13}/></button>}</div></div>}
-      {configured.length>0&&<details className={`goal-planning ${workdaysDefault?'needs-check':''}`}><summary>{workdaysDefault?'Planning par défaut · à vérifier':'Planning et calcul'}</summary><p>Jours travaillés de {seller?.name||'votre profil'} : {workdaysLabel(workdays)}. L’administrateur peut modifier ce planning. Les semaines vont du lundi au dimanche et les jours fériés sont inclus. Une cible à 0 peut venir du planning ou de la répartition ; toutes les ventes restent comptées.</p></details>}
     </>}
     {error&&goals&&!offline&&<p className="goal-sync-warning">Dernières valeurs affichées · {error} <button type="button" onClick={onRetry}>Réessayer</button></p>}
   </section>;

@@ -83,9 +83,9 @@ test('Aujourd’hui : total personnel en premier, ventes de l’équipe en secon
   const values={'fnac-pulse-session-v1':JSON.stringify(session),'fnac-pulse-last-view-v1':JSON.stringify({session,data})};
   globalThis.localStorage={getItem:key=>values[key]??null,setItem(){},removeItem(){}};
   try {
-    const html=render(App),match=html.match(/<section class="stats-grid"[^>]*>(.*?)<\/section>/);
-    assert(match);assert.match(html,/kicker-line[^>]*><\/span> AUJOURD’HUI/);assert.doesNotMatch(html,/EN UN COUP D’ŒIL/);
-    const cards=match[1].split('class="stat-card"').slice(1);assert.equal(cards.length,2);
+    const html=render(App),match=html.match(/<section class="today-overview"[^>]*>(.*?)<\/section>/);
+    assert(match);assert.match(html,/kicker-line[^>]*><\/span> AUJOURD’HUI/);assert.match(html,/Votre journée en chiffres/);assert.doesNotMatch(html,/EN UN COUP D’ŒIL/);
+    const cards=match[1].split(/class="stat-card stat-card-[^"]+"/).slice(1);assert.equal(cards.length,2);
     assert.match(cards[0],/Ma journée/);assert.match(cards[0],/stat-value">3/);
     assert.match(cards[1],/Ventes de l’équipe/);assert.match(cards[1],/stat-value">7/);assert.match(cards[1],/Dans votre département/);
   } finally {if(prior===undefined)delete globalThis.localStorage;else globalThis.localStorage=prior;}

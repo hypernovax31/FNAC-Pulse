@@ -5,10 +5,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LEGACY_STORE_ID, comparePeople, orderServices } from '../src/catalog.js';
+import { LEGACY_STORE_ID, comparePeople, orderServices, servicesForStore } from '../src/catalog.js';
 import { validGoalValues, validWorkdays, normalizeWorkdays } from '../src/goals.js';
 import { GOALS_RESET_CONFIRMATION } from '../src/goals-reset.js';
 import { SELLER_DELETE_CONFIRMATION } from '../src/seller-delete.js';
+import { SERVICE_DELETE_CONFIRMATION } from '../src/service-delete.js';
 import { cleanSellerName, sameSellerName, validSellerName } from '../src/seller-registration.js';
 import { saleMessage } from '../src/sale-message.js';
 import { localPushTargets } from './push-targets.js';
@@ -60,6 +61,15 @@ CREATE TABLE IF NOT EXISTS seller_delete_requests (
   job_id TEXT PRIMARY KEY, store_id TEXT NOT NULL, seller_id INTEGER NOT NULL, deleted_sales INTEGER NOT NULL, completed_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS seller_delete_store ON seller_delete_requests(store_id, completed_at);
+CREATE TABLE IF NOT EXISTS service_delete_requests (
+  job_id TEXT PRIMARY KEY, store_id TEXT NOT NULL, service_id INTEGER NOT NULL, service_name TEXT NOT NULL,
+  deleted_sales INTEGER NOT NULL, deleted_goals INTEGER NOT NULL, completed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS service_delete_store ON service_delete_requests(store_id, completed_at);
+CREATE TABLE IF NOT EXISTS store_service_removals (
+  store_id TEXT NOT NULL REFERENCES stores(id), service_id INTEGER NOT NULL REFERENCES services(id),
+  PRIMARY KEY(store_id,service_id)
+);
 CREATE TABLE IF NOT EXISTS service_orders (
   store_id TEXT NOT NULL REFERENCES stores(id), service_id INTEGER NOT NULL REFERENCES services(id),
   position INTEGER NOT NULL, PRIMARY KEY(store_id,service_id)
@@ -191,7 +201,8 @@ const isId = value => Number.isSafeInteger(Number(value)) && Number(value) > 0;
 const cleanName = value => typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, 60) : '';
 const activeStore = id => typeof id === 'string' && db.prepare('SELECT * FROM stores WHERE id=? AND active=1').get(id);
 const activeSeller = (id,storeId) => isId(id) && db.prepare('SELECT * FROM sellers WHERE id=? AND store_id=? AND active=1').get(Number(id),storeId);
-const activeService = id => isId(id) && db.prepare('SELECT * FROM services WHERE id=? AND active=1').get(Number(id));
+const activeService = (id,storeId) => isId(id) && db.prepare(`SELECT * FROM services WHERE id=? AND active=1
+  AND NOT EXISTS (SELECT 1 FROM store_service_removals WHERE store_id=? AND service_id=services.id)`).get(Number(id),storeId||'');
 
 function parisToday(now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone:'Europe/Paris', year:'numeric',month:'2-digit',day:'2-digit' }).format(now);
@@ -200,6 +211,12 @@ function serviceOrders() {
   const orders={};
   for(const row of db.prepare('SELECT store_id AS storeId,service_id AS serviceId FROM service_orders ORDER BY position').all()) (orders[row.storeId]||=[]).push(row.serviceId);
   return orders;
+}
+function serviceRemovalsByStore() {
+  const result={};
+  for(const row of db.prepare('SELECT store_id AS storeId,service_id AS serviceId FROM store_service_removals').all())
+    (result[row.storeId]||=[]).push(row.serviceId);
+  return result;
 }
 function localDepartmentsByStore() {
   const groups={};
@@ -210,7 +227,7 @@ function localDepartmentsByStore() {
 function localCatalog(storeId) {
   const sellers=db.prepare('SELECT id,name,store_id AS storeId,department_id AS departmentId,active FROM sellers').all();
   const services=orderServices(db.prepare("SELECT id,name,icon,active,CASE WHEN id=1 THEN 'dmax' WHEN id=5 THEN 'fvd' ELSE NULL END AS priorityCode FROM services ORDER BY sort_order,id").all(),serviceOrders(),storeId);
-  return {sellers,services,departmentsByStore:localDepartmentsByStore()};
+  return {sellers,services,serviceRemovalsByStore:serviceRemovalsByStore(),departmentsByStore:localDepartmentsByStore()};
 }
 function statsFor(storeId,sellerId,today) {
   const rows=db.prepare(`SELECT id,store_id AS storeId,seller_id AS sellerId,department_id AS departmentId,
@@ -243,7 +260,8 @@ app.get('/api/bootstrap', (req,res) => {
   const today = parisToday();
   const stores = db.prepare("SELECT id,name,city,address,lat,lon,fnac_id AS fnacId,directory_status AS directoryStatus FROM stores WHERE active=1 AND COALESCE(directory_status,'')!='region' ORDER BY name COLLATE NOCASE").all();
   const sellers = db.prepare('SELECT id,name,store_id AS storeId,department_id AS departmentId FROM sellers WHERE active=1').all().sort(comparePeople);
-  const services = orderServices(db.prepare('SELECT id,name,icon FROM services WHERE active=1 ORDER BY sort_order,id').all(),serviceOrders(),req.query.storeId);
+  const serviceCatalog={services:db.prepare('SELECT id,name,icon,active FROM services ORDER BY sort_order,id').all(),serviceOrders:serviceOrders(),serviceRemovalsByStore:serviceRemovalsByStore()};
+  const services = servicesForStore(serviceCatalog,req.query.storeId).map(({id,name,icon})=>({id,name,icon}));
   const store = req.query.storeId ? activeStore(req.query.storeId) : null;
   const stats = store ? statsFor(store.id,req.query.sellerId,today) : null;
   res.json({ stores, sellers, services, directoryRegions:directorySnapshot.unlinkedRegions.map(({name})=>name), departmentsByStore:localDepartmentsByStore(), today, stats, pushPublicKey:vapid.publicKey });
@@ -273,7 +291,7 @@ function localGoals(storeId,sellerId) {
 }
 function saveLocalGoals(req,res) {
   const {storeId,sellerId,serviceId,values,revision}=req.body||{};
-  if(!activeStore(storeId)||!activeSeller(sellerId,storeId)||!activeService(serviceId))return failure(res,'Choisissez un vendeur et un service valides.');
+  if(!activeStore(storeId)||!activeSeller(sellerId,storeId)||!activeService(serviceId,storeId))return failure(res,'Choisissez un vendeur et un service valides.');
   if(!validGoalValues(values))return failure(res,'Les objectifs doivent être des entiers entre 0 et 9 999, ou être laissés vides.');
   if(revision!==null&&(typeof revision!=='string'||!/^[A-Za-z0-9_-]{8,80}$/.test(revision)))return failure(res,'Actualisez les objectifs avant de les modifier.');
   const old=db.prepare('SELECT revision FROM seller_goals WHERE store_id=? AND seller_id=? AND service_id=?').get(storeId,Number(sellerId),Number(serviceId));
@@ -295,13 +313,13 @@ app.get('/api/summary-goals',(req,res)=>{
   if(!activeStore(storeId))return failure(res,'Choisissez un magasin valide.');
   const catalog=localCatalog(storeId),sellers=catalog.sellers.filter(s=>s.active&&s.storeId===storeId)
     .map(s=>({...s,...localGoals(storeId,s.id)}));
-  res.set('Cache-Control','no-store').json(summaryGoals(sellers,catalog.services,
+  res.set('Cache-Control','no-store').json(summaryGoals(sellers,servicesForStore(catalog,storeId,{activeOnly:false}),
     departmentsForStore(catalog,storeId,{activeOnly:false}),parisToday()));
 });
 
 app.post('/api/sales', (req,res) => {
   const {storeId,sellerId,serviceId,requestId,clientId} = req.body || {};
-  const store = activeStore(storeId), seller = activeSeller(sellerId,storeId), service = activeService(serviceId);
+  const store = activeStore(storeId), seller = activeSeller(sellerId,storeId), service = activeService(serviceId,storeId);
   if (!store || !seller || !service) return failure(res,'Choisissez un magasin, un vendeur et un service valides.');
   const safeRequest = typeof requestId === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(requestId) ? requestId : null;
   if (safeRequest) {
@@ -335,7 +353,7 @@ app.post('/api/sales', (req,res) => {
 app.post('/api/sales/remove', (req,res) => {
   const {storeId,sellerId,serviceId} = req.body || {};
   const seller=activeSeller(sellerId,storeId);
-  if (!activeStore(storeId) || !seller || !activeService(serviceId)) return failure(res,'Sélection invalide.');
+  if (!activeStore(storeId) || !seller || !activeService(serviceId,storeId)) return failure(res,'Sélection invalide.');
   const row = db.prepare(`SELECT id FROM sales WHERE store_id=? AND seller_id=? AND service_id=? AND business_date=? AND department_id=? AND deleted_at IS NULL
     ORDER BY created_at DESC,rowid DESC LIMIT 1`).get(storeId,Number(sellerId),Number(serviceId),parisToday(),seller.department_id||TECH_DEPARTMENT_ID);
   if (!row) return failure(res,'Aucune vente à retirer pour ce service aujourd’hui.',409);
@@ -406,8 +424,57 @@ app.get('/api/admin/all', requireAdmin, (req,res) => {
   res.json({
     sellers:db.prepare('SELECT id,name,active,store_id AS storeId,department_id AS departmentId FROM sellers').all().sort(comparePeople),
     services:db.prepare('SELECT id,name,icon,active FROM services ORDER BY sort_order,id').all(),
-    serviceOrders:serviceOrders(), departmentsByStore:localDepartmentsByStore(),
+    serviceOrders:serviceOrders(), serviceRemovalsByStore:serviceRemovalsByStore(), departmentsByStore:localDepartmentsByStore(),
   });
+});
+function localServiceDeleteStatus(row) {
+  return row?{status:'done',jobId:row.job_id,serviceId:row.service_id,serviceName:row.service_name,deletedSales:row.deleted_sales,
+    deletedGoals:row.deleted_goals,skippedGoals:0,phase:'done',startedAt:row.completed_at,finishedAt:row.completed_at}:
+    {status:'idle',jobId:null,deletedSales:0,deletedGoals:0};
+}
+app.get('/api/admin/services/delete',requireAdmin,(req,res)=>{
+  const {storeId}=req.query;
+  if(!activeStore(storeId))return failure(res,'Choisissez un magasin valide.');
+  res.json(localServiceDeleteStatus(db.prepare('SELECT * FROM service_delete_requests WHERE store_id=? ORDER BY rowid DESC LIMIT 1').get(storeId)));
+});
+app.post('/api/admin/services/delete',requireAdmin,(req,res)=>{
+  const {storeId,serviceId,jobId,confirmation,expectedName,expectedStoreName}=req.body||{};
+  const store=activeStore(storeId);
+  if(!store||!isId(serviceId)||typeof jobId!=='string'||!/^[A-Za-z0-9_-]{8,80}$/.test(jobId)||
+     confirmation!==SERVICE_DELETE_CONFIRMATION||typeof expectedName!=='string'||typeof expectedStoreName!=='string')
+    return failure(res,'Confirmation, magasin ou service invalide.');
+  const id=Number(serviceId),existing=db.prepare('SELECT * FROM service_delete_requests WHERE job_id=?').get(jobId);
+  if(existing) {
+    if(existing.store_id!==storeId||existing.service_id!==id)return failure(res,'Identifiant de suppression déjà utilisé.',409);
+    const latest=db.prepare('SELECT job_id FROM service_delete_requests WHERE store_id=? ORDER BY rowid DESC LIMIT 1').get(storeId);
+    return res.json(latest?.job_id===jobId?localServiceDeleteStatus(existing):{status:'superseded',jobId,serviceId:id,deletedSales:0,deletedGoals:0});
+  }
+  const service=db.prepare('SELECT id,name FROM services WHERE id=?').get(id);
+  if(!service||db.prepare('SELECT 1 FROM store_service_removals WHERE store_id=? AND service_id=?').get(storeId,id))
+    return failure(res,'Choisissez un service présent dans ce magasin.');
+  if(service.name!==expectedName||store.name!==expectedStoreName)return failure(res,'Le service ou le magasin a changé. Vérifiez votre choix avant de réessayer.',409);
+  const result=db.transaction(()=>{
+    db.prepare(`INSERT OR IGNORE INTO reset_sale_requests(request_id)
+      SELECT request_id FROM sales WHERE store_id=? AND service_id=? AND request_id IS NOT NULL`).run(storeId,id);
+    const deletedSales=db.prepare('DELETE FROM sales WHERE store_id=? AND service_id=?').run(storeId,id).changes;
+    const deletedGoals=db.prepare('DELETE FROM seller_goals WHERE store_id=? AND service_id=?').run(storeId,id).changes;
+    db.prepare('DELETE FROM service_orders WHERE store_id=? AND service_id=?').run(storeId,id);
+    db.prepare('INSERT INTO store_service_removals(store_id,service_id) VALUES (?,?)').run(storeId,id);
+    const when=Date.now();
+    db.prepare('INSERT INTO service_delete_requests(job_id,store_id,service_id,service_name,deleted_sales,deleted_goals,completed_at) VALUES (?,?,?,?,?,?,?)')
+      .run(jobId,storeId,id,service.name,deletedSales,deletedGoals,when);
+    return {status:'done',jobId,serviceId:id,serviceName:service.name,deletedSales,deletedGoals,skippedGoals:0,phase:'done',startedAt:when,finishedAt:when};
+  })();
+  broadcast(storeId,{kind:'service-delete'});res.json(result);
+});
+app.post('/api/admin/services/restore',requireAdmin,(req,res)=>{
+  const {storeId,serviceId,expectedName,expectedStoreName}=req.body||{},store=activeStore(storeId);
+  if(!store||!isId(serviceId)||typeof expectedName!=='string'||typeof expectedStoreName!=='string')return failure(res,'Magasin ou service invalide.');
+  const id=Number(serviceId),service=db.prepare('SELECT id,name FROM services WHERE id=?').get(id);
+  if(!service||!db.prepare('SELECT 1 FROM store_service_removals WHERE store_id=? AND service_id=?').get(storeId,id))return failure(res,'Ce service n’est pas retiré de ce magasin.');
+  if(service.name!==expectedName||store.name!==expectedStoreName)return failure(res,'Le service ou le magasin a changé. Vérifiez votre choix.',409);
+  db.prepare('DELETE FROM store_service_removals WHERE store_id=? AND service_id=?').run(storeId,id);
+  broadcast(storeId,{kind:'config'});res.json({ok:true});
 });
 function localSellerDeleteStatus(row) {
   return row?{status:'done',jobId:row.job_id,deletedSales:row.deleted_sales,startedAt:row.completed_at,finishedAt:row.completed_at}:
@@ -627,7 +694,7 @@ app.get('/api/admin/counts',requireAdmin,(req,res) => {
 });
 app.post('/api/admin/adjust',requireAdmin,(req,res) => {
   const {storeId,sellerId,serviceId,count}=req.body||{};
-  if(!activeStore(storeId)||!activeSeller(sellerId,storeId)||!activeService(serviceId)||!Number.isInteger(count)||count<0||count>999) return failure(res,'Choisissez une quantité entière entre 0 et 999.');
+  if(!activeStore(storeId)||!activeSeller(sellerId,storeId)||!activeService(serviceId,storeId)||!Number.isInteger(count)||count<0||count>999) return failure(res,'Choisissez une quantité entière entre 0 et 999.');
   const today=parisToday();
   db.transaction(() => {
     const rows=db.prepare(`SELECT id FROM sales WHERE store_id=? AND seller_id=? AND service_id=? AND business_date=? AND deleted_at IS NULL ORDER BY created_at DESC,rowid DESC`)

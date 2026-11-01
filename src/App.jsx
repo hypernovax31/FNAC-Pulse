@@ -233,7 +233,13 @@ function Header({session,seller,store,connected,notificationsEnabled,notificatio
   </header>;
 }
 function StatCard({label,value,detail,Icon,tone}) {
-  return <div className="stat-card"><div className="stat-top"><span>{label}</span><span className={`stat-icon ${tone}`}><Icon size={17}/></span></div><div className="stat-value">{value??'—'}<span>{value===undefined||value===null?'':value>1?'services':'service'}</span></div><div className="stat-detail">{detail}</div></div>;
+  return <article className={`stat-card stat-card-${tone}`}><div className="stat-top"><span>{label}</span><span className={`stat-icon ${tone}`} aria-hidden="true"><Icon size={18}/></span></div><div className="stat-value">{value??'—'}<span>{value===undefined||value===null?'':value>1?'services':'service'}</span></div><p className="stat-detail">{detail}</p></article>;
+}
+function TodayOverview({stats,hasSession}) {
+  return <section className="today-overview" aria-labelledby="today-title">
+    <div className="today-heading"><div><div className="section-kicker"><span className="kicker-line"/> AUJOURD’HUI</div><h2 id="today-title">Votre journée en chiffres</h2></div><span className="today-context">{hasSession?'Votre activité et votre équipe':'Choisissez votre espace pour démarrer'}</span></div>
+    <div className="stats-grid" aria-label="Chiffres clés"><StatCard label="Ma journée" value={stats?.mineTotal} detail="Mes services enregistrés" Icon={UserRound} tone="gold"/><StatCard label="Ventes de l’équipe" value={stats?.day.total} detail="Dans votre département" Icon={UsersRound} tone="soft-blue"/></div>
+  </section>;
 }
 function ServiceCard({service,index,count,session,pending,onAdd,onRemove}) {
   const iconKey=serviceIconKey(service), Icon=icons[iconKey]||MoreHorizontal;
@@ -289,7 +295,7 @@ function MobileNav({onNavigate,onSession,active}) {
 function urlBase64ToUint8Array(base64) {const padding='='.repeat((4-base64.length%4)%4);const raw=atob((base64+padding).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
 function readNotificationPermission() {return typeof Notification==='undefined'?'unsupported':Notification.permission;}
 
-export { Header, DateChip, ActivityCard, Summary, MobileNav };
+export { Header, DateChip, ActivityCard, Summary, MobileNav, TodayOverview };
 export default function App() {
   const [session,setSession]=useState(()=>CLOUD?null:getSession());
   const [deviceProfile,setDeviceProfile]=useState(()=>CLOUD?readDeviceProfile(undefined,getSession()):null);
@@ -484,8 +490,8 @@ export default function App() {
       try {
         const event=JSON.parse(e.data);
         if(event.kind==='sale'&&event.clientId!==clientId.current&&isOtherSellerSale(event,session.sellerId)&&(event.departmentId||'tech')===activeDepartmentId)flash(saleMessage(event.serviceName,event.sellerName),{tone:'celebrate'});
-        if(event.kind==='goals-reset'||(event.kind==='goals'&&Number(event.sellerId)===Number(session.sellerId)))loadGoals();
-        if(event.kind==='goals'||event.kind==='goals-reset'||event.kind==='config')queueSummary();
+        if(event.kind==='goals-reset'||event.kind==='service-delete'||(event.kind==='goals'&&Number(event.sellerId)===Number(session.sellerId)))loadGoals();
+        if(event.kind==='goals'||event.kind==='goals-reset'||event.kind==='service-delete'||event.kind==='config')queueSummary();
       } catch{}
       refresh();
     });
@@ -683,9 +689,8 @@ export default function App() {
         {notificationNotice&&<section className="notification-card notification-prompt" aria-label="Activation des notifications"><span className="notification-icon"><BellOff size={18}/></span><div><strong>Restez informés</strong><p>{notificationNotice.message}</p></div><button onClick={notificationNotice.action==='install'?openInstall:notificationNotice.action==='retry'?retryNotifications:openNotifications}>{notificationNotice.label} <ArrowRight size={13}/></button></section>}
         <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><DateChip today={cloudDay}/></div>
         {!session?<WelcomePanel data={data} onSubmit={selectSession} deviceProfile={deviceProfile} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>:<div className="session-strip"><div className="strip-icon"><Store size={18}/></div><div className="strip-copy"><span>VOTRE ESPACE DE VENTE</span><strong>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</strong></div><div className="strip-divider"/><div className="strip-user"><Avatar name={seller?.name} id={seller?.id} size="small"/><span>Connecté en tant que <strong>{seller?.name}</strong></span></div><button className="text-button" onClick={()=>setSessionModal(true)}>{CLOUD?'Mon profil':'Changer'} <ArrowRight size={14}/></button></div>}
-        <div className="section-overline"><div><span className="kicker-line"/> AUJOURD’HUI</div><span>{session?'Vos ventes et celles de votre département':'Choisissez votre espace pour démarrer'}</span></div>
-        <section className="stats-grid" aria-label="Chiffres clés"><StatCard label="Ma journée" value={stats?.mineTotal} detail="Mes services enregistrés" Icon={UserRound} tone="gold"/><StatCard label="Ventes de l’équipe" value={stats?.day.total} detail="Dans votre département" Icon={UsersRound} tone="soft-blue"/></section>
-        {session&&<GoalsPanel seller={seller} services={data.services} goals={currentGoals} workdays={goalState.workdays} workdaysDefault={!goalState.workdaysRevision} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
+        <TodayOverview stats={stats} hasSession={!!session}/>
+        {session&&<GoalsPanel services={data.services} goals={currentGoals} workdays={goalState.workdays} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
         <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> VENTE QUOTIDIENNE</div><h2>Ajouter un service</h2><p>Une vente de services ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
           <Summary stats={stats} hasSession={!!session} storeId={session?.storeId} departments={departments} goals={currentSummary} goalsLoading={summaryState.key===summaryKey&&summaryState.loading} goalsError={summaryState.key===summaryKey?summaryState.error:''} onRetry={loadSummaryGoals}/>
         </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/></div></div>

@@ -377,3 +377,48 @@ test('SQLite : suppression définitive ciblée, toutes dates, vendeur archivé e
     assert.equal((await request(`/api/goals?storeId=${store}&sellerId=${neighbor.id}`)).body.goals[`s${service}`].month,15);
   } finally {await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
 });
+
+test('SQLite : suppression définitive d’un service uniquement dans le magasin choisi',async()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'fnac-pulse-service-delete-')),port=await freePort(),url=`http://127.0.0.1:${port}`;let server;
+  const request=async(route,method='GET',body,token)=>{const r=await fetch(url+route,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,body:await r.json()};};
+  try {
+    server=await start(port,folder);
+    const base=(await request('/api/bootstrap')).body,store=base.stores.find(s=>s.id===LEGACY_STORE_ID),other=base.stores.find(s=>s.name==='Fnac Bordeaux');
+    const [one,two]=base.sellers.slice(0,2).map(s=>s.id),first=base.services[0],second=base.services[1];
+    const token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
+    const added=await request('/api/admin/entities/sellers','POST',{name:'Vendeur Bordeaux',storeId:other.id,departmentId:'tech'},token);assert.equal(added.status,201);const otherSeller=added.body.id;
+    const goal=(sellerId,storeId,serviceId,month)=>({sellerId,storeId,serviceId,values:{day:null,week:null,month},revision:null});
+    for(const g of [goal(one,store.id,first.id,12),goal(two,store.id,first.id,22),goal(one,store.id,second.id,30),goal(otherSeller,other.id,first.id,40)])
+      assert.equal((await request('/api/admin/goals','POST',g,token)).status,200);
+    assert.equal((await request('/api/admin/workdays','POST',{storeId:store.id,sellerId:one,workdays:[1,3,5],revision:null},token)).status,200);
+    const firstSale={storeId:store.id,sellerId:one,serviceId:first.id,requestId:'first-service-sale-01'};
+    const firstResult=await request('/api/sales','POST',firstSale);assert.equal(firstResult.status,201);
+    assert.equal((await request('/api/sales','POST',{...firstSale,sellerId:two,requestId:'second-service-sale-1'})).status,201);
+    assert.equal((await request('/api/sales','POST',{...firstSale,serviceId:second.id,requestId:'other-service-sale-01'})).status,201);
+    assert.equal((await request('/api/sales','POST',{storeId:other.id,sellerId:otherSeller,serviceId:first.id,requestId:'other-store-sale-0001'})).status,201);
+    assert.equal((await request(`/api/sales/${firstResult.body.id}`,'DELETE',{storeId:store.id,sellerId:one})).status,200);
+    const direct=new Database(path.join(folder,'pulse.sqlite'));direct.prepare('UPDATE sales SET business_date=? WHERE request_id=?').run('2020-01-01','second-service-sale-1');direct.close();
+    const body={storeId:store.id,serviceId:first.id,jobId:'local-service-delete-01',expectedName:first.name,expectedStoreName:store.name,confirmation:'SUPPRIMER'};
+    assert.equal((await request('/api/admin/services/delete','POST',body)).status,401);
+    assert.equal((await request('/api/admin/services/delete','POST',{...body,expectedName:'Mauvais'},token)).status,409);
+    assert.equal((await request('/api/admin/services/delete','POST',{...body,confirmation:'NON'},token)).status,400);
+    const deleted=await request('/api/admin/services/delete','POST',body,token);assert.equal(deleted.status,200);assert.equal(deleted.body.status,'done');
+    assert.equal(deleted.body.deletedSales,2);assert.equal(deleted.body.deletedGoals,2);
+    const here=(await request(`/api/bootstrap?storeId=${store.id}&sellerId=${one}`)).body,there=(await request(`/api/bootstrap?storeId=${other.id}&sellerId=${otherSeller}`)).body;
+    assert(!here.services.some(s=>s.id===first.id));assert(there.services.some(s=>s.id===first.id));assert.equal(here.stats.day.total,1);assert.equal(there.stats.day.total,1);
+    const a=(await request(`/api/goals?storeId=${store.id}&sellerId=${one}`)).body,b=(await request(`/api/goals?storeId=${other.id}&sellerId=${otherSeller}`)).body;
+    assert.equal(a.goals[`s${first.id}`],undefined);assert.equal(a.goals[`s${second.id}`].month,30);assert.deepEqual(a.workdays,[1,3,5]);assert.equal(b.goals[`s${first.id}`].month,40);
+    assert.equal((await request('/api/sales','POST',{...firstSale,requestId:'blocked-after-delete'},undefined)).status,400);
+    assert.equal((await request('/api/admin/goals','POST',goal(one,store.id,first.id,1),token)).status,400);
+    const all=(await request('/api/admin/all','GET',undefined,token)).body;assert.deepEqual(all.serviceRemovalsByStore[store.id],[first.id]);assert(!all.serviceRemovalsByStore[other.id]);
+    await stop(server);server=await start(port,folder);
+    assert(!(await request(`/api/bootstrap?storeId=${store.id}`)).body.services.some(s=>s.id===first.id));
+    const token2=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
+    assert.equal((await request('/api/admin/services/restore','POST',{storeId:store.id,serviceId:first.id,expectedName:first.name,expectedStoreName:store.name},token2)).status,200);
+    assert.equal((await request('/api/sales','POST',firstSale)).status,409);
+    assert.equal((await request('/api/sales','POST',{...firstSale,requestId:'new-after-reactivation'})).status,201);
+    assert.equal((await request('/api/admin/services/delete','POST',body,token2)).body.status,'done');
+    assert.equal((await request(`/api/bootstrap?storeId=${store.id}&sellerId=${one}`)).body.stats.day.total,2);
+    assert.equal((await request('/api/admin/services/delete','POST',{...body,storeId:other.id},token2)).status,409);
+  } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
+});

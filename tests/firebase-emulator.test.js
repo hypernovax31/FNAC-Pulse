@@ -426,3 +426,41 @@ test('Émulateur Firestore : notifications seulement aux collègues et ancienne 
   await consume(ids.a);assert.deepEqual(sent,[tokens.peer]); // téléphone émetteur réaffecté
   assert.equal((await db.get(`pulseOutbox/${saleId}`)).data.originTokenId,ids.a);
 });
+
+test('Émulateur Firestore : suppression service paginée, objectifs et magasins isolés',{skip:!enabled},async()=>{
+  const project='demo-fnac',store=LEGACY_STORE_ID;
+  const db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'}),queue=[];
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_e,t)=>t==='admin'?{sub:'administrator'}:Promise.reject(Error())});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(xs){queue.push(...xs.map(x=>x.body));}}},ctx={waitUntil(){}};
+  const call=async(path,method='GET',body,token='admin')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{'content-type':'application/json',...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);const json=await r.json();assert.notEqual(r.status,500,JSON.stringify(json));return {status:r.status,json};};
+  await fetch(`http://127.0.0.1:8085/emulator/v1/projects/${project}/databases/(default)/documents`,{method:'DELETE'});
+  const base=(await call('/api/bootstrap','GET',undefined,'')).json,other=base.stores.find(s=>s.name==='Fnac Bordeaux').id;
+  const person=async(st,id)=>`seller-${(await digestBase64(`${st}:${id}`)).slice(0,28)}`,a=await person(store,1),b=await person(store,2),orphan=await person(store,900),otherUid=await person(other,777);
+  const writes=[db.write(`pulseGoals/${a}`,{storeId:store,sellerId:1,goals:{s1:{month:10},s2:{month:30}},workdays:[1,3]}),
+    db.write(`pulseGoals/${b}`,{goals:{s1:{month:20}},workdays:[2,4]}),
+    db.write(`pulseGoals/${orphan}`,{storeId:store,sellerId:900,goals:{s1:{month:5}}}),
+    db.write(`pulseGoals/${otherUid}`,{storeId:other,sellerId:777,goals:{s1:{month:77}}}),
+    db.write(`pulseStatus/${a}`,{active:true,version:'v1',goalsRevision:'before'}),
+    db.write(`pulseStores/${store}/sales/keep-other-service`,{id:'keep-other-service',storeId:store,sellerId:1,serviceId:2,businessDate:'2020-01-01'}),
+    db.write(`pulseStores/${other}/sales/keep-other-store`,{id:'keep-other-store',storeId:other,sellerId:777,serviceId:1,businessDate:'2020-01-01'})];
+  for(let i=0;i<25;i++) {const id=`emulator-service-${String(i).padStart(3,'0')}`;writes.push(db.write(`pulseStores/${store}/sales/${id}`,{id,storeId:store,sellerId:1,serviceId:1,businessDate:'2020-01-01'}),db.write(`pulseOutbox/${id}`,{saleId:id,storeId:store,status:'queued',createdAt:Date.now()}));}
+  await db.commit(writes);
+  const body={storeId:store,serviceId:1,jobId:'firestore-service-delete-01',expectedName:base.services[0].name,expectedStoreName:base.stores.find(s=>s.id===store).name,confirmation:'SUPPRIMER'};
+  assert.equal((await call('/api/admin/services/delete','POST',body)).json.status,'running');
+  assert(!(await call(`/api/bootstrap?storeId=${store}`,'GET',undefined,'')).json.services.some(s=>s.id===1));
+  assert((await call(`/api/bootstrap?storeId=${other}`,'GET',undefined,'')).json.services.some(s=>s.id===1));
+  let steps=0;
+  while(queue.length){assert(++steps<60);const body=queue.shift(),msg={body,acked:false,retried:false,ack(){this.acked=true},retry(){this.retried=true}};await worker.queue({messages:[msg]},env);assert(msg.acked,`échec lot ${steps}, retry=${msg.retried}`);}
+  const done=(await call(`/api/admin/services/delete?storeId=${store}`)).json;
+  assert.equal(done.status,'done');assert.equal(done.deletedSales,25);assert.equal(done.deletedGoals,3);
+  assert.equal((await db.query(`pulseStores/${store}/sales`,'serviceId','EQUAL',1)).length,0);
+  assert(await db.get(`pulseStores/${store}/sales/keep-other-service`));assert(await db.get(`pulseStores/${other}/sales/keep-other-store`));
+  assert.equal((await db.get(`pulseGoals/${a}`)).data.goals.s1,undefined);assert.equal((await db.get(`pulseGoals/${a}`)).data.goals.s2.month,30);
+  assert.deepEqual((await db.get(`pulseGoals/${a}`)).data.workdays,[1,3]);assert.equal((await db.get(`pulseGoals/${b}`)).data.goals.s1,undefined);
+  assert.equal((await db.get(`pulseGoals/${orphan}`)).data.goals.s1,undefined);assert.equal((await db.get(`pulseGoals/${otherUid}`)).data.goals.s1.month,77);
+  assert.notEqual((await db.get(`pulseStatus/${a}`)).data.goalsRevision,'before');assert.deepEqual((await db.get('pulseOutbox/emulator-service-000')).data,{status:'reset'});
+  assert.equal((await call('/api/admin/services/delete','POST',body)).json.status,'done');
+  assert.equal((await call('/api/admin/services/restore','POST',{storeId:store,serviceId:1,expectedName:body.expectedName,expectedStoreName:body.expectedStoreName})).status,200);
+  assert((await call(`/api/bootstrap?storeId=${store}`,'GET',undefined,'')).json.services.some(s=>s.id===1));
+  assert.equal((await db.get(`pulseGoals/${a}`)).data.goals.s1,undefined);
+});

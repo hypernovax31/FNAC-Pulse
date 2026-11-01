@@ -1346,3 +1346,144 @@ test('Suppression vendeur cloud : arbitrage atomique avec les resets lancés sim
     if(winner==='reset')assert.equal(await db.get(`pulseSellerDeletes/${store}`),null);else assert.equal(await db.get(doc),null);
   }
 });
+
+test('Suppression service cloud : magasin isolé, ventes et objectifs ciblés, reprise et réactivation sans historique',async()=>{
+  const db=new MemoryDb(),queue=[],sent=[],waits=[],identities=new Map([['admin',{sub:'administrator'}]]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_e,t)=>{if(!identities.has(t))throw Error('no');return identities.get(t);},sendFcm:async(_e,token)=>sent.push(token)});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(items){queue.push(...items.map(x=>x.body));}}};
+  const ctx={waitUntil(p){waits.push(p)}};
+  const req=async(path,method='GET',body,token='admin')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{'content-type':'application/json',...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  const base=(await req('/api/bootstrap','GET',undefined,'')).body,store=LEGACY_STORE_ID,other=base.stores.find(s=>s.name==='Fnac Bordeaux').id;
+  const storeName=base.stores.find(s=>s.id===store).name,serviceName=base.services.find(s=>s.id===1).name;
+  const uid=async(st,id)=>`seller-${(await digestBase64(`${st}:${id}`)).slice(0,28)}`;
+  const a=await uid(store,1),archived=await uid(store,2),b=await uid(other,13),orphan=await uid(store,999),peer=await uid(store,3);
+  const c=(await db.get('pulse/catalog')).data;c.sellers.find(s=>s.id===2).active=false;c.sellerFlags.s2=false;
+  c.sellers.push({id:13,name:'Autre magasin',active:true,storeId:other,departmentId:'tech'});c.sellerFlags.s13=true;c.sellerStores.s13=other;c.nextSellerId=14;
+  const goal=(month,rev)=>({day:null,week:null,month,revision:rev});
+  await db.commit([
+    db.write('pulse/catalog',c),db.write(`pulseAccess/${a}`,{active:true,storeId:store,sellerId:1,version:'v1'}),
+    db.write(`pulseStatus/${a}`,{active:true,storeId:store,sellerId:1,version:'v1',goalsRevision:'old-a'}),
+    db.write(`pulseAccess/${b}`,{active:true,storeId:other,sellerId:13,version:'v13'}),
+    db.write(`pulseAccess/${peer}`,{active:true,storeId:store,sellerId:3,version:'v3'}),
+    db.write(`pulseGoals/${a}`,{storeId:store,sellerId:1,goals:{s1:goal(30,'goal-a-0001'),s2:goal(8,'goal-a-0002')},workdays:[1,3,5],workdaysRevision:'days-a-001'}),
+    db.write(`pulseGoals/${archived}`,{goals:{s1:goal(11,'goal-old-01'),s2:goal(7,'goal-old-02')},workdays:[0,1]}),
+    db.write(`pulseGoals/${b}`,{storeId:other,sellerId:13,goals:{s1:goal(99,'goal-b-0001')},workdays:[2,4]}),
+    db.write(`pulseGoals/${orphan}`,{storeId:store,sellerId:999,goals:{s1:goal(4,'goal-orphan'),s2:goal(5,'goal-other')},workdays:[2]}),
+  ]);
+  identities.set('a',{sub:a,role:'seller',storeId:store,sellerId:1,accessVersion:'v1'});
+  identities.set('b',{sub:b,role:'seller',storeId:other,sellerId:13,accessVersion:'v13'});
+  const date=parisToday(),sales=[];
+  for(let i=0;i<26;i++)sales.push(db.write(`pulseStores/${store}/sales/service-one-${String(i).padStart(4,'0')}`,{id:`service-one-${String(i).padStart(4,'0')}`,storeId:store,sellerId:i%2?2:1,departmentId:i%2?'editorial':'tech',serviceId:1,businessDate:i%3?date:'2020-01-01',createdAt:'2026-01-01T12:00:00Z',deletedAt:i===1?'ancien':null,source:i===2?'adjustment':'sale'}));
+  const shared='shared-sale-0001';
+  sales.push(db.write(`pulseStores/${store}/sales/${shared}`,{id:shared,storeId:store,sellerId:1,serviceId:1,businessDate:date,createdAt:'2026-01-01T12:00:00Z'}),
+    db.write(`pulseStores/${other}/sales/${shared}`,{id:shared,storeId:other,sellerId:13,serviceId:1,businessDate:date}),
+    db.write(`pulseOutbox/${shared}`,{saleId:shared,storeId:other,status:'queued',createdAt:Date.now()}),
+    db.write(`pulseStores/${store}/sales/other-service-0001`,{id:'other-service-0001',storeId:store,sellerId:1,serviceId:2,businessDate:date,createdAt:'2026-01-01T12:00:00Z'}));
+  const pushSale='service-one-0000',token='test-token-peer-1234567890123',tokenId=await digestBase64(token);
+  sales.push(db.write(`pulseOutbox/${pushSale}`,{saleId:pushSale,storeId:store,sellerId:1,departmentId:'tech',status:'queued',createdAt:Date.now()}),
+    db.write(`pulseTokens/${tokenId}`,{token,uid:peer,storeId:store,accessVersion:'v3'}));
+  await db.commit(sales);
+  const body={storeId:store,serviceId:1,jobId:'delete-service-job-0001',expectedName:serviceName,expectedStoreName:storeName,confirmation:'SUPPRIMER'};
+  assert.equal((await req('/api/admin/services/delete','POST',body,'')).status,401);
+  assert.equal((await req('/api/admin/services/delete','POST',{...body,confirmation:'NON'})).status,400);
+  assert.equal((await req('/api/admin/services/delete','POST',{...body,expectedStoreName:'Mauvais magasin'})).status,409);
+  assert.equal((await req('/api/admin/services/delete','POST',{...body,expectedName:'Mauvais service'})).status,409);
+  const started=await req('/api/admin/services/delete','POST',body);assert.equal(started.status,200);assert.equal(started.body.status,'running');
+  assert(!(await req(`/api/bootstrap?storeId=${store}`)).body.services.some(s=>s.id===1));
+  assert((await req(`/api/bootstrap?storeId=${other}`)).body.services.some(s=>s.id===1));
+  assert((await db.get(`pulseStores/${store}/sales/${pushSale}`))); // exclusion immédiate, purge asynchrone
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'new-blocked-sale-1'},'a')).status,400);
+  assert.equal((await req('/api/goals','POST',{serviceId:1,values:{day:null,week:null,month:1},revision:'goal-a-0001'},'a')).status,400);
+  assert.equal((await req('/api/admin/services/restore','POST',{storeId:store,serviceId:1,expectedName:serviceName,expectedStoreName:storeName})).status,409);
+  assert.equal((await req('/api/admin/sales/reset','POST',{storeId:store,jobId:'reset-blocked-0001',confirmation:'SUPPRIMER'})).status,409);
+  assert.equal((await req('/api/admin/goals/reset','POST',{storeId:store,departmentId:'tech',jobId:'goals-blocked-0001',confirmation:'SUPPRIMER'})).status,409);
+  assert.equal((await req('/api/admin/sellers/delete','POST',{storeId:store,sellerId:1,jobId:'seller-blocked-0001',confirmation:'SUPPRIMER'})).status,409);
+  const notification=makeMessage({saleId:pushSale,storeId:store,tokenId});await worker.queue({messages:[notification]},env);assert(notification.acked);assert.deepEqual(sent,[]);
+  // Le même job confirmé est repris, jamais relancé comme une nouvelle action.
+  assert.equal((await req('/api/admin/services/delete','POST',body)).body.jobId,body.jobId);
+  const original=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path===`pulseGoals/${a}`&&w.data?.goals&&!Object.hasOwn(w.data.goals,'s1'))) {
+      raced=true;const old=(await db.get(`pulseGoals/${a}`)).data;old.goals.s2=goal(14,'concurrent-goal');old.workdays=[2,4,6];
+      await original([db.write(`pulseGoals/${a}`,old)]);
+    }
+    return original(writes);
+  };
+  let steps=0,retries=0;
+  while(queue.length){const item=queue.shift();if(item.kind!=='service-delete')continue;const msg=makeMessage(item);await worker.queue({messages:[msg]},env);if(msg.retried){retries++;queue.push(item);}else assert(msg.acked);if(++steps>100)throw Error('Job non terminé');}
+  assert(raced);assert(retries>=1);
+  const finished=(await req(`/api/admin/services/delete?storeId=${store}`)).body;
+  assert.equal(finished.status,'done');assert.equal(finished.deletedSales,27);assert.equal(finished.deletedGoals,3);assert.equal(finished.skippedGoals,0);
+  assert.equal((await db.get(`pulseGoals/${a}`)).data.goals.s1,undefined);assert.equal((await db.get(`pulseGoals/${a}`)).data.goals.s2.month,14);
+  assert.deepEqual((await db.get(`pulseGoals/${a}`)).data.workdays,[2,4,6]);assert.equal((await db.get(`pulseGoals/${archived}`)).data.goals.s1,undefined);
+  assert.equal((await db.get(`pulseGoals/${orphan}`)).data.goals.s1,undefined);assert.equal((await db.get(`pulseGoals/${orphan}`)).data.goals.s2.month,5);
+  assert.equal((await db.get(`pulseGoals/${b}`)).data.goals.s1.month,99);
+  assert.equal(await db.get(`pulseStores/${store}/sales/${pushSale}`),null);assert(await db.get(`pulseStores/${store}/sales/other-service-0001`));
+  assert(await db.get(`pulseStores/${other}/sales/${shared}`));assert.equal((await db.get(`pulseOutbox/${shared}`)).data.storeId,other);
+  assert.deepEqual((await db.get(`pulseOutbox/${pushSale}`)).data,{status:'reset'});assert((await db.get(`pulseStatus/${a}`)).data.goalsRevision!=='old-a');
+  assert((await db.get(`pulseAccess/${a}`)).data.active);assert((await db.get(`pulseAccess/${b}`)).data.active);
+  assert.equal((await req('/api/admin/services/restore','POST',{storeId:store,serviceId:1,expectedName:serviceName,expectedStoreName:storeName})).status,200);
+  assert((await req(`/api/bootstrap?storeId=${store}`)).body.services.some(s=>s.id===1));
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:pushSale},'a')).status,409); // ancien identifiant neutralisé
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'after-restoration-sale'},'a')).status,200);
+  assert.equal((await req('/api/admin/services/delete','POST',body)).body.status,'done');
+  assert(await db.get(`pulseStores/${store}/sales/after-restoration-sale`)); // le rejeu n'efface pas de nouvelles ventes
+  assert.equal((await req('/api/admin/services/delete','POST',{...body,storeId:other})).status,409);
+  await Promise.all(waits);
+});
+
+test('Suppression service cloud : verrouillage atomique avec les autres opérations destructives',async()=>{
+  const db=new MemoryDb(),queue=[],store=LEGACY_STORE_ID,worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'administrator'})});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(items){queue.push(...items.map(x=>x.body));}}},ctx={waitUntil(){}};
+  const req=async(path,method='GET',body)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{'content-type':'application/json',authorization:'Bearer admin'},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  const data=(await req('/api/bootstrap')).body,body={storeId:store,serviceId:1,jobId:'race-service-0001',expectedName:data.services[0].name,expectedStoreName:data.stores.find(s=>s.id===store).name,confirmation:'SUPPRIMER'};
+  const commit=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path===`pulseServiceDeletes/${store}`&&!w.check)) {
+      raced=true;await commit([db.write(`pulseSalesResets/${store}`,{status:'running',jobId:'other-reset-001'})]);
+    }
+    return commit(writes);
+  };
+  assert.equal((await req('/api/admin/services/delete','POST',body)).status,409);assert(raced);
+  assert.equal(await db.get(`pulseServiceDeletes/${store}`),null);
+  assert((await req(`/api/bootstrap?storeId=${store}`)).body.services.some(s=>s.id===1));
+  await commit([db.write(`pulseSalesResets/${store}`,{status:'done',jobId:'other-reset-001'})]);
+  for(const path of [`pulseGoalsResets/${store}`,`pulseSellerDeletes/${store}`]) {
+    await commit([db.write(path,{status:'running',jobId:'other-work-001'})]);
+    assert.equal((await req('/api/admin/services/delete','POST',body)).status,409);
+    await commit([db.write(path,{status:'done',jobId:'other-work-001'})]);
+  }
+  assert.equal((await req('/api/admin/services/delete','POST',body)).body.status,'running');
+});
+
+test('Suppression service cloud : anomalie de rattachement préservée, reprise par le cron et réactivation bloquée',async()=>{
+  const db=new MemoryDb(),queue=[],waits=[],store=LEGACY_STORE_ID;let unavailable=true;
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'administrator'})});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(items){if(unavailable)throw Error('queue down');queue.push(...items.map(x=>x.body));}}};
+  const ctx={waitUntil(p){waits.push(p)}};
+  const req=async(path,method='GET',body)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{'content-type':'application/json',authorization:'Bearer admin'},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  const base=(await req('/api/bootstrap')).body,other=base.stores.find(s=>s.name==='Fnac Bordeaux').id,uid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;
+  const inconsistent={storeId:other,sellerId:1,goals:{s1:{month:42}},workdays:[0]};await db.commit([db.write(`pulseGoals/${uid}`,inconsistent)]);
+  const body={storeId:store,serviceId:1,jobId:'recovery-service-0001',expectedName:base.services[0].name,expectedStoreName:base.stores.find(s=>s.id===store).name,confirmation:'SUPPRIMER'};
+  const warnings=[],warn=console.warn;console.warn=(...args)=>warnings.push(args);
+  try {assert.equal((await req('/api/admin/services/delete','POST',body)).body.status,'running');} finally {console.warn=warn;}
+  assert.equal(queue.length,0);assert(warnings.some(args=>String(args[0]).includes('QUEUE')));
+  unavailable=false;await worker.scheduled({cron:'*/2 * * * *'},env,ctx);await Promise.all(waits.splice(0));assert(queue.some(x=>x.kind==='service-delete'));
+  let steps=0;while(queue.length){const job=queue.shift(),msg=makeMessage(job);await worker.queue({messages:[msg]},env);assert(msg.acked);if(++steps>50)throw Error('Job non terminé');}
+  const state=(await req(`/api/admin/services/delete?storeId=${store}`)).body;assert.equal(state.status,'needs-review');assert(state.skippedGoals>=1);
+  assert.deepEqual((await db.get(`pulseGoals/${uid}`)).data,inconsistent); // autre rattachement jamais écrasé
+  assert.equal((await req('/api/admin/services/restore','POST',{storeId:store,serviceId:1,expectedName:body.expectedName,expectedStoreName:body.expectedStoreName})).status,409);
+  assert.equal((await req('/api/admin/services/delete','POST',{...body,jobId:'another-service-0001',serviceId:2,expectedName:base.services[1].name})).status,503);
+});
+
+test('Suppression service cloud : une vente rejouée pendant son retrait ne reçoit pas de fausse confirmation',async()=>{
+  const db=new MemoryDb(),queue=[],store=LEGACY_STORE_ID,requestId='sale-replayed-during-service-removal';
+  let uid;const worker=createWorker({createDb:()=>db,verifyIdToken:async(_e,t)=>t==='seller'?{sub:uid,role:'seller',storeId:store,sellerId:1,accessVersion:'v1'}:{sub:t}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(items){queue.push(...items.map(x=>x.body))}}},ctx={waitUntil(){}};
+  const req=async(path,method='GET',body,token='administrator')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{'content-type':'application/json',authorization:`Bearer ${token}`},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  const base=(await req('/api/bootstrap')).body;uid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;await db.commit([db.write(`pulseAccess/${uid}`,{active:true,version:'v1',storeId:store,sellerId:1})]);
+  const sale={storeId:store,sellerId:1,serviceId:1,requestId};assert.equal((await req('/api/sales','POST',sale,'seller')).status,200);
+  const remove={storeId:store,serviceId:1,jobId:'service-replay-test-0001',expectedName:base.services[0].name,expectedStoreName:base.stores.find(s=>s.id===store).name,confirmation:'SUPPRIMER'};
+  const commit=db.commit.bind(db);let started=false;db.commit=async writes=>{if(!started&&writes.some(w=>w.path===`pulseStores/${store}/sales/${requestId}`)){started=true;assert.equal((await req('/api/admin/services/delete','POST',remove)).body.status,'running');}return commit(writes);};
+  const replay=await req('/api/sales','POST',sale,'seller');assert.equal(started,true);assert.equal(replay.status,409);
+});

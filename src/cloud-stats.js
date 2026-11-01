@@ -1,4 +1,4 @@
-import { comparePeople, priorityServiceId, sellerStoreId } from './catalog.js';
+import { comparePeople, priorityServiceId, sellerStoreId, serviceRemovedForStore } from './catalog.js';
 import { departmentsForStore, sellerDepartmentId, saleDepartmentId } from './departments.js';
 
 export function parisToday(now=new Date()) {
@@ -18,7 +18,9 @@ export function summarize(catalog,sales,sellerId,date=parisToday(),explicitStore
   // Les ventes d'un profil en cours de suppression disparaissent aussitôt
   // des bilans, sans attendre que tous les lots historiques soient effacés.
   const deleting=new Set(catalog.sellers.filter(s=>s.deletingJob).map(s=>Number(s.id)));
-  const live=sales.filter(s=>!s.deletedAt&&s.businessDate<=date&&!deleting.has(Number(s.sellerId)));
+  // Un retrait de service masque immédiatement ses anciennes ventes dans le
+  // seul magasin ciblé, pendant que le traitement durable les efface par lots.
+  const live=sales.filter(s=>!s.deletedAt&&s.businessDate<=date&&!deleting.has(Number(s.sellerId))&&!serviceRemovedForStore(catalog,storeId,s.serviceId));
   const team=person?live.filter(s=>saleDepartmentId(s)===departmentId):live;
   function period(start,scope) {
     const data=scope.filter(s=>s.businessDate>=start),serviceCounts=new Map(),sellerCounts=new Map(),mineServiceCounts=new Map();
@@ -36,7 +38,7 @@ export function summarize(catalog,sales,sellerId,date=parisToday(),explicitStore
     for(const s of live)if(s.businessDate>=start&&Number(sellerId)>0&&Number(s.sellerId)===Number(sellerId)) {
       const id=Number(s.serviceId);mineServiceCounts.set(id,(mineServiceCounts.get(id)||0)+1);
     }
-    const services=catalog.services.filter(s=>s.active||serviceCounts.has(Number(s.id))).map(s=>({id:s.id,name:s.name,icon:s.icon,count:serviceCounts.get(Number(s.id))||0}));
+    const services=catalog.services.filter(s=>!serviceRemovedForStore(catalog,storeId,s.id)&&(s.active||serviceCounts.has(Number(s.id)))).map(s=>({id:s.id,name:s.name,icon:s.icon,count:serviceCounts.get(Number(s.id))||0}));
     const sellers=[...sellerCounts].map(([id,counts])=>({id,name:bySeller.get(id)?.name||'Vendeur',...counts}))
       .sort((a,b)=>b.count-a.count||b.dmax-a.dmax||b.fvd-a.fvd||comparePeople(a,b));
     const mineByService=[...mineServiceCounts].map(([serviceId,count])=>({serviceId,count}));

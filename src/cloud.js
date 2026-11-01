@@ -5,7 +5,7 @@ import { getMessaging, getToken, deleteToken, isSupported } from 'firebase/messa
 import { firebaseConfig } from './firebase-config';
 import { createPinSalt, pinProof } from './pin';
 import { earliestDate, parisToday, summarize } from './cloud-stats';
-import { comparePeople, orderServices, sellerStoreId } from './catalog';
+import { comparePeople, orderServices, sellerStoreId, serviceRemovedForStore, servicesForStore } from './catalog';
 import { createSaleAnnouncer, createSaleSnapshotFilter, isFreshSale, isOtherSellerSale } from './live-sales';
 import { rememberPushOrigin, clearPushOrigin } from './push-origin.js';
 import { sellerDepartmentId, saleDepartmentId } from './departments';
@@ -102,7 +102,7 @@ function presentation(catalog,storeId) {
     stores:catalog.stores.filter(x=>x.active&&x.directoryStatus!=='region').map(({active,...x})=>x),
     sellers:catalog.sellers.filter(x=>x.active).sort(comparePeople).map(x=>({id:x.id,name:x.name,storeId:sellerStoreId(x),departmentId:sellerDepartmentId(x)})),
     departmentsByStore:catalog.departmentsByStore||{}, directoryRegions:catalog.directoryRegions||[],
-    services:orderServices(catalog.services.filter(x=>x.active),catalog.serviceOrders,storeId).map(({id,name,icon})=>({id,name,icon})),
+    services:servicesForStore(catalog,storeId).map(({id,name,icon})=>({id,name,icon})),
   };
 }
 export function listenStore(session,day,clientId,onChange,onSale,onError,onGoalsChanged=()=>{},onSummaryChanged=()=>{}) {
@@ -110,7 +110,7 @@ export function listenStore(session,day,clientId,onChange,onSale,onError,onGoals
   const freshSales=createSaleSnapshotFilter({day,clientId}),pendingFresh=new Map();
   const announcer=createSaleAnnouncer(sale=>{
     const self=catalog?.sellers.find(s=>Number(s.id)===Number(session.sellerId)&&sellerStoreId(s)===session.storeId);
-    if(self&&isOtherSellerSale(sale,session.sellerId)&&isFreshSale(sale,day,clientId)&&saleDepartmentId(sale)===sellerDepartmentId(self))onSale(sale);
+    if(self&&!serviceRemovedForStore(catalog,session.storeId,sale.serviceId)&&isOtherSellerSale(sale,session.sellerId)&&isFreshSale(sale,day,clientId)&&saleDepartmentId(sale)===sellerDepartmentId(self))onSale(sale);
   });
   const flushFresh=()=>{
     if(!resetReady)return;
@@ -120,7 +120,7 @@ export function listenStore(session,day,clientId,onChange,onSale,onError,onGoals
     }
   };
   let goalRevision=Symbol('premier chargement'),summaryRevision=Symbol('premier chargement'),catalogSignature='';
-  const emit=()=>{if(catalogReady&&salesReady&&resetReady){const scoped={...catalog,services:orderServices(catalog.services,catalog.serviceOrders,session.storeId)};const current=sales.filter(sale=>saleInGeneration(sale,generation));onChange({...presentation(scoped,session.storeId),today:day,stats:summarize(scoped,current,session.sellerId,day)},!(catalogCache||salesCache||resetCache));}};
+  const emit=()=>{if(catalogReady&&salesReady&&resetReady){const scoped={...catalog,services:orderServices(catalog.services,catalog.serviceOrders,session.storeId)};const current=sales.filter(sale=>saleInGeneration(sale,generation));onChange({...presentation(scoped,session.storeId),today:day,stats:summarize(scoped,current,session.sellerId,day,session.storeId)},!(catalogCache||salesCache||resetCache));}};
   const stopAccess=onSnapshot(doc(db,'pulseStatus',session.uid),{includeMetadataChanges:true},snap=>{
     if(snap.metadata.fromCache)return;
     const access=snap.data();
@@ -131,7 +131,7 @@ export function listenStore(session,day,clientId,onChange,onSale,onError,onGoals
   const stopCatalog=onSnapshot(doc(db,'pulse','catalog'),{includeMetadataChanges:true},snap=>{
     if(!snap.exists()){onError(new Error('Catalogue indisponible.'));return;}
     catalog=snap.data();catalogCache=snap.metadata.fromCache;catalogReady=true;
-    const signature=JSON.stringify({sellers:catalog.sellers.filter(s=>sellerStoreId(s)===session.storeId).map(s=>[s.id,s.active,sellerDepartmentId(s)]),services:catalog.services.map(s=>[s.id,s.active]),departments:catalog.departmentsByStore?.[session.storeId]||null});
+    const signature=JSON.stringify({sellers:catalog.sellers.filter(s=>sellerStoreId(s)===session.storeId).map(s=>[s.id,s.active,sellerDepartmentId(s)]),services:catalog.services.map(s=>[s.id,s.active,serviceRemovedForStore(catalog,session.storeId,s.id)]),departments:catalog.departmentsByStore?.[session.storeId]||null});
     if(!snap.metadata.fromCache&&signature!==catalogSignature){catalogSignature=signature;onSummaryChanged();}
     announcer.setCatalog(catalog);emit();
   },onError);

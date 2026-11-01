@@ -27,6 +27,20 @@ export function orderServices(services,orders,storeId) {
   }).map(x=>x.service);
 }
 
+// Un service peut être retiré d'un magasin sans changer le catalogue commun.
+// L'absence de cette propriété dans les installations historiques signifie que
+// tous les services restent disponibles : aucune migration destructive.
+export function serviceRemovedForStore(catalog,storeId,serviceId) {
+  if(!storeId||!Number.isSafeInteger(Number(serviceId)))return false;
+  const removed=catalog?.serviceRemovalsByStore?.[storeId];
+  return Array.isArray(removed)&&removed.some(id=>Number(id)===Number(serviceId));
+}
+export function servicesForStore(catalog,storeId,{activeOnly=true,includeRemoved=false}={}) {
+  return orderServices(catalog?.services,catalog?.serviceOrders,storeId).filter(service=>
+    (includeRemoved||!serviceRemovedForStore(catalog,storeId,service.id))&&
+    (!activeOnly||(service.active!==false&&service.active!==0)));
+}
+
 // Les identifiants de ces deux services sont conservés même si leur intitulé change.
 export function priorityServiceId(services,code) {
   const explicit=(services||[]).find(s=>s.priorityCode===code);

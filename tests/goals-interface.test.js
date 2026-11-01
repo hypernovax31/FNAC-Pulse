@@ -37,7 +37,7 @@ test('Objectifs du jour : cibles à 0 ou absentes cachées, cible atteinte conse
   assert.doesNotMatch(friday,/Vos ventes personnelles|Cibles du jour de 1 ou plus/);
   assert.match(html,/>Ventes</);assert.match(html,/>Cible</);assert.match(html,/Objectif atteint/);
   assert.match(html,/role="progressbar"[^>]+aria-label="DMax, Aujourd’hui"/);
-  assert.match(html,/Planning et calcul/);assert.match(html,/Ajouter/);
+  assert.doesNotMatch(html,/Planning et calcul|Planning par défaut/);assert.match(html,/Ajouter/);
   const css=readFileSync(new URL('../src/styles.css',import.meta.url),'utf8');
   assert.match(css,/\.goals-grid\s*\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 });
@@ -72,7 +72,7 @@ test('Objectifs : journée vide, aucun objectif, date invalide et lecture hors l
   assert.match(unavailable,/aria-label="Modifier les objectifs DMax"[^>]+disabled/);
   assert.match(unavailable,/aria-label="Aujourd’hui" aria-pressed="true"/);
   const defaultSchedule=render(GoalsPanel,{...props,workdaysDefault:true});
-  assert.match(defaultSchedule,/Planning par défaut · à vérifier/);
+  assert.doesNotMatch(defaultSchedule,/Planning par défaut|Planning et calcul/);
 });
 
 test('Formulaire : référence, aperçu des trois cibles, zéro et priorité mensuelle historique',()=>{
@@ -82,6 +82,9 @@ test('Formulaire : référence, aperçu des trois cibles, zéro et priorité men
   assert.match(html,/Cible du jour/);assert.match(html,/Cible semaine/);assert.match(html,/Cible mois/);
   assert.match(html,/objectifs à atteindre, pas les ventes déjà réalisées/);
   assert.match(html,/Supprimer l’objectif de ce service/);
+  assert.doesNotMatch(html,/Planning et calcul/);
+  const admin=render(GoalForm,{services:props.services,goals:props.goals,workdays:props.workdays,date:props.date,onSave:()=>{},showPlanning:true});
+  assert.match(admin,/Planning et calcul/);assert.match(admin,/Jours travaillés/);
 });
 
 
