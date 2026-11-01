@@ -26,7 +26,7 @@ p,h1,h2,h3 { margin:0; }
 /* Premier lancement autonome : un geste explicite précède tout son. */
 .startup-screen { min-height:100vh; min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:24px; padding:calc(28px + env(safe-area-inset-top)) 20px calc(28px + env(safe-area-inset-bottom)); background:var(--bg); }
 .startup-card { width:min(100%,410px); padding:36px 32px 27px; text-align:center; color:var(--ink); background:var(--panel); border:1px solid var(--border); border-radius:16px; box-shadow:0 18px 48px rgba(35,37,29,.07); }
-.startup-logo { display:block; width:76px; height:76px; object-fit:cover; border-radius:17px; margin:0 auto 24px; }
+.startup-logo { display:block; width:88px; height:88px; object-fit:cover; border-radius:19px; margin:0 auto 24px; }
 .startup-kicker { color:#9a7a0b; font-size:10px; font-weight:800; letter-spacing:1.35px; }
 .startup-card h1 { margin-top:12px; font-size:28px; line-height:1.19; letter-spacing:-.9px; }
 .startup-dot { color:#d4a400; }
@@ -127,18 +127,10 @@ p,h1,h2,h3 { margin:0; }
 .primary-button:disabled { background:#ede5c6; color:#aba693; }
 .session-submit { min-width:108px; }
 .geo-message { margin-top:8px; display:flex; align-items:center; gap:5px; color:#8f814e; font-size:10px; line-height:1.4; }
-.session-strip { min-height:67px; display:flex; align-items:center; gap:12px; background:#fffdf6; border:1px solid #f1e8c8; border-radius:9px; padding:12px 17px; }
-.strip-icon { width:37px; height:37px; border-radius:8px; display:grid; place-items:center; color:#846b0a; background:#f9e5a0; }
-.strip-copy { display:flex; flex-direction:column; gap:4px; min-width:0; }
-.strip-copy > span { color:#a69c7d; font-weight:800; font-size:9px; letter-spacing:.7px; }
-.strip-copy strong { font-size:12px; line-height:1.35; overflow-wrap:anywhere; }
-.strip-divider { width:1px; height:29px; background:#eee7d3; margin:0 7px; }
-.strip-user { display:flex; align-items:center; gap:8px; color:#939188; font-size:11px; }
-.strip-user strong { color:#5d5e56; }
 .text-button { display:flex; align-items:center; gap:5px; color:#9a7900; font-size:11px; font-weight:750; background:transparent; margin-left:auto; }
 .kicker-line { width:13px; height:3px; border-radius:3px; background:#e7b600; flex:0 0 auto; }
 /* Deux chiffres, deux périmètres clairement identifiés dans un même bloc. */
-.today-overview { margin-top:25px; padding:20px; background:#fff; border:1px solid #e9ebe6; border-radius:12px; box-shadow:0 6px 22px rgba(42,44,35,.025); }
+.today-overview { margin-top:25px; padding:20px; background:#fff; border:1px solid #e9ebe6; border-radius:12px; box-shadow:0 6px 22px rgba(42,44,35,.025); scroll-margin-top:82px; }
 .today-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:14px; margin-bottom:16px; }
 .today-heading h2 { color:#30322c; font-size:17px; font-weight:750; letter-spacing:-.45px; line-height:1.25; margin-top:7px; }
 .today-context { color:#93978c; font-size:10px; line-height:1.4; text-align:right; }
@@ -464,9 +456,6 @@ p,h1,h2,h3 { margin:0; }
   .summary-controls { align-items:stretch; flex-direction:column; }
   .period-tabs { width:max-content; max-width:100%; }
   .page-footer { font-size:9px; }
-  .strip-user { display:none; }
-  .strip-divider { display:none; }
-  .session-strip { padding:11px 13px; }
   .modal { padding:21px; }
 }
 @media (pointer: coarse) and (min-width: 481px) {
@@ -574,11 +563,9 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .icon-button:hover { background:#30342d; color:#fff; }
 [data-theme='dark'] .side-link.is-active { background:#4b3d16; }
 [data-theme='dark'] .sidebar-separator,
-[data-theme='dark'] .topbar-divider,
-[data-theme='dark'] .strip-divider { background:#3b3e36; }
+[data-theme='dark'] .topbar-divider { background:#3b3e36; }
 [data-theme='dark'] .sidebar-tip,
 [data-theme='dark'] .welcome-panel,
-[data-theme='dark'] .session-strip,
 [data-theme='dark'] .notification-card,
 [data-theme='dark'] .admin-login-illustration,
 [data-theme='dark'] .notification-modal-hero { background:#29291f; border-color:#50472c; }
@@ -603,7 +590,6 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .service-card:hover { border-color:#806d32; }
 [data-theme='dark'] .service-copy strong,
 [data-theme='dark'] .stat-value,
-[data-theme='dark'] .strip-user strong,
 [data-theme='dark'] .ranking-empty strong,
 [data-theme='dark'] .activity-row p strong,
 [data-theme='dark'] .notification-card strong,
@@ -708,11 +694,6 @@ p,h1,h2,h3 { margin:0; }
 .goal-periods { display:inline-grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:3px; padding:3px; border:1px solid #e9ebe3; border-radius:9px; background:#f5f6f2; }
 .goal-periods button { min-height:44px; padding:0 13px; border-radius:6px; background:transparent; color:#646a60; font-size:11px; font-weight:700; white-space:nowrap; }
 .goal-periods button.is-active { background:#fff; color:#564300; box-shadow:0 1px 4px rgba(37,38,30,.12); }
-.goal-period-context { margin-top:12px; padding:11px 12px; border:1px solid #f0eddf; border-radius:8px; background:#fbfaf4; }
-.goal-period-context > div { display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:4px 12px; }
-.goal-period-context strong { color:#42463b; font-size:12px; }
-.goal-period-context span { color:#777c70; font-size:11px; }
-.goal-period-context p { margin-top:5px; color:#72776c; font-size:11px; line-height:1.45; }
 .goals-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:11px; }
 .goal-card { min-width:0; padding:8px 13px 12px; border:1px solid #e9ebe5; border-radius:9px; background:#fdfdfb; }
 .goal-card.is-unconfigured { border-style:dashed; background:#fafbf8; }
@@ -811,10 +792,6 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .goal-periods { background:#252921; border-color:#41463c; }
 [data-theme='dark'] .goal-periods button { color:#bfc4b7; }
 [data-theme='dark'] .goal-periods button.is-active { background:#48412c; color:#f7e4a0; box-shadow:none; }
-[data-theme='dark'] .goal-period-context { background:#292b23; border-color:#514c37; }
-[data-theme='dark'] .goal-period-context strong { color:#eeefe7; }
-[data-theme='dark'] .goal-period-context span,
-[data-theme='dark'] .goal-period-context p { color:#bec3b6; }
 [data-theme='dark'] .goal-state.is-reached { color:#9bd3a7; }
 [data-theme='dark'] .workdays-form { background:#292b23; border-color:#514c37; }
 [data-theme='dark'] .admin-goals-services { background:#282c26; border-color:#3a3e36; }

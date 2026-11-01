@@ -30,11 +30,9 @@ test('Objectifs du jour : cibles à 0 ou absentes cachées, cible atteinte conse
   assert.equal((html.match(/<article class="goal-card/g)||[]).length,1);
   assert.match(html,/aria-label="Modifier les objectifs DMax"/);
   assert.doesNotMatch(html,/Modifier les objectifs Garantie/);assert.doesNotMatch(html,/objectif FVD/);
-  assert.match(html,/Objectifs du jour/);assert.match(html,/jeudi 29 octobre 2026/);
-  assert.doesNotMatch(html,/Vos ventes personnelles|Cibles du jour de 1 ou plus/);
+  assert.doesNotMatch(html,/goal-period-context|Objectifs du jour|jeudi 29 octobre 2026|Vos ventes personnelles|Cibles du jour de 1 ou plus/);
   const friday=render(GoalsPanel,{...props,date:'2026-10-30'});
-  assert.match(friday,/<div class="goal-period-context" aria-live="polite"><div><strong>Objectifs du jour<\/strong><span>vendredi 30 octobre 2026<\/span><\/div><\/div>/);
-  assert.doesNotMatch(friday,/Vos ventes personnelles|Cibles du jour de 1 ou plus/);
+  assert.doesNotMatch(friday,/goal-period-context|Objectifs du jour|vendredi 30 octobre 2026|Vos ventes personnelles/);
   assert.match(html,/>Ventes</);assert.match(html,/>Cible</);assert.match(html,/Objectif atteint/);
   assert.match(html,/role="progressbar"[^>]+aria-label="DMax, Aujourd’hui"/);
   assert.doesNotMatch(html,/Planning et calcul|Planning par défaut/);assert.match(html,/Ajouter/);
@@ -64,7 +62,7 @@ test('Objectifs : journée vide, aucun objectif, date invalide et lecture hors l
   const empty=render(GoalsPanel,{...props,goals:{}});
   assert.match(empty,/Définir un objectif/);assert.match(empty,/Période des objectifs/);assert.match(empty,/Aucun objectif prévu aujourd’hui/);
   const rest=render(GoalsPanel,{...props,date:'2026-11-01'});
-  assert.match(rest,/Aucun objectif prévu aujourd’hui/);assert.match(rest,/cibles à 0 et les services sans objectif sont masqués/);assert.doesNotMatch(rest,/Retrouvez tous les services/);
+  assert.match(rest,/Aucun objectif prévu aujourd’hui\./);assert.match(rest,/Les services sans objectif sont masqués\. Pensez à ajouter vos objectifs\./);assert.doesNotMatch(rest,/Retrouvez tous les services/);
   const invalid=render(GoalsPanel,{...props,date:'2026-02-30'});
   assert.match(invalid,/Les cibles du jour sont indisponibles/);assert.doesNotMatch(invalid,/Aucun objectif prévu aujourd’hui/);
   const unavailable=render(GoalsPanel,{...props,stats:null,offline:true});
@@ -99,8 +97,9 @@ test('Mes objectifs : basculer jour, semaine et mois, puis gérer les objectifs 
     const cards=()=>tree.root.findAllByType('article').map(nodeText).join(' | ');
     assert.match(cards(),/DMax/);assert.doesNotMatch(cards(),/Garantie|FVD|Petit objectif/);
     await clickPeriod(tree,'Cette semaine');assert.match(cards(),/DMax/);assert.doesNotMatch(cards(),/Garantie|FVD|Petit objectif/);
-    assert.match(nodeText(tree.toJSON()),/Dépassé de 4/);
+    assert.match(nodeText(tree.toJSON()),/Dépassé de 4/);assert.doesNotMatch(nodeText(tree.toJSON()),/Objectifs de la semaine|Du 26 octobre|Vos ventes personnelles/);
     await clickPeriod(tree,'Ce mois');assert.match(cards(),/DMax/);assert.match(cards(),/Petit objectif/);assert.doesNotMatch(cards(),/Garantie|FVD/);
+    assert.doesNotMatch(nodeText(tree.toJSON()),/Objectifs du mois|octobre 2026|Vos ventes personnelles/);
     assert.doesNotMatch(nodeText(tree.toJSON()),/Tous les services sont affichés/);
     const manage=tree.root.findAllByType('button').find(x=>nodeText(x).includes('Ajouter'));assert(manage);
     await act(async()=>manage.props.onClick());assert.deepEqual(edits,[3]);
@@ -111,6 +110,17 @@ test('Mes objectifs : basculer jour, semaine et mois, puis gérer les objectifs 
     await act(async()=>{tree.update(React.createElement(GoalsPanel,{...custom,date:'2026-02-30'}));});
     for(const [label,phrase] of [['Aujourd’hui','Les cibles du jour'],['Cette semaine','Les cibles de la semaine'],['Ce mois','Les cibles du mois']]) {
       await clickPeriod(tree,label);assert.match(nodeText(tree.toJSON()),new RegExp(`${phrase} sont indisponibles`));
+    }
+  } finally {if(tree)await act(async()=>tree.unmount());}
+});
+
+test('Les sélecteurs de période restent sans bandeau de titre, dates ou description',async()=>{
+  let tree;try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(GoalsPanel,{...props,date:'2026-11-02'}));});
+    for(const label of ['Aujourd’hui','Cette semaine','Ce mois']) {
+      await clickPeriod(tree,label);const content=nodeText(tree.toJSON());
+      assert.doesNotMatch(content,/Objectifs du jour|Objectifs de la semaine|Objectifs du mois|Du 2 novembre au 8 novembre 2026|Vos ventes personnelles depuis/);
+      assert(tree.root.findByProps({'aria-label':label}).props['aria-pressed']);
     }
   } finally {if(tree)await act(async()=>tree.unmount());}
 });

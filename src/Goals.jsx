@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowRight, Check, Pencil, Plus, Target, RotateCw } from 'lucide-react';
 import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, WORKDAY_NAMES, WORKDAY_ORDER, goalReference, goalTargets, hasGoal, parseGoalInputs, normalizeWorkdays, validWorkdays, workdaysLabel } from './goals.js';
-import { goalPeriodInfo, personalGoalCards, personalGoalMetric } from './goal-display.js';
+import { validGoalDate, personalGoalCards, personalGoalMetric } from './goal-display.js';
 import { parisToday } from './cloud-stats.js';
 
 const PERSONAL_PERIOD_LABELS = {day:'Aujourd’hui',week:'Semaine',month:'Mois'};
@@ -164,9 +164,8 @@ export function GoalsPanel({services,goals,workdays,stats,loading,error,offline,
   const [period,setPeriod]=useState('day');
   const configured=services.filter(service=>hasGoal(goals?.[`s${service.id}`]));
   const nextService=services.find(service=>!hasGoal(goals?.[`s${service.id}`]));
-  const info=goalPeriodInfo(period,date);
   const rows=goals?personalGoalCards(services,goals,date,workdays,period):[];
-  const invalidDate=!info.validDate&&configured.length>0;
+  const invalidDate=!validGoalDate(date)&&configured.length>0;
   const periodName={day:'du jour',week:'de la semaine',month:'du mois'}[period];
   const emptyTitle={day:'Aucun objectif prévu aujourd’hui.',week:'Aucun objectif prévu cette semaine.',month:'Aucun objectif prévu ce mois-ci.'}[period];
   return <section className="panel goals-panel" id="objectifs" aria-labelledby="personal-goals-title">
@@ -181,10 +180,9 @@ export function GoalsPanel({services,goals,workdays,stats,loading,error,offline,
       <div className="goals-toolbar">
         <div className="goal-periods" role="group" aria-label="Période des objectifs">{GOAL_PERIODS.map(value=><button type="button" key={value} aria-label={GOAL_LABELS[value]} aria-pressed={period===value} className={period===value?'is-active':''} onClick={()=>setPeriod(value)}>{PERSONAL_PERIOD_LABELS[value]}</button>)}</div>
       </div>
-      <div className="goal-period-context" aria-live="polite"><div><strong>{info.title}</strong><span>{info.range}</span></div>{info.hint&&<p>{info.hint}</p>}</div>
       {invalidDate?<div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>Les cibles {periodName} sont indisponibles.</strong><p>Impossible de calculer les objectifs sans une date valide. Actualisez votre espace.</p>{!offline&&<button type="button" onClick={onRetry}>Réessayer</button>}</div></div>
       :rows.length?<GoalCards rows={rows} period={period} stats={stats} offline={offline} onEdit={onEdit}/>
-      :<div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>{services.length?emptyTitle:'Aucun service disponible.'}</strong><p>{services.length?'Les cibles à 0 et les services sans objectif sont masqués, sans modifier vos données.':'Les services actifs apparaîtront ici lorsqu’ils seront disponibles.'}</p>{configured.length===0&&services.length>0&&<button type="button" onClick={()=>onEdit(nextService?.id||null)} disabled={offline}>Définir un objectif <ArrowRight size={13}/></button>}</div></div>}
+      :<div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>{services.length?emptyTitle:'Aucun service disponible.'}</strong><p>{services.length?'Les services sans objectif sont masqués. Pensez à ajouter vos objectifs.':'Les services actifs apparaîtront ici lorsqu’ils seront disponibles.'}</p>{configured.length===0&&services.length>0&&<button type="button" onClick={()=>onEdit(nextService?.id||null)} disabled={offline}>Définir un objectif <ArrowRight size={13}/></button>}</div></div>}
     </>}
     {error&&goals&&!offline&&<p className="goal-sync-warning">Dernières valeurs affichées · {error} <button type="button" onClick={onRetry}>Réessayer</button></p>}
   </section>;

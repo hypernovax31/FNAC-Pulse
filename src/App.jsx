@@ -3,7 +3,7 @@ import {
   Target, Zap, Trophy, ChartNoAxesCombined, Settings2, MapPin, ChevronDown, ChevronRight, ArrowRight,
   Activity, Bell, BellOff, Plus, Minus, UserRound, UsersRound, Sparkles, Crosshair, CalendarDays,
   Check, MoreHorizontal, Play, Smartphone, MonitorSmartphone, Shield, ShieldCheck, HardHat, IdCard, DollarSign, PackageCheck, BadgePlus,
-  Repeat2, RefreshCw, Tv, Wifi, Clock3, X, Download, Store, WifiOff, Info, CircleCheck, ArrowUpRight, SunMoon, Sun, Moon, Monitor, Volume2, VolumeX
+  Repeat2, RefreshCw, Tv, Wifi, Clock3, X, Download, WifiOff, Info, CircleCheck, ArrowUpRight, SunMoon, Sun, Moon, Monitor, Volume2, VolumeX
 } from 'lucide-react';
 import Admin, { Modal } from './Admin';
 import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
@@ -195,12 +195,12 @@ export function SessionForm({data,initialSession,initialProfile,onSubmit,onForge
 }
 function WelcomePanel({data,onSubmit,deviceProfile,onForgetProfile,onRefreshProfile}) {
   return <section className="welcome-panel" id="selection">
-    <div className="welcome-copy"><div className="welcome-icon"><Sparkles size={20}/></div><div><div className="micro-label">VOTRE ESPACE DE VENTE</div><h2>On se lance ?</h2><p>{deviceProfile?'Retrouvez votre profil sur cet appareil.':'Choisissez votre magasin, votre département et saisissez votre prénom.'}</p></div></div>
+    <div className="welcome-copy"><div className="welcome-icon"><Sparkles size={20}/></div><div><div className="micro-label">VOTRE PROFIL</div><h2>On se lance ?</h2><p>{deviceProfile?'Retrouvez votre profil sur cet appareil.':'Choisissez votre magasin, votre département et saisissez votre prénom.'}</p></div></div>
     <SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'nouvel-appareil'} data={data} initialProfile={deviceProfile} onSubmit={onSubmit} onForgetProfile={onForgetProfile} onRefreshProfile={onRefreshProfile}/>
   </section>;
 }
 function Sidebar({onNavigate,onAdmin,onSession,onInstall,showInstall,activeNav}) {
-  const items=[['objectifs',Target,'Objectifs'],['services',Zap,'Mes services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Récapitulatifs']];
+  const items=[['today',CalendarDays,'Aujourd’hui'],['objectifs',Target,'Objectifs'],['services',Zap,'Mes services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Récapitulatifs']];
   return <aside className="sidebar">
     <div className="sidebar-brand"><Brand/></div>
     <div className="sidebar-group-label">VOTRE ESPACE</div>
@@ -236,7 +236,7 @@ function StatCard({label,value,detail,Icon,tone}) {
   return <article className={`stat-card stat-card-${tone}`}><div className="stat-top"><span>{label}</span><span className={`stat-icon ${tone}`} aria-hidden="true"><Icon size={18}/></span></div><div className="stat-value">{value??'—'}<span>{value===undefined||value===null?'':value>1?'services':'service'}</span></div><p className="stat-detail">{detail}</p></article>;
 }
 function TodayOverview({stats,hasSession}) {
-  return <section className="today-overview" aria-labelledby="today-title">
+  return <section className="today-overview" id="today" aria-labelledby="today-title">
     <div className="today-heading"><div><div className="section-kicker"><span className="kicker-line"/> AUJOURD’HUI</div><h2 id="today-title">Votre journée en chiffres</h2></div><span className="today-context">{hasSession?'Votre activité et votre équipe':'Choisissez votre espace pour démarrer'}</span></div>
     <div className="stats-grid" aria-label="Chiffres clés"><StatCard label="Ma journée" value={stats?.mineTotal} detail="Mes services enregistrés" Icon={UserRound} tone="gold"/><StatCard label="Ventes de l’équipe" value={stats?.day.total} detail="Dans votre département" Icon={UsersRound} tone="soft-blue"/></div>
   </section>;
@@ -289,8 +289,9 @@ function Summary({stats,hasSession,storeId,departments,goals,goalsLoading,goalsE
     {hasSession&&<div className="summary-caption"><span>{!goals?(goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles.'):'Ventes / objectif · Les objectifs mensuels sont répartis selon les jours travaillés ; les jours fériés sont inclus. Les objectifs non renseignés ne sont pas inclus.'}</span>{goalsError&&<span className="summary-warning">{goals?'Dernières cibles disponibles · ':''}{goalsError} <button type="button" onClick={onRetry}>Réessayer</button></span>}</div>}
   </section>;
 }
-function MobileNav({onNavigate,onSession,active}) {
-  return <nav className="mobile-nav" aria-label="Navigation mobile">{[['objectifs',Target,'Objectifs'],['services',Zap,'Services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Bilan']].map(([id,Icon,name])=><button key={id} onClick={()=>onNavigate(id)} className={active===id?'active':''}><Icon size={19}/><span>{name}</span></button>)}<button onClick={onSession}><UserRound size={19}/><span>Profil</span></button></nav>;
+function MobileNav({onNavigate,active}) {
+  const items=[['today',CalendarDays,'Aujourd’hui'],['objectifs',Target,'Objectifs'],['services',Zap,'Services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Bilan']];
+  return <nav className="mobile-nav" aria-label="Navigation mobile">{items.map(([id,Icon,name])=><button type="button" key={id} onClick={()=>onNavigate(id)} className={active===id?'active':''} aria-current={active===id?'location':undefined}><Icon size={19} aria-hidden="true"/><span>{name}</span></button>)}</nav>;
 }
 function urlBase64ToUint8Array(base64) {const padding='='.repeat((4-base64.length%4)%4);const raw=atob((base64+padding).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
 function readNotificationPermission() {return typeof Notification==='undefined'?'unsupported':Notification.permission;}
@@ -305,7 +306,7 @@ export default function App() {
   const [loadFailed,setLoadFailed]=useState(false);
   const [loadMessage,setLoadMessage]=useState('');
   const [connection,setConnection]=useState('waiting');
-  const [activeNav,setActiveNav]=useState('objectifs');
+  const [activeNav,setActiveNav]=useState('today');
   const [sessionModal,setSessionModal]=useState(false);
   const [adminModal,setAdminModal]=useState(false);
   const [notificationsModal,setNotificationsModal]=useState(false);
@@ -361,7 +362,13 @@ export default function App() {
     // Aucun son automatique : seul le bouton de bienvenue appelle play().
     const sync=e=>{
       if(e.key===SOUND_KEY){const enabled=readSoundEnabled();setSoundEnabled(enabled);player.setEnabled(enabled);}
-      if(e.key===STARTUP_SOUND_KEY&&e.newValue==='done'){startupAttempt.current++;startupInFlight.current=false;clearTimeout(startupTimer.current);player.stop();setStartupGate(false);}
+      if(e.key===STARTUP_SOUND_KEY&&e.newValue==='done') {
+        // Une autre fenêtre peut terminer le premier lancement, mais celle-ci
+        // doit quand même attendre son propre appui avant d'afficher la page.
+        const pressedHere=startupInFlight.current;
+        startupAttempt.current++;startupInFlight.current=false;clearTimeout(startupTimer.current);player.stop();
+        if(pressedHere)setStartupGate(false);else setStartupStatus('ready');
+      }
     };
     const displayChanged=()=>{if(needsStartupTouch({standalone:isStandalone()}))setStartupGate(true);};
     const media=window.matchMedia?.('(display-mode: standalone)');
@@ -562,7 +569,7 @@ export default function App() {
       authenticated={...next,sellerId:result.sellerId};
     } else authenticated=next;
     localStorage.setItem(SESSION_KEY,JSON.stringify(authenticated));
-    setData(d=>d?{...d,stats:null}:d);setSession(authenticated);setSessionModal(false);setActiveNav('objectifs');
+    setData(d=>d?{...d,stats:null}:d);setSession(authenticated);setSessionModal(false);setActiveNav('today');
     window.scrollTo({top:0,behavior:'smooth'});
     const person=data?.sellers.find(s=>s.id===authenticated.sellerId),name=person?.name||setup?.name;
     flash(`Bienvenue${name?`, ${name}`:''} ! Votre espace est prêt.`);
@@ -688,7 +695,7 @@ export default function App() {
         {connection==='offline'&&session&&<div className="offline-banner"><WifiOff size={16}/><div><strong>Connexion interrompue.</strong> Les dernières données restent visibles, mais la saisie est suspendue jusqu’au retour de la connexion.</div><button onClick={refresh}>Réessayer</button></div>}
         {notificationNotice&&<section className="notification-card notification-prompt" aria-label="Activation des notifications"><span className="notification-icon"><BellOff size={18}/></span><div><strong>Restez informés</strong><p>{notificationNotice.message}</p></div><button onClick={notificationNotice.action==='install'?openInstall:notificationNotice.action==='retry'?retryNotifications:openNotifications}>{notificationNotice.label} <ArrowRight size={13}/></button></section>}
         <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><DateChip today={cloudDay}/></div>
-        {!session?<WelcomePanel data={data} onSubmit={selectSession} deviceProfile={deviceProfile} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>:<div className="session-strip"><div className="strip-icon"><Store size={18}/></div><div className="strip-copy"><span>VOTRE ESPACE DE VENTE</span><strong>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</strong></div><div className="strip-divider"/><div className="strip-user"><Avatar name={seller?.name} id={seller?.id} size="small"/><span>Connecté en tant que <strong>{seller?.name}</strong></span></div><button className="text-button" onClick={()=>setSessionModal(true)}>{CLOUD?'Mon profil':'Changer'} <ArrowRight size={14}/></button></div>}
+        {!session&&<WelcomePanel data={data} onSubmit={selectSession} deviceProfile={deviceProfile} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>}
         <TodayOverview stats={stats} hasSession={!!session}/>
         {session&&<GoalsPanel services={data.services} goals={currentGoals} workdays={goalState.workdays} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
         <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> VENTE QUOTIDIENNE</div><h2>Ajouter un service</h2><p>Une vente de services ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
@@ -697,7 +704,7 @@ export default function App() {
         <footer className="page-footer">La vente, c’est notre rayon. Les services aussi. 😉</footer>
       </main>
     </div>
-    <MobileNav onNavigate={navigate} onSession={changeSession} active={activeNav}/>
+    <MobileNav onNavigate={navigate} active={activeNav}/>
     {sessionModal&&<Modal title={CLOUD?'Mon profil':'Changer d’espace'} subtitle={CLOUD?'Votre espace sur cet appareil.':'Sélectionnez votre magasin, votre département et votre profil vendeur.'} onClose={()=>setSessionModal(false)}>
       {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button></>:<><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/><p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></>}
     </Modal>}

@@ -14,7 +14,7 @@ test('Accueil tactile : un vrai bouton obligatoire, icône d’origine et accès
   const html=render({enabled:true,status:'ready'});
   assert.match(html,/<main[^>]*aria-labelledby="startup-title"/);
   assert.match(html,/FNAC-Pulse\/icons\/icon-192-v3\.png/);
-  assert.match(html,/<button type="button" class="startup-start"[^>]*>Toucher pour commencer/);
+  assert.match(html,/<button type="button" class="startup-start"[^>]*>Accéder aux services/);
   assert.match(html,/Couper la signature au lancement/);
   assert.doesNotMatch(html,/Continuer sans son/);assert.doesNotMatch(html,/Fermer/);
 });

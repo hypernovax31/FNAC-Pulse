@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import React from 'react';
+import TestRenderer from 'react-test-renderer';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {build} from 'esbuild';
 
@@ -26,7 +27,7 @@ test('Premier lancement PWA : l’accueil tactile masque le tableau de bord avan
   globalThis.localStorage={getItem(){return null;},setItem(){},removeItem(){}};
   try {
     const html=render(App);
-    assert.match(html,/Touchez pour ouvrir votre espace/);assert.match(html,/Bienvenue sur/);
+    assert.match(html,/Touchez le bouton pour accéder aux services/);assert.match(html,/Bienvenue sur/);
     assert.match(html,/class="startup-start" disabled=""/);
     assert.doesNotMatch(html,/class="app-shell"/);assert.doesNotMatch(html,/Continuer sans son/);
   } finally {
@@ -35,9 +36,12 @@ test('Premier lancement PWA : l’accueil tactile masque le tableau de bord avan
   }
 });
 
-test('Navigation et date : Objectifs et semaine ISO visibles',()=>{
-  const nav=render(MobileNav,{active:'objectifs',onNavigate:()=>{},onSession:()=>{}});
-  assert.match(nav,/>Objectifs</);assert.doesNotMatch(nav,/>Accueil</);
+test('Navigation mobile : Aujourd’hui, Objectifs, Services, Classement et Bilan, sans Profil',()=>{
+  const nav=render(MobileNav,{active:'today',onNavigate:()=>{}});
+  const labels=['Aujourd’hui','Objectifs','Services','Classement','Bilan'];
+  assert.deepEqual([...nav.matchAll(/<span>([^<]+)<\/span>/g)].map(match=>match[1]),labels);
+  assert.match(nav,/aria-current="location"/);assert.doesNotMatch(nav,/>Profil<|>Accueil</);
+  assert.equal((nav.match(/<button /g)||[]).length,5);
   const date=render(DateChip,{today:'2026-10-29'});
   assert.match(date,/>S44</);assert.match(date,/>Jeu</);assert.match(date,/>29 Oct</);assert.match(date,/aria-label="jeudi 29 octobre, semaine 44"/);
 });
@@ -67,6 +71,7 @@ test('Tableau de bord : invitation en haut si notifications non accordées et te
     const html=render(App);
     assert(html.indexOf('Restez informés')<html.indexOf('VOTRE TABLEAU DE BORD'));
     assert.match(html,/VENTE QUOTIDIENNE/);assert.match(html,/Une vente de services \? Un clic et c’est enregistré\./);
+    assert.doesNotMatch(html,/session-strip|VOTRE ESPACE DE VENTE/);assert.match(html,/aria-label="Mon profil, Morgan"/);
     assert.match(html,/La vente, c’est notre rayon\. Les services aussi\. 😉/);
     globalThis.Notification={permission:'granted'};
     assert.doesNotMatch(render(App),/Restez informés/); // autorisation en cours de vérification
@@ -84,9 +89,20 @@ test('Aujourd’hui : total personnel en premier, ventes de l’équipe en secon
   globalThis.localStorage={getItem:key=>values[key]??null,setItem(){},removeItem(){}};
   try {
     const html=render(App),match=html.match(/<section class="today-overview"[^>]*>(.*?)<\/section>/);
-    assert(match);assert.match(html,/kicker-line[^>]*><\/span> AUJOURD’HUI/);assert.match(html,/Votre journée en chiffres/);assert.doesNotMatch(html,/EN UN COUP D’ŒIL/);
+    assert(match);assert.match(html,/<section class="today-overview" id="today"/);assert.match(html,/kicker-line[^>]*><\/span> AUJOURD’HUI/);assert.match(html,/Votre journée en chiffres/);assert.doesNotMatch(html,/EN UN COUP D’ŒIL/);
     const cards=match[1].split(/class="stat-card stat-card-[^"]+"/).slice(1);assert.equal(cards.length,2);
     assert.match(cards[0],/Ma journée/);assert.match(cards[0],/stat-value">3/);
     assert.match(cards[1],/Ventes de l’équipe/);assert.match(cards[1],/stat-value">7/);assert.match(cards[1],/Dans votre département/);
   } finally {if(prior===undefined)delete globalThis.localStorage;else globalThis.localStorage=prior;}
+});
+
+test('Navigation mobile : les cinq boutons pointent vers leurs sections',async()=>{
+  const selected=[],{act}=TestRenderer;let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(MobileNav,{active:'today',onNavigate:id=>selected.push(id)}));});
+    const buttons=tree.root.findAllByType('button');assert.equal(buttons.length,5);
+    for(const button of buttons)await act(async()=>button.props.onClick());
+    assert.deepEqual(selected,['today','objectifs','services','ranking','summary']);
+    assert.equal(buttons[0].props['aria-current'],'location');
+  } finally {if(tree)await act(async()=>tree.unmount());}
 });

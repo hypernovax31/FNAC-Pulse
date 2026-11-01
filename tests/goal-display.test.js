@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { goalPeriodInfo, personalGoalCards, personalGoalMetric } from '../src/goal-display.js';
+import { validGoalDate, personalGoalCards, personalGoalMetric } from '../src/goal-display.js';
 
 test('Vue des objectifs : une période et uniquement les ventes personnelles du service',()=>{
   const stats={day:{mineByService:[{serviceId:1,count:2},{serviceId:2,count:8}]},week:{mineByService:[{serviceId:1,count:5}]},month:{mineByService:[]}};
@@ -45,15 +45,7 @@ test('Cartes : cible calculée d’au moins 1 dans chaque période, même attein
   assert.equal(JSON.stringify({services,goals}),snapshot); // filtrer n'efface jamais les données
 });
 
-test('Périodes : dates françaises, semaine à cheval sur deux années et date invalide',()=>{
-  assert.equal(goalPeriodInfo('day','2026-10-30').range,'vendredi 30 octobre 2026');
-  assert.equal(goalPeriodInfo('day','2026-10-30').hint,null);
-  assert.match(goalPeriodInfo('week','2026-10-30').hint,/Vos ventes personnelles depuis lundi/);
-  assert.match(goalPeriodInfo('month','2026-10-30').hint,/Vos ventes personnelles depuis le 1er du mois/);
-  assert.equal(goalPeriodInfo('week','2026-10-30').range,'Du 26 octobre au 1er novembre 2026');
-  assert.equal(goalPeriodInfo('week','2026-12-31').range,'Du 28 décembre 2026 au 3 janvier 2027');
-  assert.equal(goalPeriodInfo('month','2026-10-30').range,'octobre 2026');
-  assert.match(goalPeriodInfo('day','2026-11-01').range,/1er novembre/);
-  assert.equal(goalPeriodInfo('day','2026-02-30').validDate,false);
-  assert.equal(goalPeriodInfo('week',null).range,'Date indisponible');
+test('Vue des objectifs : la date utilisée pour calculer les cibles est valide',()=>{
+  for(const date of ['2026-10-30','2026-12-31','2024-02-29'])assert.equal(validGoalDate(date),true);
+  for(const date of ['2026-02-30','2026-13-01','2026-1-01',null,undefined])assert.equal(validGoalDate(date),false);
 });

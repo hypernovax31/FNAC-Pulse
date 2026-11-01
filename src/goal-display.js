@@ -22,32 +22,8 @@ export function personalGoalCards(services,goals,date,workdays,period) {
   }).filter(row=>row.targets?.[period]>=1);
 }
 
-const periodCopy={
-  day:{title:'Objectifs du jour',hint:null},
-  week:{title:'Objectifs de la semaine',hint:'Vos ventes personnelles depuis lundi jusqu’à aujourd’hui.'},
-  month:{title:'Objectifs du mois',hint:'Vos ventes personnelles depuis le 1er du mois jusqu’à aujourd’hui.'},
-};
-function dateFromIso(iso) {
-  if(typeof iso!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(iso))return null;
+export function validGoalDate(iso) {
+  if(typeof iso!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(iso))return false;
   const result=new Date(`${iso}T12:00:00Z`);
-  return Number.isFinite(result.getTime())&&result.toISOString().slice(0,10)===iso?result:null;
-}
-const longDate=new Intl.DateTimeFormat('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric',timeZone:'UTC'});
-const shortDate=new Intl.DateTimeFormat('fr-FR',{day:'numeric',month:'long',timeZone:'UTC'});
-const dateWithYear=new Intl.DateTimeFormat('fr-FR',{day:'numeric',month:'long',year:'numeric',timeZone:'UTC'});
-const monthYear=new Intl.DateTimeFormat('fr-FR',{month:'long',year:'numeric',timeZone:'UTC'});
-const firstDay=value=>value.replace(/(^|\s)1(?=\s)/,(_,space)=>`${space}1er`);
-
-export function goalPeriodInfo(period,iso) {
-  const copy=periodCopy[period]||periodCopy.day,date=dateFromIso(iso);
-  if(!date)return {...copy,range:'Date indisponible',validDate:false};
-  let range;
-  if(period==='week') {
-    const start=new Date(date);start.setUTCDate(start.getUTCDate()-((start.getUTCDay()+6)%7));
-    const end=new Date(start);end.setUTCDate(end.getUTCDate()+6);
-    range=start.getUTCFullYear()===end.getUTCFullYear()
-      ?`Du ${firstDay(shortDate.format(start))} au ${firstDay(dateWithYear.format(end))}`
-      :`Du ${firstDay(dateWithYear.format(start))} au ${firstDay(dateWithYear.format(end))}`;
-  } else range=period==='month'?monthYear.format(date):firstDay(longDate.format(date));
-  return {...copy,range,validDate:true};
+  return Number.isFinite(result.getTime())&&result.toISOString().slice(0,10)===iso;
 }
