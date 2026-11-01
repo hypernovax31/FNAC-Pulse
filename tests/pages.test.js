@@ -79,6 +79,6 @@ test('PWA : icônes versionnées, tailles, masque et compatibilité des ancienne
   assert.match(html,/rel="icon"[^>]+icon-192-v3\.png/);
   assert.match(html,/rel="apple-touch-icon"[^>]+apple-touch-icon-v3\.png/);
   const cloudWorker=fs.readFileSync(new URL('../src/sw-cloud.js',import.meta.url),'utf8');
-  assert.match(cloudWorker,/fnac-pulse-shell-v27/);
+  assert.match(cloudWorker,/fnac-pulse-shell-v28/);
   for(const icon of manifest.icons)assert.ok(cloudWorker.includes(icon.src));
 });

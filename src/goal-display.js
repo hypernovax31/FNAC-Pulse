@@ -12,20 +12,20 @@ export function personalGoalMetric(serviceId,period,target,stats) {
   return {count,target:validTarget,progress,state,remaining:state==='pending'?validTarget-count:null};
 }
 
-// Le filtre du jour porte sur la cible calculée, et non sur le reste à faire :
-// un objectif atteint reste visible. Les semaines et les mois gardent tous les
-// services actifs, même sans cible enregistrée ou avec une cible à zéro.
+// Dans chaque période, le filtre porte sur la cible calculée et non sur le
+// reste à faire : une cible de 1 ou plus reste visible même une fois atteinte.
+// Une cible nulle ou absente est seulement masquée, jamais effacée.
 export function personalGoalCards(services,goals,date,workdays,period) {
   return services.map(service=>{
     const entry=goals?.[`s${service.id}`],configured=hasGoal(entry);
     return {service,configured,targets:configured?goalTargets(entry,date,workdays):null};
-  }).filter(row=>period!=='day'||row.targets?.day>=1);
+  }).filter(row=>row.targets?.[period]>=1);
 }
 
 const periodCopy={
   day:{title:'Objectifs du jour',hint:null},
-  week:{title:'Objectifs de la semaine',hint:'Vos ventes personnelles depuis lundi jusqu’à aujourd’hui. Tous les services sont affichés.'},
-  month:{title:'Objectifs du mois',hint:'Vos ventes personnelles depuis le 1er du mois jusqu’à aujourd’hui. Tous les services sont affichés.'},
+  week:{title:'Objectifs de la semaine',hint:'Vos ventes personnelles depuis lundi jusqu’à aujourd’hui.'},
+  month:{title:'Objectifs du mois',hint:'Vos ventes personnelles depuis le 1er du mois jusqu’à aujourd’hui.'},
 };
 function dateFromIso(iso) {
   if(typeof iso!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(iso))return null;

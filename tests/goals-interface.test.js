@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import React from 'react';
+import TestRenderer from 'react-test-renderer';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { build } from 'esbuild';
 import { personalGoalCards } from '../src/goal-display.js';
@@ -41,19 +42,19 @@ test('Objectifs du jour : cibles à 0 ou absentes cachées, cible atteinte conse
   assert.match(css,/\.goals-grid\s*\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 });
 
-test('Objectifs de la semaine et du mois : tous les services, zéro distinct de non défini',()=>{
+test('Objectifs de la semaine et du mois : seules les cibles positives, même atteintes',()=>{
   for(const period of ['week','month']) {
     const rows=personalGoalCards(props.services,props.goals,props.date,props.workdays,period);
     const html=render(GoalCards,{rows,period,stats:props.stats,onEdit:props.onEdit});
-    assert.equal((html.match(/<article class="goal-card/g)||[]).length,3);
-    assert.match(html,/Modifier les objectifs DMax/);assert.match(html,/Modifier les objectifs Garantie/);
-    assert.match(html,/Définir un objectif FVD/);assert.match(html,/Cible à 0/);assert.match(html,/Cible à définir/);
-    assert.equal((html.match(/>Ventes<\/span>/g)||[]).length,3);assert.equal((html.match(/>Cible<\/span>/g)||[]).length,3);
+    assert.equal((html.match(/<article class="goal-card/g)||[]).length,1);
+    assert.match(html,/Modifier les objectifs DMax/);
+    assert.doesNotMatch(html,/Modifier les objectifs Garantie|Définir un objectif FVD|Cible à 0|Cible à définir/);
+    assert.equal((html.match(/>Ventes<\/span>/g)||[]).length,1);assert.equal((html.match(/>Cible<\/span>/g)||[]).length,1);
     assert.equal((html.match(/role="progressbar"/g)||[]).length,1);
     if(period==='week')assert.match(html,/Dépassé de 4/);
   }
-  const missing=render(GoalCards,{rows:personalGoalCards(props.services,{s1:{month:3}},'2026-02-30',props.workdays,'week'),period:'week',stats:props.stats,onEdit:props.onEdit});
-  assert.match(missing,/Cible indisponible/);assert.match(missing,/Cible à définir/);
+  const missing=personalGoalCards(props.services,{s1:{month:3}},'2026-02-30',props.workdays,'week');
+  assert.deepEqual(missing,[]);
   const large=render(GoalCards,{rows:personalGoalCards(props.services,{s1:{day:9999}},props.date,props.workdays,'month'),period:'month',stats:props.stats,onEdit:props.onEdit});
   assert.match(large,/goal-figures has-long-values/); // les grands nombres restent lisibles sur mobile
   assert.match(large,/219 978/);
@@ -63,7 +64,7 @@ test('Objectifs : journée vide, aucun objectif, date invalide et lecture hors l
   const empty=render(GoalsPanel,{...props,goals:{}});
   assert.match(empty,/Définir un objectif/);assert.match(empty,/Période des objectifs/);assert.match(empty,/Aucun objectif prévu aujourd’hui/);
   const rest=render(GoalsPanel,{...props,date:'2026-11-01'});
-  assert.match(rest,/Aucun objectif prévu aujourd’hui/);assert.match(rest,/Semaine ou Mois/);
+  assert.match(rest,/Aucun objectif prévu aujourd’hui/);assert.match(rest,/cibles à 0 et les services sans objectif sont masqués/);assert.doesNotMatch(rest,/Retrouvez tous les services/);
   const invalid=render(GoalsPanel,{...props,date:'2026-02-30'});
   assert.match(invalid,/Les cibles du jour sont indisponibles/);assert.doesNotMatch(invalid,/Aucun objectif prévu aujourd’hui/);
   const unavailable=render(GoalsPanel,{...props,stats:null,offline:true});
@@ -81,4 +82,32 @@ test('Formulaire : référence, aperçu des trois cibles, zéro et priorité men
   assert.match(html,/Cible du jour/);assert.match(html,/Cible semaine/);assert.match(html,/Cible mois/);
   assert.match(html,/objectifs à atteindre, pas les ventes déjà réalisées/);
   assert.match(html,/Supprimer l’objectif de ce service/);
+});
+
+
+const nodeText=node=>typeof node==='string'?node:!node?'':Array.isArray(node)?node.map(nodeText).join(''):nodeText(node.children);
+const {act}=TestRenderer;
+const clickPeriod=async(tree,label)=>act(async()=>tree.root.findByProps({'aria-label':label}).props.onClick());
+
+test('Mes objectifs : basculer jour, semaine et mois, puis gérer les objectifs masqués',async()=>{
+  const edits=[],custom={...props,services:[...props.services,{id:4,name:'Petit objectif'}],goals:{...props.goals,s4:{month:2}},onEdit:id=>edits.push(id)};let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(GoalsPanel,custom));});
+    const cards=()=>tree.root.findAllByType('article').map(nodeText).join(' | ');
+    assert.match(cards(),/DMax/);assert.doesNotMatch(cards(),/Garantie|FVD|Petit objectif/);
+    await clickPeriod(tree,'Cette semaine');assert.match(cards(),/DMax/);assert.doesNotMatch(cards(),/Garantie|FVD|Petit objectif/);
+    assert.match(nodeText(tree.toJSON()),/Dépassé de 4/);
+    await clickPeriod(tree,'Ce mois');assert.match(cards(),/DMax/);assert.match(cards(),/Petit objectif/);assert.doesNotMatch(cards(),/Garantie|FVD/);
+    assert.doesNotMatch(nodeText(tree.toJSON()),/Tous les services sont affichés/);
+    const manage=tree.root.findAllByType('button').find(x=>nodeText(x).includes('Ajouter'));assert(manage);
+    await act(async()=>manage.props.onClick());assert.deepEqual(edits,[3]);
+    await act(async()=>{tree.update(React.createElement(GoalsPanel,{...custom,goals:{s2:{month:0}}}));});
+    assert.equal(tree.root.findAllByType('article').length,0);assert.match(nodeText(tree.toJSON()),/Aucun objectif prévu ce mois-ci/);
+    await clickPeriod(tree,'Cette semaine');assert.match(nodeText(tree.toJSON()),/Aucun objectif prévu cette semaine/);
+    await clickPeriod(tree,'Aujourd’hui');assert.match(nodeText(tree.toJSON()),/Aucun objectif prévu aujourd’hui/);
+    await act(async()=>{tree.update(React.createElement(GoalsPanel,{...custom,date:'2026-02-30'}));});
+    for(const [label,phrase] of [['Aujourd’hui','Les cibles du jour'],['Cette semaine','Les cibles de la semaine'],['Ce mois','Les cibles du mois']]) {
+      await clickPeriod(tree,label);assert.match(nodeText(tree.toJSON()),new RegExp(`${phrase} sont indisponibles`));
+    }
+  } finally {if(tree)await act(async()=>tree.unmount());}
 });

@@ -24,23 +24,25 @@ test('Vue des objectifs : zéro, ventes indisponibles, cible indisponible et dé
   assert.equal(beyond.count,7);assert.equal(beyond.state,'reached');assert.equal(beyond.progress.percent,100);
 });
 
-test('Cartes : cible du jour au moins 1, y compris une cible déjà atteinte ; toutes les cartes aux autres périodes',()=>{
+test('Cartes : cible calculée d’au moins 1 dans chaque période, même atteinte',()=>{
   const services=[{id:1,name:'DMax'},{id:2,name:'Garantie'},{id:3,name:'FVD'},{id:4,name:'Service 4'},{id:5,name:'Service 5'}];
   const goals={s1:{day:2},s2:{month:0},s4:{month:2},s5:{month:50}};
-  const day=personalGoalCards(services,goals,'2026-10-29',[1,2,3,4,5],'day');
-  assert.deepEqual(day.map(row=>row.service.id),[1,5]);
-  assert(day.every(row=>row.targets.day>=1));
-  // Atteindre ou dépasser la cible ne modifie pas la liste.
-  const reached=personalGoalMetric(1,'day',day[0].targets.day,{day:{mineByService:[{serviceId:1,count:8}]}});
-  assert.equal(reached.state,'reached');assert.equal(day[0].service.id,1);
-  for(const period of ['week','month']) {
+  const snapshot=JSON.stringify({services,goals});
+  for(const [period,ids] of [['day',[1,5]],['week',[1,5]],['month',[1,4,5]]]) {
     const rows=personalGoalCards(services,goals,'2026-10-29',[1,2,3,4,5],period);
-    assert.deepEqual(rows.map(row=>row.service.id),[1,2,3,4,5]);
-    assert.equal(rows[1].targets[period],0);assert.equal(rows[2].configured,false);assert.equal(rows[2].targets,null);
+    assert.deepEqual(rows.map(row=>row.service.id),ids);
+    assert(rows.every(row=>row.configured&&row.targets[period]>=1));
+    // Atteindre ou dépasser la cible ne modifie pas la liste.
+    const target=rows[0].targets[period];
+    const reached=personalGoalMetric(1,period,target,{[period]:{mineByService:[{serviceId:1,count:target+2}]}});
+    assert.equal(reached.state,'reached');assert.equal(rows[0].service.id,1);
+    assert.deepEqual(personalGoalCards(services,{},'2026-10-29',[1,2,3,4,5],period),[]);
+    assert.deepEqual(personalGoalCards(services,goals,'2026-02-30',[1,2,3,4,5],period),[]);
   }
+  // Une cible mensuelle positive peut être répartie à 0 pour le jour ou la semaine.
+  assert.equal(personalGoalCards(services,goals,'2026-10-29',[1,2,3,4,5],'month').find(row=>row.service.id===4).targets.week,0);
   assert.deepEqual(personalGoalCards(services,goals,'2026-11-01',[1,2,3,4,5],'day'),[]); // dimanche non travaillé
-  assert.equal(personalGoalCards(services,{},'2026-10-29',[1,2,3,4,5],'week').length,services.length);
-  assert.equal(personalGoalCards(services,{},'2026-10-29',[1,2,3,4,5],'day').length,0);
+  assert.equal(JSON.stringify({services,goals}),snapshot); // filtrer n'efface jamais les données
 });
 
 test('Périodes : dates françaises, semaine à cheval sur deux années et date invalide',()=>{
