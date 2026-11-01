@@ -7,6 +7,7 @@ import { departmentsForStore, sellerDepartmentId } from './departments';
 import { GoalForm, WorkdaysForm } from './Goals';
 import { SalesResetPanel } from './SalesReset';
 import { GoalsResetPanel } from './GoalsReset';
+import { SellerDeletePanel } from './SellerDelete';
 import { normalizeWorkdays } from './goals.js';
 
 function directoryDate(value) {
@@ -171,7 +172,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   const orderedServices=orderServices(all.services,all.serviceOrders,adminStore);
   const activeServices=orderedServices.filter(s=>s.active);
   const adminStoreName=data.stores.find(s=>s.id===adminStore)?.name||'';
-  const needsStore=['sales','goals','departments','sellers','services','pins'].includes(tab);
+  const needsStore=['sales','goals','departments','sellers','services'].includes(tab);
   function moveService(index,offset) {
     const ids=orderedServices.map(s=>s.id),target=index+offset;
     if(target<0||target>=ids.length)return;
@@ -193,7 +194,7 @@ export default function Admin({onClose,data,session,onChanged}) {
 
   return <Modal title="Administration" subtitle={adminStoreName?`Magasin sélectionné : ${adminStoreName}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={onClose} wide>
     <div className="admin-tabs" role="tablist" aria-label="Rubriques administration">
-      {[['sales','Ventes'],['goals','Objectifs'],['departments','Départements'],['sellers','Vendeurs'],['services','Services'],['stores','Magasins'],...(CLOUD?[['pins','Codes PIN']]:[]),['security','Sécurité']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} disabled={busy} onClick={()=>switchTab(key)} className={tab===key?'active':''}>{label}</button>)}
+      {[['sales','Ventes'],['goals','Objectifs'],['departments','Départements'],['sellers','Vendeurs'],['services','Services'],['stores','Magasins'],['security','Sécurité']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} disabled={busy} onClick={()=>switchTab(key)} className={tab===key?'active':''}>{label}</button>)}
     </div>
     {error&&<div className="admin-alert error" role="alert">{error}</div>}
     {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
@@ -233,7 +234,7 @@ export default function Admin({onClose,data,session,onChanged}) {
         <div className="admin-note"><Info size={15}/> Les ventes déjà enregistrées restent attachées à leur département d’origine.</div>
       </>}
       {(tab==='sellers'||tab==='services')&&adminStore&&<>
-        <div className="admin-section-heading"><div><h3>{tab==='sellers'?'Votre équipe':'Vos services'}</h3><p>{tab==='sellers'?'Les vendeurs sont propres à ce magasin et affichés par ordre alphabétique.':'Utilisez les flèches pour choisir l’ordre de ce magasin. Les noms et l’activation des services sont communs à tous les magasins.'} L’historique est conservé.</p></div></div>
+        <div className="admin-section-heading"><div><h3>{tab==='sellers'?'Vendeurs et accès':'Vos services'}</h3><p>{tab==='sellers'?'Ajoutez et gérez les vendeurs de ce magasin. L’archivage conserve leur historique.':'Utilisez les flèches pour choisir l’ordre de ce magasin. Les noms et l’activation des services sont communs à tous les magasins. L’historique est conservé.'}</p></div></div>
         {!adminStore?<div className="empty-admin">Choisissez d’abord le magasin à gérer.</div>:<>
           <form className={`add-entity ${tab==='sellers'?'add-seller':''}`} onSubmit={e=>{e.preventDefault();if(!name.trim())return;run(async()=>{await api(`/api/admin/entities/${tab}`,{method:'POST',token,body:{name,...(tab==='sellers'?{storeId:adminStore,departmentId:departmentForNewSeller}:{})}});setName('');},tab==='sellers'?'Vendeur ajouté dans ce magasin.':'Service ajouté dans tous les magasins.');}}>
             <input className="text-input" aria-label={tab==='sellers'?'Nom du vendeur':'Nom du service'} placeholder={tab==='sellers'?'Prénom du vendeur':'Intitulé du service'} value={name} onChange={e=>setName(e.target.value)} required maxLength={60}/>
@@ -241,9 +242,9 @@ export default function Admin({onClose,data,session,onChanged}) {
             <button className="primary-button" disabled={busy||(tab==='sellers'&&!departmentForNewSeller)}><Plus size={16}/> Ajouter</button>
           </form>
           {(tab==='sellers'?storeSellers:orderedServices).length===0?<div className="empty-admin">{tab==='sellers'?'Aucun vendeur dans ce magasin. Ajoutez le premier prénom ci-dessus.':'Aucun service pour le moment.'}</div>:<div className="entity-list">{(tab==='sellers'?storeSellers:orderedServices).map((item,index)=><div className={`entity-row ${tab==='sellers'?'seller-entity-row':''} ${!item.active?'is-archived':''}`} key={item.id}>
-            {editing===item.id ? <form className="edit-entity" onSubmit={e=>{e.preventDefault();run(async()=>{await api(`/api/admin/entities/${tab}/${item.id}`,{method:'PATCH',token,body:{name:editName,...(tab==='sellers'?{storeId:adminStore}:{})}});setEditing(null);},'Nom modifié.')}}><input className="text-input" aria-label={`Nouveau nom de ${item.name}`} value={editName} onChange={e=>setEditName(e.target.value)} autoFocus maxLength={60} required/><button className="icon-button" aria-label="Enregistrer le nom" title="Enregistrer" disabled={busy}><Check size={17}/></button><button className="icon-button" type="button" aria-label="Annuler la modification" title="Annuler" onClick={()=>setEditing(null)}><X size={17}/></button></form> : <><div className="entity-name"><strong>{item.name}</strong>{!item.active&&<span className="archived-label">Archivé</span>}</div>{tab==='sellers'&&<label className="entity-department"><span className="sr-only">Département de {item.name}</span><select className="text-input" aria-label={`Département de ${item.name}`} value={sellerDepartmentId(item)} disabled={busy} onChange={e=>{const departmentId=e.target.value;run(()=>api(`/api/admin/entities/sellers/${item.id}`,{method:'PATCH',token,body:{storeId:adminStore,departmentId}}),'Vendeur réaffecté. Les ventes passées restent dans leur département d’origine.');}}>{storeDepartments.filter(d=>d.active||d.id===sellerDepartmentId(item)).map(d=><option value={d.id} key={d.id}>{d.name}{d.active?'':' · archivé'}</option>)}</select></label>}<div className="entity-actions">
+            {editing===item.id ? <form className="edit-entity" onSubmit={e=>{e.preventDefault();run(async()=>{await api(`/api/admin/entities/${tab}/${item.id}`,{method:'PATCH',token,body:{name:editName,...(tab==='sellers'?{storeId:adminStore}:{})}});setEditing(null);},'Nom modifié.')}}><input className="text-input" aria-label={`Nouveau nom de ${item.name}`} value={editName} onChange={e=>setEditName(e.target.value)} autoFocus maxLength={60} required/><button className="icon-button" aria-label="Enregistrer le nom" title="Enregistrer" disabled={busy}><Check size={17}/></button><button className="icon-button" type="button" aria-label="Annuler la modification" title="Annuler" onClick={()=>setEditing(null)}><X size={17}/></button></form> : <><div className="entity-name"><strong>{item.name}</strong>{!item.active&&<span className="archived-label">{item.deletingJob?'Suppression en cours':'Archivé'}</span>}</div>{tab==='sellers'&&<label className="entity-department"><span className="sr-only">Département de {item.name}</span><select className="text-input" aria-label={`Département de ${item.name}`} value={sellerDepartmentId(item)} disabled={busy||!!item.deletingJob} onChange={e=>{const departmentId=e.target.value;run(()=>api(`/api/admin/entities/sellers/${item.id}`,{method:'PATCH',token,body:{storeId:adminStore,departmentId}}),'Vendeur réaffecté. Les ventes passées restent dans leur département d’origine.');}}>{storeDepartments.filter(d=>d.active||d.id===sellerDepartmentId(item)).map(d=><option value={d.id} key={d.id}>{d.name}{d.active?'':' · archivé'}</option>)}</select></label>}<div className="entity-actions">
               {tab==='services'&&<><button className="icon-button order-button" aria-label={`Monter ${item.name}`} title="Monter" disabled={busy||index===0} onClick={()=>moveService(index,-1)}><ArrowUp size={16}/></button><button className="icon-button order-button" aria-label={`Descendre ${item.name}`} title="Descendre" disabled={busy||index===orderedServices.length-1} onClick={()=>moveService(index,1)}><ArrowDown size={16}/></button></>}
-              <button className="icon-button" aria-label={`Modifier ${item.name}`} title="Modifier" disabled={busy} onClick={()=>{setEditing(item.id);setEditName(item.name)}}><Pencil size={15}/></button><button className="icon-button" aria-label={`${item.active?'Archiver':'Restaurer'} ${item.name}`} title={item.active?'Archiver':'Restaurer'} disabled={busy} onClick={()=>{if(item.active&&!window.confirm(`Archiver « ${item.name} » ? Son historique sera conservé.`))return;run(()=>api(`/api/admin/entities/${tab}/${item.id}`,{method:'PATCH',token,body:{active:!item.active,...(tab==='sellers'?{storeId:adminStore}:{})}}),item.active?'Élément archivé.':'Élément restauré.')}}>{item.active?<Archive size={15}/>:<RotateCcw size={15}/>}</button></div></>}
+              <button className="icon-button" aria-label={`Modifier ${item.name}`} title="Modifier" disabled={busy||!!item.deletingJob} onClick={()=>{setEditing(item.id);setEditName(item.name)}}><Pencil size={15}/></button><button className="icon-button" aria-label={`${item.active?'Archiver':'Restaurer'} ${item.name}`} title={item.active?'Archiver':'Restaurer'} disabled={busy||!!item.deletingJob} onClick={()=>{if(item.active&&!window.confirm(`Archiver « ${item.name} » ? Son historique sera conservé.`))return;run(()=>api(`/api/admin/entities/${tab}/${item.id}`,{method:'PATCH',token,body:{active:!item.active,...(tab==='sellers'?{storeId:adminStore}:{})}}),item.active?'Élément archivé.':'Élément restauré.')}}>{item.active?<Archive size={15}/>:<RotateCcw size={15}/>}</button></div></>}
           </div>)}</div>}
         </>}
       </>}
@@ -264,7 +265,7 @@ export default function Admin({onClose,data,session,onChanged}) {
           if(!result.ok){await loadAll();throw Error(result.result==='blocked'?'Fnac refuse actuellement l’accès automatique. La liste précédente est conservée.':'La vérification n’a pas abouti. La liste précédente est conservée.');}
         },'Annuaire vérifié et actualisé.')}>Vérifier maintenant</button></div>}
       </>}
-      {CLOUD&&tab==='pins'&&adminStore&&<>
+      {CLOUD&&tab==='sellers'&&adminStore&&<div className="seller-access">
         <div className="admin-section-heading"><div><h3>Accès et codes PIN</h3><p>Chaque vendeur choisit son propre PIN lors de sa première connexion. Aucun code préalable n’est nécessaire.</p></div></div>
         <div className="admin-selects admin-selects-single">
           <label><span className="form-label">Vendeur</span><select aria-label="Vendeur à réinitialiser" className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>{setAdminSeller(e.target.value);setNotice('');}}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
@@ -277,7 +278,8 @@ export default function Admin({onClose,data,session,onChanged}) {
           }}>Réinitialiser l’accès <ArrowRight size={15}/></button>
         </div>
         <div className="admin-note"><ShieldCheck size={15}/> Tant qu’aucun PIN n’a été créé après une réinitialisation, la première personne à sélectionner ce profil peut le définir. L’administrateur ne voit pas le PIN.</div>
-      </>}
+      </div>}
+      {tab==='sellers'&&adminStore&&<SellerDeletePanel key={adminStore} storeId={adminStore} storeName={adminStoreName} sellers={storeSellers} departments={storeDepartments} token={token} disabled={busy||!allLoaded} onUpdate={()=>{loadAll();onChanged();}}/>}
       {tab==='security'&&<>
         <div className="admin-section-heading"><div><h3>Mot de passe administrateur</h3><p>Choisissez un mot de passe unique d’au moins 12 caractères.</p></div></div>
         <form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{if(CLOUD)await changeAdminPassword(oldPass,newPass);else await api('/api/admin/password',{method:'POST',token,body:{currentPassword:oldPass,newPassword:newPass}});setOldPass('');setNewPass('');},'Mot de passe mis à jour.')}}>

@@ -15,7 +15,10 @@ export function summarize(catalog,sales,sellerId,date=parisToday(),explicitStore
   const bySeller=new Map(catalog.sellers.map(x=>[Number(x.id),x])),person=bySeller.get(Number(sellerId));
   const storeId=explicitStoreId||(person?sellerStoreId(person):''),departmentId=sellerDepartmentId(person);
   const dmaxId=priorityServiceId(catalog.services,'dmax'),fvdId=priorityServiceId(catalog.services,'fvd');
-  const live=sales.filter(s=>!s.deletedAt&&s.businessDate<=date);
+  // Les ventes d'un profil en cours de suppression disparaissent aussitôt
+  // des bilans, sans attendre que tous les lots historiques soient effacés.
+  const deleting=new Set(catalog.sellers.filter(s=>s.deletingJob).map(s=>Number(s.id)));
+  const live=sales.filter(s=>!s.deletedAt&&s.businessDate<=date&&!deleting.has(Number(s.sellerId)));
   const team=person?live.filter(s=>saleDepartmentId(s)===departmentId):live;
   function period(start,scope) {
     const data=scope.filter(s=>s.businessDate>=start),serviceCounts=new Map(),sellerCounts=new Map(),mineServiceCounts=new Map();
@@ -45,7 +48,10 @@ export function summarize(catalog,sales,sellerId,date=parisToday(),explicitStore
   const mineMap=new Map();
   for(const s of team)if(s.businessDate===date&&Number(s.sellerId)===Number(sellerId))mineMap.set(Number(s.serviceId),(mineMap.get(Number(s.serviceId))||0)+1);
   const mine=[...mineMap].map(([serviceId,count])=>({serviceId,count}));
+  // Le total personnel suit le vendeur même après un changement de département ;
+  // les boutons de correction restent limités à son département courant.
+  const mineTotal=live.filter(s=>s.businessDate===date&&Number(s.sellerId)===Number(sellerId)).length;
   const activity=team.filter(s=>s.businessDate===date&&s.source==='sale').sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||String(b.id).localeCompare(String(a.id)))
     .map(s=>({id:s.id,sellerId:s.sellerId,sellerName:bySeller.get(Number(s.sellerId))?.name||'Vendeur',serviceName:byService.get(Number(s.serviceId))?.name||'Service',createdAt:s.createdAt}));
-  return {...current,mine,mineTotal:mine.reduce((n,x)=>n+x.count,0),leaderboard:current.day.bySeller.slice(0,3),activity,summary:{store,departments:groups}};
+  return {...current,mine,mineTotal,leaderboard:current.day.bySeller.slice(0,3),activity,summary:{store,departments:groups}};
 }

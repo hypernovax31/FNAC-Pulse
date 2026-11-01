@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import locations from '../server/locations.json' with {type:'json'};
 import snapshot from '../server/fnac-directory.json' with {type:'json'};
-import {mergeStoreDirectory,storeSelectionGroups} from '../src/store-directory.js';
+import {mergeStoreDirectory,storeSelectionGroups,searchStores} from '../src/store-directory.js';
 import {parseFnacDirectory,fetchFnacDirectory,assertDirectoryCoverage} from '../worker/fnac-source.js';
 
 const options={legacyIds:locations.map(s=>s.id)};
@@ -102,4 +102,15 @@ test('Accès à la source : refus HTTP et panne réseau signalés, jamais interp
   await assert.rejects(()=>fetchFnacDirectory(async()=>{throw Error('network')}),e=>e.code==='unavailable');
   const parsed=await fetchFnacDirectory(async()=>new Response(page(),{status:200,headers:{'content-type':'text/html'}}));
   assert.equal(parsed.entries.length,189);
+});
+
+
+test('Recherche magasin : accents, ordre des mots, ville et identifiants distincts',()=>{
+  const rows=[{id:'a',name:'Fnac Labège',city:'Labège'},{id:'b',name:'Fnac Toulouse - Jeanne-d’Arc',city:'Toulouse'},{id:'c',name:'Fnac Labège',city:'autre'}];
+  assert.deepEqual(searchStores(rows,'LABEGE').map(x=>x.id),['a','c']);
+  assert.deepEqual(searchStores(rows,'jeanne fnac').map(x=>x.id),['b']);
+  assert.deepEqual(searchStores(rows,'touLouse').map(x=>x.id),['b']);
+  assert.deepEqual(searchStores(rows,'introuvable'),[]);
+  assert.equal(searchStores([{id:'z',name:'Fnac 東京'}],'東京')[0].id,'z');
+  assert.equal(searchStores(rows,'').length,3);
 });

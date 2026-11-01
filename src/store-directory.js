@@ -6,6 +6,17 @@ function normalizedName(value) {
   return String(value||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
     .toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ');
 }
+// Recherche tolérante aux accents, à la casse et aux espaces : les identifiants
+// internes restent inchangés, y compris pour deux magasins de même nom.
+export function searchStores(stores,query) {
+  const fold=value=>String(value||'').normalize('NFKD').replace(/\p{M}/gu,'').toLocaleLowerCase('fr')
+    .replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+  const terms=fold(query).split(/\s+/).filter(Boolean);
+  return (stores||[]).filter(store=>{
+    const haystack=fold([store.name,store.city,store.address].filter(Boolean).join(' '));
+    return terms.every(term=>haystack.includes(term));
+  });
+}
 function newStore(id,name,fnacId,status) {
   return {id,name,city:'',address:'',lat:null,lon:null,active:true,...(fnacId?{fnacId}:{}),directoryStatus:status};
 }

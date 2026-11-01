@@ -165,7 +165,7 @@ test('SQLite départements : isolation, objectifs agrégés, transfert et persis
     assert.equal((await request('/api/sales/remove','POST',{storeId:store,sellerId:one,serviceId:service})).status,409);
     assert.equal((await request('/api/sales','POST',{storeId:store,sellerId:one,serviceId:service,requestId:'local-moved-sale-001'})).status,201);
     editorial=(await request(`/api/bootstrap?storeId=${store}&sellerId=${one}`)).body.stats;
-    assert.equal(editorial.day.total,2);assert.equal(editorial.mineTotal,1);assert.equal(editorial.day.mineByService.find(x=>x.serviceId===service).count,2);
+    assert.equal(editorial.day.total,2);assert.equal(editorial.mineTotal,2);assert.equal(editorial.day.mineByService.find(x=>x.serviceId===service).count,2);
     assert.equal(editorial.summary.store.day.total,3);assert.equal(editorial.summary.departments.tech.day.total,1);assert.equal(editorial.summary.departments.editorial.day.total,2);
     goals=(await request(`/api/summary-goals?storeId=${store}`)).body;
     assert.equal(goals.departments.editorial.byService[`s${service}`].month,36);assert.equal(goals.departments.tech.byService[`s${service}`].month,null);
@@ -323,5 +323,57 @@ test('SQLite local : création autonome du profil, prénom existant et persistan
     assert.equal(person.name,'Ariane Test');assert.equal(person.departmentId,'editorial');assert.equal(person.storeId,store);
     await stop(server);server=await start(port,folder);
     assert.equal((await request('/api/bootstrap')).value.sellers.find(x=>x.id===person.id).name,'Ariane Test');
+  } finally {await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
+});
+
+test('SQLite : suppression définitive ciblée, toutes dates, vendeur archivé et rejeu sûr',async()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'fnac-pulse-seller-delete-')),port=await freePort(),url=`http://127.0.0.1:${port}`;let server=await start(port,folder);
+  async function request(route,method='GET',body,token){const r=await fetch(url+route,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,body:await r.json()};}
+  try {
+    const base=(await request('/api/bootstrap')).body,store=LEGACY_STORE_ID,otherStore=base.stores.find(s=>s.name==='Fnac Bordeaux').id;
+    const target=base.sellers[0],neighbor=base.sellers[1],service=base.services[0].id;
+    let token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
+    const otherId=(await request('/api/admin/entities/sellers','POST',{name:'Autre magasin',storeId:otherStore},token)).body.id;
+    const targetSale={storeId:store,sellerId:target.id,serviceId:service,requestId:'local-delete-target-001'};
+    assert.equal((await request('/api/sales','POST',targetSale)).status,201);
+    assert.equal((await request('/api/sales','POST',{...targetSale,requestId:'local-delete-target-002'})).status,201);
+    assert.equal((await request('/api/sales','POST',{...targetSale,sellerId:neighbor.id,requestId:'local-delete-neighbor-001'})).status,201);
+    assert.equal((await request('/api/sales','POST',{...targetSale,storeId:otherStore,sellerId:otherId,requestId:'local-delete-other-store-001'})).status,201);
+    for(const [id,st] of [[target.id,store],[neighbor.id,store],[otherId,otherStore]]) {
+      assert.equal((await request('/api/admin/goals','POST',{storeId:st,sellerId:id,serviceId:service,values:{day:null,week:null,month:15},revision:null},token)).status,200);
+      assert.equal((await request('/api/admin/workdays','POST',{storeId:st,sellerId:id,workdays:[1,3,6],revision:null},token)).status,200);
+    }
+    let raw=new Database(path.join(folder,'pulse.sqlite'));
+    raw.prepare("UPDATE sales SET business_date='2020-01-01',deleted_at='2020-01-02' WHERE request_id='local-delete-target-001'").run();
+    raw.prepare('INSERT INTO subscriptions(endpoint,store_id,seller_id,subscription_json,updated_at) VALUES (?,?,?,?,?)').run('https://push.test/a',store,target.id,'{}','2026-01-01');
+    raw.prepare('INSERT INTO subscriptions(endpoint,store_id,seller_id,subscription_json,updated_at) VALUES (?,?,?,?,?)').run('https://push.test/b',store,neighbor.id,'{}','2026-01-01');
+    raw.close();
+    assert.equal((await request(`/api/admin/entities/sellers/${target.id}`,'PATCH',{storeId:store,active:false},token)).status,200);
+    const job={storeId:store,sellerId:target.id,jobId:'sqlite-seller-delete-001',expectedName:target.name,expectedDepartmentId:target.departmentId,expectedStoreName:base.stores.find(s=>s.id===store).name,confirmation:'SUPPRIMER'};
+    assert.equal((await request('/api/admin/sellers/delete','POST',job)).status,401);
+    assert.equal((await request('/api/admin/sellers/delete','POST',{...job,confirmation:'OUI'},token)).status,400);
+    assert.equal((await request('/api/admin/sellers/delete','POST',{...job,storeId:otherStore},token)).status,400);
+    assert.equal((await request('/api/admin/sellers/delete','POST',{...job,expectedName:'Nom périmé'},token)).status,409);
+    assert.equal((await request('/api/admin/sellers/delete','POST',{...job,expectedDepartmentId:'editorial'},token)).status,409);
+    assert.equal((await request('/api/admin/sellers/delete','POST',{...job,expectedStoreName:'Magasin périmé'},token)).status,409);
+    assert.equal((await request(`/api/admin/sellers/delete?storeId=${store}`,'GET',undefined,token)).body.status,'idle');
+    const deleted=await request('/api/admin/sellers/delete','POST',job,token);assert.equal(deleted.status,200);assert.equal(deleted.body.status,'done');assert.equal(deleted.body.deletedSales,2);
+    raw=new Database(path.join(folder,'pulse.sqlite'));
+    for(const table of ['sellers','sales','seller_goals','seller_workdays','subscriptions']) {
+      const col=table==='sellers'?'id':'seller_id';assert.equal(raw.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${col}=?`).get(target.id).n,0,table);
+    }
+    assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM sales WHERE seller_id=?').get(neighbor.id).n,1);
+    assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM subscriptions WHERE seller_id=?').get(neighbor.id).n,1);
+    assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM reset_sale_requests WHERE request_id=?').get(targetSale.requestId).n,1);raw.close();
+    assert.equal((await request(`/api/goals?storeId=${store}&sellerId=${neighbor.id}`)).body.goals[`s${service}`].month,15);
+    assert.equal((await request(`/api/goals?storeId=${otherStore}&sellerId=${otherId}`)).body.goals[`s${service}`].month,15);
+    assert.equal((await request('/api/admin/sellers/delete','POST',job,token)).body.status,'done');
+    assert.equal((await request('/api/admin/sellers/delete','POST',{...job,sellerId:neighbor.id},token)).status,409);
+    const created=(await request('/api/admin/entities/sellers','POST',{name:target.name,storeId:store},token)).body.id;assert.notEqual(created,target.id);
+    assert.equal((await request('/api/sales','POST',{...targetSale,sellerId:created})).status,409);
+    await stop(server);server=await start(port,folder);token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
+    assert.equal((await request('/api/admin/sellers/delete','POST',job,token)).body.status,'done');
+    assert((await request('/api/bootstrap')).body.sellers.some(s=>s.id===created));
+    assert.equal((await request(`/api/goals?storeId=${store}&sellerId=${neighbor.id}`)).body.goals[`s${service}`].month,15);
   } finally {await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
 });

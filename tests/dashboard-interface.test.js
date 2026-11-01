@@ -60,3 +60,18 @@ test('Tableau de bord : invitation en haut si notifications non accordées et te
     if(beforeNotification===undefined)delete globalThis.Notification;else globalThis.Notification=beforeNotification;
   }
 });
+
+test('Aujourd’hui : total personnel en premier, ventes de l’équipe en second',()=>{
+  const prior=globalThis.localStorage,session={storeId:'magasin',sellerId:1};
+  const period={total:7,byService:[],bySeller:[],mineByService:[],start:'2026-10-29',end:'2026-10-29'};
+  const data={stores:[{id:'magasin',name:'Fnac Test'}],sellers:[{id:1,name:'Morgan',storeId:'magasin',departmentId:'tech'}],services:[],today:'2026-10-29',stats:{day:period,week:period,month:period,mine:[],mineTotal:3,leaderboard:[],activity:[]}};
+  const values={'fnac-pulse-session-v1':JSON.stringify(session),'fnac-pulse-last-view-v1':JSON.stringify({session,data})};
+  globalThis.localStorage={getItem:key=>values[key]??null,setItem(){},removeItem(){}};
+  try {
+    const html=render(App),match=html.match(/<section class="stats-grid"[^>]*>(.*?)<\/section>/);
+    assert(match);assert.match(html,/kicker-line[^>]*><\/span> AUJOURD’HUI/);assert.doesNotMatch(html,/EN UN COUP D’ŒIL/);
+    const cards=match[1].split('class="stat-card"').slice(1);assert.equal(cards.length,2);
+    assert.match(cards[0],/Ma journée/);assert.match(cards[0],/stat-value">3/);
+    assert.match(cards[1],/Ventes de l’équipe/);assert.match(cards[1],/stat-value">7/);assert.match(cards[1],/Dans votre département/);
+  } finally {if(prior===undefined)delete globalThis.localStorage;else globalThis.localStorage=prior;}
+});

@@ -145,6 +145,7 @@ test('Cloud : reprise FCM, limitation des doublons et profil archivé',async()=>
   await db.commit([
     db.write(`pulseAccess/${uid}`,{active:true,storeId:store,sellerId:1,version:'v1'}),
     db.write(`pulseTokens/${tokenId}`,{token,uid,storeId:store,accessVersion:'v1'}),
+    db.write(`pulseStores/${store}/sales/sale-test-0001`,{id:'sale-test-0001',storeId:store,sellerId:1}),
     db.write('pulseOutbox/sale-test-0001',{saleId:'sale-test-0001',storeId:store,status:'queued',createdAt:Date.now()})
   ]);
   const first=makeMessage({saleId:'sale-test-0001',storeId:store,tokenId});
@@ -155,7 +156,7 @@ test('Cloud : reprise FCM, limitation des doublons et profil archivé',async()=>
   const second=makeMessage(first.body);await worker.queue({messages:[second]},env);assert.equal(second.acked,true);assert.equal(sent.length,1);
   const again=makeMessage(first.body);await worker.queue({messages:[again]},env);assert.equal(again.acked,true);assert.equal(sent.length,1);
   catalog.sellers.find(x=>x.id===1).active=false;catalog.sellerFlags.s1=false;
-  await db.commit([db.write('pulse/catalog',catalog),db.write('pulseOutbox/sale-test-0002',{saleId:'sale-test-0002',storeId:store,status:'queued',createdAt:Date.now()})]);
+  await db.commit([db.write('pulse/catalog',catalog),db.write(`pulseStores/${store}/sales/sale-test-0002`,{id:'sale-test-0002',storeId:store,sellerId:2}),db.write('pulseOutbox/sale-test-0002',{saleId:'sale-test-0002',storeId:store,status:'queued',createdAt:Date.now()})]);
   const archived=makeMessage({saleId:'sale-test-0002',storeId:store,tokenId});
   await worker.queue({messages:[archived]},env);assert.equal(archived.acked,true);assert.equal(sent.length,1);
 });
@@ -478,7 +479,7 @@ test('Cloud départements : affectations, agrégats privés, historique et notif
   assert.equal(await flush(),2);assert.equal(sent.length,4);
   const allSales=(await db.query(`pulseStores/${store}/sales`)).map(d=>d.data).filter(s=>s.businessDate);
   const catalog=(await db.get('pulse/catalog')).data,stats=summarize(catalog,allSales,1,parisToday(),store);
-  assert.equal(stats.day.total,2);assert.equal(stats.mineTotal,1);
+  assert.equal(stats.day.total,2);assert.equal(stats.mineTotal,3); // Total personnel, y compris l'ancien département.
   assert.equal(stats.day.mineByService.find(x=>x.serviceId===1).count,3); // Objectif personnel : les ventes des deux départements.
   assert.equal(stats.summary.store.day.total,4);assert.equal(stats.summary.departments.tech.day.total,2);assert.equal(stats.summary.departments.editorial.day.total,2);
   const after=(await req(`/api/summary-goals?storeId=${store}`,'GET',undefined,'seller-1')).body;
@@ -1081,4 +1082,211 @@ test('PIN à quatre chiffres : reset ciblé administrateur, nouvelle revendicati
   assert.deepEqual((await req('/api/auth/status','POST',{storeId:store,sellerId})).body,{needsPin:false,pinLength:4});
   assert.equal((await req('/api/goals','GET',undefined,claimed.body.customToken)).body.goals.s1.month,24);
   assert.equal((await req('/api/auth/login','POST',{storeId:store,sellerId,proof:newProof,openPinFlow:true,pinFlowVersion:2})).status,200);
+});
+
+test('Suppression vendeur cloud : ciblage, accès révoqué, lots, reprise, sauvegardes et données voisines préservées',async()=>{
+  const db=new MemoryDb(),queue=[],waits=[],sent=[];
+  const store=LEGACY_STORE_ID,uidOf=async(sid,st=store)=>`seller-${(await digestBase64(`${st}:${sid}`)).slice(0,28)}`;
+  const targetUid=await uidOf(1),otherUid=await uidOf(2);
+  const ids=new Map([['admin',{sub:'administrator'}],['target',{sub:targetUid,role:'seller',storeId:store,sellerId:1,accessVersion:'v1'}],
+    ['other',{sub:otherUid,role:'seller',storeId:store,sellerId:2,accessVersion:'v2'}]]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,token)=>{if(!ids.has(token))throw Error('auth');return ids.get(token)},sendFcm:async(...args)=>sent.push(args)});
+  let queueDown=false;
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PIN_PEPPER:Buffer.alloc(32,9).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}},
+    PULSE_QUEUE:{async sendBatch(messages){if(queueDown)throw Error('file interrompue');queue.push(...messages.map(x=>x.body));}}};
+  const ctx={waitUntil(p){waits.push(p)}};
+  async function req(path,method='GET',body,token='admin') {
+    const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:r.status,body:await r.json()};
+  }
+  const base=(await req('/api/bootstrap')).body,otherStore=base.stores.find(x=>x.name==='Fnac Bordeaux').id;
+  const catalog=(await db.get('pulse/catalog')).data,targetName=catalog.sellers.find(s=>s.id===1).name;
+  const targetAccess={active:true,storeId:store,sellerId:1,sellerKey:'s1',version:'v1',pinMac:'confidential'},otherAccess={active:true,storeId:store,sellerId:2,sellerKey:'s2',version:'v2',pinMac:'other-mac'};
+  const recipientToken='test-token-other-device-1234567890',recipientId=await digestBase64(recipientToken);
+  const writes=[db.write(`pulseAccess/${targetUid}`,targetAccess),db.write(`pulseStatus/${targetUid}`,targetAccess),
+    db.write(`pulseAccess/${otherUid}`,otherAccess),db.write(`pulseStatus/${otherUid}`,otherAccess),
+    db.write(`pulseGoals/${targetUid}`,{storeId:store,sellerId:1,goals:{s1:{month:42}},workdays:[1,3,6]}),
+    db.write(`pulseGoals/${otherUid}`,{storeId:store,sellerId:2,goals:{s1:{month:17}},workdays:[2,4]}),
+    db.write(`pulseAttempts/${targetUid}`,{failures:2,lastFailure:Date.now()}),
+    db.write(`pulseTokens/${recipientId}`,{uid:otherUid,token:recipientToken,storeId:store,accessVersion:'v2'}),
+    db.write('pulseRegistrations/other-registration',{uid:otherUid,name:'Autre',storeId:store}),
+    db.write('pulseBackups/catalog-before-store-scoping-v1',{savedAt:'avant',catalog:{...catalog,sellers:catalog.sellers.map(({storeId,...s})=>s)}}),
+    db.write('pulseBackups/catalog-monthly-test',{savedAt:'après',catalog}),
+    db.write(`pulseStores/${store}/sales/other-sale-0001`,{id:'other-sale-0001',storeId:store,sellerId:2,serviceId:1,businessDate:parisToday(),createdAt:new Date().toISOString(),departmentId:'tech',source:'sale'}),
+    db.write(`pulseStores/${otherStore}/sales/other-store-sale`,{id:'other-store-sale',storeId:otherStore,sellerId:13,serviceId:1,businessDate:'2025-01-01'}),
+  ];
+  for(let i=0;i<45;i++) {
+    const id=`target-sale-${String(i).padStart(3,'0')}`;
+    writes.push(db.write(`pulseStores/${store}/sales/${id}`,{id,storeId:store,sellerId:1,ownerUid:targetUid,serviceId:1,businessDate:i%2?'2020-01-01':parisToday(),createdAt:new Date().toISOString(),departmentId:i%3?'tech':'editorial',source:i%5?'sale':'adjustment',deletedAt:i%7?null:'2026-01-01'}));
+    if(i%5)writes.push(db.write(`pulseOutbox/${id}`,{saleId:id,storeId:store,departmentId:'tech',sellerName:targetName,serviceName:'DMax',status:'queued',createdAt:Date.now()}));
+  }
+  for(let i=0;i<23;i++)writes.push(db.write(`pulseTokens/target-token-${String(i).padStart(3,'0')}`,{uid:targetUid,storeId:store,token:`token-${i}`}));
+  for(let i=0;i<22;i++)writes.push(db.write(`pulseRegistrations/target-request-${String(i).padStart(3,'0')}`,{uid:targetUid,storeId:store,name:targetName,pinSalt:'private-salt',sellerId:1}));
+  await db.commit(writes);
+  const deletion={storeId:store,sellerId:1,jobId:'seller-delete-job-0001',expectedName:targetName,expectedDepartmentId:'tech',expectedStoreName:base.stores.find(s=>s.id===store).name,confirmation:'SUPPRIMER'};
+  assert.equal((await req('/api/admin/sellers/delete','POST',deletion,'')).status,401);
+  assert.equal((await req('/api/admin/sellers/delete','POST',{...deletion,confirmation:'OUI'})).status,400);
+  assert.equal((await req('/api/admin/sellers/delete','POST',{...deletion,storeId:otherStore})).status,400);
+  assert.equal((await req('/api/admin/sellers/delete','POST',{...deletion,expectedName:'Nom périmé'})).status,409);
+  assert.equal((await req('/api/admin/sellers/delete','POST',{...deletion,expectedDepartmentId:'editorial'})).status,409);
+  assert.equal((await req('/api/admin/sellers/delete','POST',{...deletion,expectedStoreName:'Magasin périmé'})).status,409);
+  assert.equal((await db.get(`pulseAccess/${targetUid}`)).data.active,true);
+  assert.equal((await req(`/api/admin/sellers/delete?storeId=${store}`)).body.status,'idle');
+  queueDown=true;
+  const originalWarn=console.warn;let started;
+  try {console.warn=()=>{};started=await req('/api/admin/sellers/delete','POST',deletion);}finally{console.warn=originalWarn;}
+  assert.equal(started.status,200);assert.equal(started.body.status,'running');assert.equal(started.body.sellerName,targetName);
+  assert.equal((await db.get(`pulseAccess/${targetUid}`)).data.active,false);assert.equal((await db.get(`pulseStatus/${targetUid}`)).data.active,false);
+  assert.equal(await db.get(`pulseGoals/${targetUid}`),null);assert.equal(await db.get(`pulseAttempts/${targetUid}`),null);
+  assert((await db.get('pulse/catalog')).data.sellers.find(s=>s.id===1).deletingJob);
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'target-after-delete-1'},'target')).status,403);
+  assert.equal((await req('/api/goals','GET',undefined,'target')).status,403);
+  assert.equal((await req('/api/admin/entities/sellers/1','PATCH',{storeId:store,active:true})).status,409);
+  assert.equal((await req('/api/admin/entities/sellers','POST',{name:targetName,storeId:store})).status,409);
+  assert.equal((await req('/api/admin/sales/reset','POST',{storeId:store,jobId:'sales-blocked-job-1',confirmation:'SUPPRIMER'})).status,409);
+  assert.equal((await req('/api/admin/goals/reset','POST',{storeId:store,departmentId:'tech',jobId:'goals-blocked-job-1',confirmation:'SUPPRIMER'})).status,409);
+  assert.equal((await req('/api/admin/sellers/delete','POST',{...deletion,jobId:'seller-delete-job-0002',sellerId:2})).status,409);
+  const sales=await db.query(`pulseStores/${store}/sales`);
+  const visible=summarize((await db.get('pulse/catalog')).data,sales.map(x=>x.data),2,parisToday(),store);
+  assert.equal(visible.day.total,1);assert.equal(visible.mineTotal,1);assert.equal(visible.leaderboard[0].id,2);
+  // Un message en attente de la personne supprimée n'est plus envoyé.
+  const notification=makeMessage({saleId:'target-sale-001',tokenId:recipientId,storeId:store});
+  await worker.queue({messages:[notification]},env);assert(notification.acked);assert.equal(sent.length,0);
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'other-new-sale-0001'},'other')).status,200);
+  await Promise.all(waits.splice(0));
+  assert.equal((await db.get(`pulseGoals/${otherUid}`)).data.goals.s1.month,17);
+  // Le cron reprend le travail lorsque le message initial et la réponse sont perdus.
+  queueDown=false;await worker.scheduled({cron:'*/2 * * * *'},env,ctx);await Promise.all(waits.splice(0));
+  let steps=0;
+  while(queue.some(x=>x.kind==='seller-delete')) {
+    assert(++steps<100);const index=queue.findIndex(x=>x.kind==='seller-delete'),message=makeMessage(queue.splice(index,1)[0]);
+    await worker.queue({messages:[message]},env);assert(message.acked,`lot ${steps} non acquitté`);
+  }
+  const done=(await req(`/api/admin/sellers/delete?storeId=${store}`)).body;
+  assert.equal(done.status,'done');assert.equal(done.deletedSales,45);assert.equal('sellerName' in done,false);
+  const final=(await db.get('pulse/catalog')).data;
+  assert.equal(final.sellers.some(s=>s.id===1),false);assert(final.sellers.some(s=>s.id===2));
+  for(const path of [`pulseAccess/${targetUid}`,`pulseStatus/${targetUid}`,`pulseGoals/${targetUid}`,`pulseAttempts/${targetUid}`])assert.equal(await db.get(path),null,path);
+  assert.equal((await db.query('pulseTokens','uid','EQUAL',targetUid)).length,0);
+  assert.equal((await db.query('pulseRegistrations','uid','EQUAL',targetUid)).length,0);
+  assert.deepEqual((await db.get('pulseRegistrations/target-request-000')).data,{status:'removed'});
+  assert.deepEqual((await db.get('pulseOutbox/target-sale-001')).data,{status:'reset'});
+  assert.deepEqual((await db.get('pulseOutbox/target-sale-000')).data,{status:'reset'}); // ancienne correction sans outbox
+  assert.equal((await db.query(`pulseStores/${store}/sales`,'sellerId','EQUAL',1)).length,0);
+  assert((await db.get(`pulseStores/${otherStore}/sales/other-store-sale`)));assert((await db.get(`pulseStores/${store}/sales/other-sale-0001`)));
+  assert.deepEqual((await db.get(`pulseGoals/${otherUid}`)).data.goals,{s1:{month:17}});
+  assert.deepEqual((await db.get(`pulseAccess/${otherUid}`)).data,otherAccess);
+  assert((await db.get(`pulseTokens/${recipientId}`)));assert((await db.get('pulseRegistrations/other-registration')));
+  for(const id of ['catalog-before-store-scoping-v1','catalog-monthly-test']) {
+    const saved=(await db.get(`pulseBackups/${id}`)).data.catalog;
+    assert.equal(saved.sellers.some(s=>s.id===1),false);assert(saved.sellers.some(s=>s.id===2));
+    assert.equal(saved.sellerFlags.s1,undefined);assert.equal(saved.sellerStores.s1,undefined);
+  }
+  assert.equal((await req('/api/admin/sellers/delete','POST',deletion)).body.status,'done');
+  assert.equal((await req('/api/admin/sellers/delete','POST',{...deletion,sellerId:2})).status,409);
+  const recreated=await req('/api/admin/entities/sellers','POST',{name:targetName,storeId:store});assert.equal(recreated.status,200);assert.notEqual(recreated.body.id,1);
+  assert.equal((await req('/api/admin/sellers/delete','POST',deletion)).body.status,'done');
+  assert((await db.get('pulse/catalog')).data.sellers.some(s=>s.id===recreated.body.id));
+});
+
+test('Suppression vendeur cloud : empêche les écritures en cours de recréer les données supprimées',async()=>{
+  for(const type of ['goal','workdays','sale','adjust','token','pin']) {
+    const db=new MemoryDb(),queue=[],store=LEGACY_STORE_ID,person=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;
+    const identities=new Map([['admin',{sub:'administrator'}],['seller',{sub:person,role:'seller',storeId:store,sellerId:1,accessVersion:'v1'}]]);
+    const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PIN_PEPPER:Buffer.alloc(32,10).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}},PULSE_QUEUE:{async sendBatch(xs){queue.push(...xs.map(x=>x.body));}}};
+    const worker=createWorker({createDb:()=>db,verifyIdToken:async(_e,t)=>{if(!identities.has(t))throw Error();return identities.get(t)},makeCustomToken:async()=> 'custom'}),ctx={waitUntil(){}};
+    async function req(path,method='GET',body,token='admin') {const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),authorization:`Bearer ${token}`},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};}
+    await req('/api/bootstrap');const proof=await pinProof('demo-fnac',store,1,'18273645');
+    const access={active:true,storeId:store,sellerId:1,sellerKey:'s1',version:'v1',pinMac:await pinMac(env,person,proof)};
+    await db.commit([db.write(`pulseAccess/${person}`,access),db.write(`pulseStatus/${person}`,access)]);
+    const deletion={storeId:store,sellerId:1,jobId:`seller-race-${type}-0001`,confirmation:'SUPPRIMER'};
+    const original=db.commit.bind(db);let raced=false;
+    db.commit=async writes=>{
+      const matches=type==='goal'||type==='workdays'?writes.some(w=>w.path===`pulseGoals/${person}`&&!w.check):
+        type==='sale'||type==='adjust'?writes.some(w=>w.path.startsWith(`pulseStores/${store}/sales/`)&&!w.check&&!w.del&&w.data?.sellerId===1):
+        type==='token'?writes.some(w=>w.path.startsWith('pulseTokens/')&&!w.check):writes.some(w=>w.path===`pulseAttempts/${person}`&&!w.check);
+      if(!raced&&matches){raced=true;const started=await req('/api/admin/sellers/delete','POST',deletion);assert.equal(started.status,200);}
+      return original(writes);
+    };
+    let response;
+    if(type==='goal')response=await req('/api/admin/goals','POST',{storeId:store,sellerId:1,serviceId:1,values:{day:1,week:null,month:null},revision:null});
+    else if(type==='workdays')response=await req('/api/admin/workdays','POST',{storeId:store,sellerId:1,workdays:[1,2],revision:null});
+    else if(type==='sale')response=await req('/api/sales','POST',{serviceId:1,requestId:'race-sale-00000001'},'seller');
+    else if(type==='adjust')response=await req('/api/admin/adjust','POST',{storeId:store,sellerId:1,serviceId:1,count:1});
+    else if(type==='token')response=await req('/api/push/subscribe','POST',{token:'race-notification-token-123456789'},'seller');
+    else response=await req('/api/auth/login','POST',{storeId:store,sellerId:1,proof},'');
+    assert(raced,`${type} non déclenché`);assert([409,429].includes(response.status),`${type}: ${response.status}`);
+    assert.equal(await db.get(`pulseGoals/${person}`),null,type);
+    assert.equal((await db.query('pulseTokens','uid','EQUAL',person)).length,0,type);
+    assert.equal((await db.query(`pulseStores/${store}/sales`,'sellerId','EQUAL',1)).length,0,type);
+    assert.equal(await db.get(`pulseAttempts/${person}`),null,type);
+    let n=0;while(queue.length){assert(++n<30);const message=makeMessage(queue.shift());await worker.queue({messages:[message]},env);assert(message.acked);}
+    assert.equal((await db.get(`pulseSellerDeletes/${store}`)).data.status,'done',type);
+    assert.equal(await db.get(`pulseGoals/${person}`),null,type);
+  }
+});
+
+test('Suppression vendeur cloud : les resets en cours bloquent le lancement, y compris pour un vendeur archivé',async()=>{
+  for(const resetType of ['sales','goals']) {
+    const db=new MemoryDb(),queue=[],store=LEGACY_STORE_ID,ids=new Map([['admin',{sub:'administrator'}]]);
+    const worker=createWorker({createDb:()=>db,verifyIdToken:async(_e,t)=>ids.get(t)}),env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(xs){queue.push(...xs.map(x=>x.body));}}},ctx={waitUntil(){}};
+    async function req(path,method='GET',body){const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{'content-type':'application/json',authorization:'Bearer admin'},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};}
+    await req('/api/bootstrap');assert.equal((await req('/api/admin/entities/sellers/1','PATCH',{storeId:store,active:false})).status,200);
+    const reset={storeId:store,jobId:`reset-${resetType}-123456`,confirmation:'SUPPRIMER',...(resetType==='goals'?{departmentId:'tech'}:{})};
+    assert.equal((await req(`/api/admin/${resetType}/reset`,'POST',reset)).status,200);
+    const deletion={storeId:store,sellerId:1,jobId:`archived-${resetType}-1234`,confirmation:'SUPPRIMER'};
+    assert.equal((await req('/api/admin/sellers/delete','POST',deletion)).status,409);
+    let n=0;while(queue.length){assert(++n<30);const m=makeMessage(queue.shift());await worker.queue({messages:[m]},env);assert(m.acked);}
+    assert.equal((await req('/api/admin/sellers/delete','POST',deletion)).status,200);
+    n=0;while(queue.length){assert(++n<30);const m=makeMessage(queue.shift());await worker.queue({messages:[m]},env);assert(m.acked);}
+    assert.equal((await db.get('pulse/catalog')).data.sellers.some(s=>s.id===1),false);
+  }
+});
+
+test('Chiffres du jour : total personnel sur tous les départements, équipe sur le département actuel',()=>{
+  const catalog={sellers:[{id:1,name:'A',active:true,storeId:'test',departmentId:'tech'},{id:2,name:'B',active:true,storeId:'test',departmentId:'tech'}],services:[{id:1,name:'DMax',active:true}],departmentsByStore:{test:[{id:'tech',name:'Technique',active:true},{id:'editorial',name:'Éditorial',active:true}]}};
+  const sale=(id,sellerId,departmentId)=>({id,sellerId,departmentId,serviceId:1,businessDate:'2026-11-01',createdAt:'2026-11-01T12:00:00Z',source:'sale'});
+  const out=summarize(catalog,[sale('a',1,'tech'),sale('b',1,'editorial'),sale('c',2,'tech')],1,'2026-11-01','test');
+  assert.equal(out.mineTotal,2);assert.equal(out.day.total,2);assert.deepEqual(out.mine,[{serviceId:1,count:1}]);
+});
+
+test('Suppression vendeur cloud : un lot en conflit est rejoué sans effacement partiel',async()=>{
+  const db=new MemoryDb(),queue=[],store=LEGACY_STORE_ID;
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'administrator'})}),env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(xs){queue.push(...xs.map(x=>x.body));}}},ctx={waitUntil(){}};
+  async function req(path,method='GET',body){const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{'content-type':'application/json',authorization:'Bearer admin'},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};}
+  await req('/api/bootstrap');
+  await db.commit([db.write(`pulseStores/${store}/sales/conflict-sale-001`,{id:'conflict-sale-001',storeId:store,sellerId:1}),db.write('pulseOutbox/conflict-sale-001',{saleId:'conflict-sale-001',storeId:store,status:'queued',sellerName:'Alice'})]);
+  const job={storeId:store,sellerId:1,jobId:'seller-conflict-0001',confirmation:'SUPPRIMER'};assert.equal((await req('/api/admin/sellers/delete','POST',job)).status,200);
+  const original=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path==='pulseOutbox/conflict-sale-001')) {
+      raced=true;const outbox=(await db.get('pulseOutbox/conflict-sale-001')).data;
+      await original([db.write('pulseOutbox/conflict-sale-001',{...outbox,status:'dispatching'})]);
+    }
+    return original(writes);
+  };
+  const first=makeMessage(queue.shift());await worker.queue({messages:[first]},env);assert(first.retried);assert(raced);
+  assert(await db.get(`pulseStores/${store}/sales/conflict-sale-001`));assert.equal((await db.get(`pulseSellerDeletes/${store}`)).data.deletedSales,0);
+  const retry=makeMessage(first.body);await worker.queue({messages:[retry]},env);assert(retry.acked);
+  let count=0;while(queue.length){assert(++count<30);const message=makeMessage(queue.shift());await worker.queue({messages:[message]},env);assert(message.acked);}
+  assert.equal((await db.get(`pulseSellerDeletes/${store}`)).data.status,'done');assert.equal(await db.get(`pulseStores/${store}/sales/conflict-sale-001`),null);
+  assert.deepEqual((await db.get('pulseOutbox/conflict-sale-001')).data,{status:'reset'});
+});
+
+test('Suppression vendeur cloud : arbitrage atomique avec les resets lancés simultanément',async()=>{
+  for(const resetType of ['sales','goals'])for(const winner of ['reset','delete']) {
+    const db=new MemoryDb(),queue=[],store=LEGACY_STORE_ID;
+    const worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'administrator'})}),env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(xs){queue.push(...xs.map(x=>x.body));}}},ctx={waitUntil(){}};
+    async function req(path,method='GET',body){const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{'content-type':'application/json',authorization:'Bearer admin'},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};}
+    await req('/api/bootstrap');const deletion={storeId:store,sellerId:1,jobId:`seller-lock-${resetType}-${winner}`,confirmation:'SUPPRIMER'},reset={storeId:store,jobId:`reset-lock-${resetType}-${winner}`,confirmation:'SUPPRIMER',...(resetType==='goals'?{departmentId:'tech'}:{})};
+    const resetPath=`/api/admin/${resetType}/reset`,doc=resetType==='sales'?`pulseSalesResets/${store}`:`pulseGoalsResets/${store}`,original=db.commit.bind(db);let raced=false;
+    db.commit=async writes=>{
+      const match=winner==='reset'?writes.some(w=>w.path===`pulseSellerDeletes/${store}`&&!w.check):writes.some(w=>w.path===doc&&!w.check);
+      if(!raced&&match){raced=true;const result=winner==='reset'?await req(resetPath,'POST',reset):await req('/api/admin/sellers/delete','POST',deletion);assert.equal(result.status,200);}
+      return original(writes);
+    };
+    const result=winner==='reset'?await req('/api/admin/sellers/delete','POST',deletion):await req(resetPath,'POST',reset);
+    assert(raced);assert.equal(result.status,409,`${resetType}/${winner}`);
+    if(winner==='reset')assert.equal(await db.get(`pulseSellerDeletes/${store}`),null);else assert.equal(await db.get(doc),null);
+  }
 });

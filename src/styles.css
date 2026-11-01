@@ -877,3 +877,33 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .sales-reset-button { background:#382825; border-color:#bc8176; color:#ffd5cc; }
 [data-theme='dark'] .sales-reset-danger { background:#b24d3d; border-color:#b24d3d; color:#fff; }
 [data-theme='dark'] .sales-reset-warning,[data-theme='dark'] .sales-reset-error { color:#ffb7a9; }
+
+/* Recherche de magasin : sélection explicite d'un identifiant, clavier et tactile. */
+.session-field > label { color:#898b82; font-size:9px; letter-spacing:.8px; font-weight:800; }
+.store-search { position:relative; min-width:0; width:100%; }
+.store-search-input input { min-width:0; flex:1; width:100%; height:100%; padding:0; border:0; outline:0; background:transparent; color:#50524b; font-size:11px; font-weight:600; }
+.store-search-input input::-webkit-search-cancel-button { display:none; }
+.store-search-input input::placeholder { color:#a2a49a; }
+.store-search-clear { flex:0 0 34px; height:100%; display:grid; place-items:center; background:transparent; color:#999b91; }
+.store-search-dropdown { position:absolute; top:calc(100% + 5px); left:0; right:0; z-index:30; background:#fff; border:1px solid #e5e6dd; border-radius:8px; box-shadow:0 12px 30px rgba(38,39,29,.14); overflow:hidden; }
+.store-search-list { max-height:225px; overflow-y:auto; overscroll-behavior:contain; }
+.store-search-option { display:flex; align-items:center; justify-content:space-between; gap:7px; width:100%; min-height:42px; padding:9px 11px; text-align:left; background:transparent; color:#41443b; font-size:12px; font-weight:650; }
+.store-search-option span { min-width:0; overflow-wrap:anywhere; }
+.store-search-option small { flex:none; color:#999c91; font-size:9px; }
+.store-search-option:hover,.store-search-option.is-active { background:#fff7d8; color:#5b4900; }
+.store-search-message { margin:0; padding:8px 11px; border-top:1px solid #f0f0ea; color:#85887d; font-size:10px; line-height:1.35; }
+@media(max-width:690px) { .session-form .store-search-input input { font-size:16px; } }
+[data-theme='dark'] .store-search-input input { color:#f0f1e9; }
+[data-theme='dark'] .store-search-dropdown { background:#282b26; border-color:#4a4e45; }
+[data-theme='dark'] .store-search-option { color:#f0f1e9; }
+[data-theme='dark'] .store-search-option:hover,[data-theme='dark'] .store-search-option.is-active { background:#4a4020; color:#fff4c7; }
+[data-theme='dark'] .store-search-message { color:#b7bcae; border-color:#4a4e45; }
+
+/* Dans Vendeurs : accès individuel puis suppression irréversible, bien séparée. */
+.seller-access { margin-top:24px; padding-top:20px; border-top:1px solid #ebede8; }
+.seller-access .admin-selects { margin-top:12px; }
+.seller-access .activation-admin { margin-top:12px; }
+.seller-delete { margin-top:24px; }
+[data-theme='dark'] .seller-access { border-color:#454a40; }
+.store-search-hint { margin:5px 0 0; color:#9b594d; font-size:10px; line-height:1.35; }
+[data-theme='dark'] .store-search-hint { color:#f2b6ad; }

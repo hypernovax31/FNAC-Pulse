@@ -347,3 +347,57 @@ test('Émulateurs Firebase : inscription atomique et transition sans déconnexio
     assert.equal((await storeDb.get('pulse/catalog')).data.sellers.filter(s=>s.name===a.name).length,1);
   } finally {await deleteApp(app);}
 });
+
+test('Émulateurs Firebase : suppression vendeur paginée, session révoquée et autre équipe intacte',{skip:!enabled},async()=>{
+  const project='demo-fnac',store=LEGACY_STORE_ID;
+  const app=initializeApp({apiKey:'demo-key',projectId:project,appId:'1:1:web:demo'},`delete-${Date.now()}`);
+  const auth=getAuth(app),client=getFirestore(app);
+  connectAuthEmulator(auth,'http://127.0.0.1:9099',{disableWarnings:true});connectFirestoreEmulator(client,'127.0.0.1',8085);
+  const admin=(await createUserWithEmailAndPassword(auth,`delete-admin-${Date.now()}@example.test`,'Testing-Password-2026')).user,adminToken=await admin.getIdToken();
+  const storeDb=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'}),queued=[];
+  const worker=createWorker({createDb:()=>storeDb,verifyIdToken:async(_env,t)=>JSON.parse(Buffer.from(t.split('.')[1],'base64url').toString()),makeCustomToken:fakeCustomToken,sendFcm:async()=>{}});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:admin.uid,PIN_PEPPER:Buffer.alloc(32,12).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}},PULSE_QUEUE:{async sendBatch(xs){queued.push(...xs.map(x=>x.body));}}},ctx={waitUntil(){}};
+  async function call(path,method='GET',body,token=adminToken) {
+    const res=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    const json=await res.json();assert.notEqual(res.status,500,JSON.stringify(json));return {status:res.status,json};
+  }
+  try {
+    await fetch(`http://127.0.0.1:8085/emulator/v1/projects/${project}/databases/(default)/documents`,{method:'DELETE'});
+    assert.equal((await call('/api/bootstrap','GET',undefined,'')).status,200);
+    const proof=await pinProof(project,store,1,'18273645');
+    const claimed=await call('/api/auth/claim','POST',{storeId:store,sellerId:1,newProof:proof},'');assert.equal(claimed.status,200);
+    const seller=(await signInWithCustomToken(auth,claimed.json.customToken)).user,idToken=await seller.getIdToken();
+    assert((await getDocFromServer(doc(client,'pulse','catalog'))).exists());
+    const uid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`,otherUid=`seller-${(await digestBase64(`${store}:2`)).slice(0,28)}`;
+    const cat=(await storeDb.get('pulse/catalog')).data,writes=[
+      storeDb.write(`pulseGoals/${uid}`,{storeId:store,sellerId:1,goals:{s1:{month:55}},workdays:[1,2,3]}),
+      storeDb.write(`pulseGoals/${otherUid}`,{storeId:store,sellerId:2,goals:{s1:{month:12}},workdays:[1,5]}),
+      storeDb.write('pulseRegistrations/emulator-registration-1',{uid,storeId:store,name:'Morgan',sellerId:1,pinSalt:'private-salt'}),
+      storeDb.write('pulseBackups/delete-test-backup',{savedAt:'before',catalog:cat}),
+      storeDb.write(`pulseStores/${store}/sales/other-emulator-sale`,{id:'other-emulator-sale',storeId:store,sellerId:2,serviceId:1,businessDate:'2020-01-01'}),
+    ];
+    for(let i=0;i<25;i++) {
+      const id=`emulator-target-${String(i).padStart(3,'0')}`;
+      writes.push(storeDb.write(`pulseStores/${store}/sales/${id}`,{id,storeId:store,sellerId:1,ownerUid:uid,serviceId:1,businessDate:'2020-01-01'}));
+      writes.push(storeDb.write(`pulseOutbox/${id}`,{saleId:id,storeId:store,sellerName:'Morgan',status:'queued',createdAt:Date.now()}));
+    }
+    await storeDb.commit(writes);
+    const deletion={storeId:store,sellerId:1,jobId:'emulator-seller-delete-0001',confirmation:'SUPPRIMER'};
+    const started=await call('/api/admin/sellers/delete','POST',deletion);assert.equal(started.status,200);assert.equal(started.json.status,'running');
+    assert.equal((await call('/api/sales','POST',{serviceId:1,requestId:'emulator-new-after-delete'},idToken)).status,403);
+    await assert.rejects(getDocFromServer(doc(client,'pulse','catalog')),/permission|insufficient/i);
+    assert.equal(await storeDb.get(`pulseGoals/${uid}`),null);
+    let steps=0;
+    while(queued.length){assert(++steps<50);const body=queued.shift(),msg={body,acked:false,retried:false,ack(){this.acked=true},retry(){this.retried=true}};await worker.queue({messages:[msg]},env);assert(msg.acked,`échec lot ${steps}, retry=${msg.retried}`);}
+    const done=await call(`/api/admin/sellers/delete?storeId=${store}`);assert.equal(done.json.status,'done');assert.equal(done.json.deletedSales,25);
+    assert.equal((await storeDb.query(`pulseStores/${store}/sales`,'sellerId','EQUAL',1)).length,0);
+    assert((await storeDb.get(`pulseStores/${store}/sales/other-emulator-sale`)));
+    assert.equal(await storeDb.get(`pulseAccess/${uid}`),null);assert.equal(await storeDb.get(`pulseStatus/${uid}`),null);
+    assert.equal((await storeDb.get(`pulseGoals/${otherUid}`)).data.goals.s1.month,12);
+    assert.deepEqual((await storeDb.get('pulseRegistrations/emulator-registration-1')).data,{status:'removed'});
+    assert.deepEqual((await storeDb.get('pulseOutbox/emulator-target-000')).data,{status:'reset'});
+    const backup=(await storeDb.get('pulseBackups/delete-test-backup')).data.catalog;
+    assert.equal(backup.sellers.some(s=>s.id===1),false);assert(backup.sellers.some(s=>s.id===2));
+    assert.equal((await call('/api/admin/sellers/delete','POST',deletion)).json.status,'done');
+  } finally {await deleteApp(app);}
+});

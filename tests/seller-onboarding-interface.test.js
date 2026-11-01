@@ -21,7 +21,11 @@ const field=(tree,label)=>tree.root.findByProps({'aria-label':label});
 const click=(tree,label)=>tree.root.findAllByType('button').find(x=>text(x).includes(label));
 function apiMock(fn){const old=Object.getOwnPropertyDescriptor(globalThis,'__onboardingApi');Object.defineProperty(globalThis,'__onboardingApi',{configurable:true,value:fn});return ()=>{if(old)Object.defineProperty(globalThis,'__onboardingApi',old);else delete globalThis.__onboardingApi;};}
 async function change(tree,label,value){await act(async()=>{field(tree,label).props.onChange({target:{value}});await tick();});}
-async function chooseScope(tree){await change(tree,'Votre magasin Fnac','store-1');await change(tree,'Votre département','tech');}
+async function chooseScope(tree){
+  await change(tree,'Votre magasin Fnac','Fnac Test');
+  await act(async()=>{tree.root.findByProps({role:'option'}).props.onClick();await tick();});
+  await change(tree,'Votre département','tech');
+}
 
 test('Inscription : prénom libre puis deux PIN à 4 chiffres avant création',async()=>{
   const requests=[],submissions=[],restore=apiMock(async(...args)=>{requests.push(args);return {needsPin:true};});let tree;
@@ -75,4 +79,21 @@ test('Un nom existant saisi par l’administrateur reste utilisable même avec u
     await act(async()=>{tree=TestRenderer.create(React.createElement(SessionForm,{data:custom,onSubmit:async()=>{}}));});await chooseScope(tree);await change(tree,'Votre prénom','Jean/Léo');
     assert.match(text(tree.toJSON()),/Profil existant : Jean\/Léo/);assert(!text(tree.toJSON()).includes('Saisissez un prénom valide'));assert.equal(field(tree,'Code PIN personnel').props.maxLength,4);
   } finally {if(tree)await act(async()=>tree.unmount());restore();}
+});
+
+test('Recherche sans sélection : aide hors de la rangée et géolocalisation toujours utilisable',async()=>{
+  const prior=Object.getOwnPropertyDescriptor(globalThis,'navigator'),restore=apiMock(async()=>({needsPin:true}));let tree;
+  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{geolocation:{getCurrentPosition(ok){ok({coords:{latitude:43,longitude:1}});}}}});
+  const located={...data,stores:data.stores.map(store=>({...store,lat:43,lon:1}))};
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(SessionForm,{data:located,onSubmit:async()=>{}}));});
+    await change(tree,'Votre magasin Fnac','aucun résultat');
+    const hint=tree.root.findByProps({className:'store-search-hint'});
+    assert.equal(hint.parent.props.className.trim(),'session-form'); // L’aide ne décale pas les boutons au moment du clic.
+    assert.equal(field(tree,'Votre département').props.disabled,true);
+    await act(async()=>{field(tree,'Trouver un magasin proche').props.onClick();await tick();});
+    assert.equal(field(tree,'Votre magasin Fnac').props.value,'Fnac Test');
+    assert.equal(field(tree,'Votre département').props.disabled,false);
+    assert.match(text(tree.toJSON()),/Fnac Test proposé/);
+  } finally {if(tree)await act(async()=>tree.unmount());restore();if(prior)Object.defineProperty(globalThis,'navigator',prior);else delete globalThis.navigator;}
 });

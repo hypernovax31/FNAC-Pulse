@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { LEGACY_STORE_ID, comparePeople, orderServices } from '../src/catalog.js';
 import { validGoalValues, validWorkdays, normalizeWorkdays } from '../src/goals.js';
 import { GOALS_RESET_CONFIRMATION } from '../src/goals-reset.js';
+import { SELLER_DELETE_CONFIRMATION } from '../src/seller-delete.js';
 import { cleanSellerName, sameSellerName, validSellerName } from '../src/seller-registration.js';
 import { saleMessage } from '../src/sale-message.js';
 import { DEFAULT_DEPARTMENTS, TECH_DEPARTMENT_ID, departmentsForStore, sellerDepartmentId } from '../src/departments.js';
@@ -54,6 +55,10 @@ CREATE TABLE IF NOT EXISTS goals_reset_requests (
   total_sellers INTEGER NOT NULL, reset_sellers INTEGER NOT NULL, completed_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS goals_reset_store ON goals_reset_requests(store_id, completed_at);
+CREATE TABLE IF NOT EXISTS seller_delete_requests (
+  job_id TEXT PRIMARY KEY, store_id TEXT NOT NULL, seller_id INTEGER NOT NULL, deleted_sales INTEGER NOT NULL, completed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS seller_delete_store ON seller_delete_requests(store_id, completed_at);
 CREATE TABLE IF NOT EXISTS service_orders (
   store_id TEXT NOT NULL REFERENCES stores(id), service_id INTEGER NOT NULL REFERENCES services(id),
   position INTEGER NOT NULL, PRIMARY KEY(store_id,service_id)
@@ -404,6 +409,47 @@ app.get('/api/admin/all', requireAdmin, (req,res) => {
     services:db.prepare('SELECT id,name,icon,active FROM services ORDER BY sort_order,id').all(),
     serviceOrders:serviceOrders(), departmentsByStore:localDepartmentsByStore(),
   });
+});
+function localSellerDeleteStatus(row) {
+  return row?{status:'done',jobId:row.job_id,deletedSales:row.deleted_sales,startedAt:row.completed_at,finishedAt:row.completed_at}:
+    {status:'idle',jobId:null,deletedSales:0};
+}
+app.get('/api/admin/sellers/delete',requireAdmin,(req,res)=>{
+  const {storeId}=req.query;
+  if(!activeStore(storeId))return failure(res,'Choisissez un magasin valide.');
+  res.json(localSellerDeleteStatus(db.prepare('SELECT * FROM seller_delete_requests WHERE store_id=? ORDER BY rowid DESC LIMIT 1').get(storeId)));
+});
+app.post('/api/admin/sellers/delete',requireAdmin,(req,res)=>{
+  const {storeId,sellerId,jobId,confirmation}=req.body||{};
+  if(!activeStore(storeId)||!isId(sellerId)||typeof jobId!=='string'||!/^[A-Za-z0-9_-]{8,80}$/.test(jobId)||confirmation!==SELLER_DELETE_CONFIRMATION)
+    return failure(res,'Confirmation, magasin ou vendeur invalide.');
+  const existing=db.prepare('SELECT * FROM seller_delete_requests WHERE job_id=?').get(jobId);
+  if(existing) {
+    if(existing.store_id!==storeId||existing.seller_id!==Number(sellerId))return failure(res,'Identifiant de suppression déjà utilisé.',409);
+    const latest=db.prepare('SELECT job_id FROM seller_delete_requests WHERE store_id=? ORDER BY rowid DESC LIMIT 1').get(storeId);
+    return res.json(latest?.job_id===jobId?localSellerDeleteStatus(existing):{status:'superseded',jobId,deletedSales:0});
+  }
+  const member=db.prepare('SELECT id,name,department_id FROM sellers WHERE store_id=? AND id=?').get(storeId,Number(sellerId));
+  if(!member)return failure(res,'Choisissez un vendeur de ce magasin.');
+  if((req.body.expectedName!==undefined&&member.name!==req.body.expectedName)||
+     (req.body.expectedDepartmentId!==undefined&&sellerDepartmentId(member)!==req.body.expectedDepartmentId)||
+     (req.body.expectedStoreName!==undefined&&activeStore(storeId).name!==req.body.expectedStoreName))
+    return failure(res,'Le profil ou le magasin a changé. Vérifiez votre choix avant de réessayer.',409);
+  const result=db.transaction(()=>{
+    // Les marqueurs anonymes empêchent de rejouer une ancienne vente supprimée.
+    db.prepare(`INSERT OR IGNORE INTO reset_sale_requests(request_id)
+      SELECT request_id FROM sales WHERE store_id=? AND seller_id=? AND request_id IS NOT NULL`).run(storeId,Number(sellerId));
+    const deletedSales=db.prepare('DELETE FROM sales WHERE store_id=? AND seller_id=?').run(storeId,Number(sellerId)).changes;
+    db.prepare('DELETE FROM seller_goals WHERE store_id=? AND seller_id=?').run(storeId,Number(sellerId));
+    db.prepare('DELETE FROM seller_workdays WHERE store_id=? AND seller_id=?').run(storeId,Number(sellerId));
+    db.prepare('DELETE FROM subscriptions WHERE store_id=? AND seller_id=?').run(storeId,Number(sellerId));
+    db.prepare('DELETE FROM sellers WHERE store_id=? AND id=?').run(storeId,Number(sellerId));
+    const when=Date.now();
+    db.prepare('INSERT INTO seller_delete_requests(job_id,store_id,seller_id,deleted_sales,completed_at) VALUES (?,?,?,?,?)')
+      .run(jobId,storeId,Number(sellerId),deletedSales,when);
+    return {status:'done',jobId,deletedSales,startedAt:when,finishedAt:when};
+  })();
+  broadcast(storeId,{kind:'config'});res.json(result);
 });
 function localGoalsResetStatus(row) {
   return row?{status:'done',jobId:row.job_id,departmentId:row.department_id,departmentName:row.department_name,
