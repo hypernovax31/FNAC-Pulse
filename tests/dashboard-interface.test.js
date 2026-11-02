@@ -122,8 +122,12 @@ test('Détail Aujourd’hui : chiffres personnels et équipe, zéro et données 
   const stats={mineTotal:2,day:{total:3,byService:[{id:1,name:'DMax',count:3},{id:2,name:'Garantie',count:0}],mineByService:[{serviceId:1,count:1},{serviceId:2,count:1}]},summary:{store:{day:{byService:[{id:1,name:'DMax'},{id:2,name:'Garantie'}]}}}};
   const mine=render(TodayDetails,{scope:'mine',stats,services:[],date:'2026-10-29',onClose(){}});
   assert.match(mine,/Ma journée/);assert.match(mine,/DMax/);assert.match(mine,/Garantie/);assert.match(mine,/Toutes vos ventes personnelles du jour/);assert.doesNotMatch(mine,/avant un changement de département/);
+  assert.match(mine,/Détail par service/);assert.doesNotMatch(mine,/\d+ types?/);
   const team=render(TodayDetails,{scope:'team',stats,services:[],date:'2026-10-29',department:{name:'Technique'},onClose(){}});
-  assert.match(team,/Ventes de l’équipe/);assert.match(team,/département Technique/);assert.match(team,/DMax/);assert.doesNotMatch(team,/Garantie/);
-  assert.match(render(TodayDetails,{scope:'team',stats:{day:{total:0,byService:[]}},services:[],onClose(){}}),/Aucune vente enregistrée/);
+  assert.match(team,/Ventes de l’équipe/);assert.match(team,/département Technique/);assert.match(team,/DMax/);assert.doesNotMatch(team,/Garantie/);assert.doesNotMatch(team,/\d+ types?/);
+  for(const scope of ['mine','team']){
+    const empty=render(TodayDetails,{scope,stats:{mineTotal:0,day:{total:0,byService:[],mineByService:[]}},services:[],onClose(){}});
+    assert.match(empty,/Détail par service/);assert.match(empty,/Aucune vente enregistrée/);assert.doesNotMatch(empty,/\d+ types?/);
+  }
   assert.match(render(TodayDetails,{scope:'mine',stats:{mineTotal:2,day:{}},services:[],onClose(){}}),/détail des ventes est indisponible/);
 });

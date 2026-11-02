@@ -66,6 +66,17 @@ Sur le cloud, les compteurs repartent de zéro grâce à un marqueur par magasin
 
 Un onglet de navigateur ne peut pas savoir avec certitude si une autre copie est déjà installée : il peut donc proposer l’installation même si une icône existe déjà. Les autorisations de l’application installée peuvent être distinctes de celles du navigateur.
 
+### Si la localisation est refusée sur iPhone
+
+**Activer** ou **Vérifier** effectue une vraie demande de position ; chaque essai indique son résultat, même si le refus est immédiat. Une autorisation de notifications ou son inscription réseau ne bloque pas ce bouton. iOS ou Safari peuvent refuser sans réafficher d’invitation ; l’application ne peut pas imposer cette invitation ni identifier avec certitude le réglage qui bloque. La géolocalisation reste facultative : **Continuer** permet de choisir le magasin manuellement.
+
+1. Dans **Réglages → Confidentialité et sécurité → Service de localisation**, activer le service. Dans la liste, vérifier **Sites Safari** et **Fnac Pulse** s’il apparaît : choisir une option autre que **Jamais**.
+2. Dans **Réglages → Apps → Safari → Position**, choisir **Demander** plutôt que **Refuser**. Les intitulés peuvent varier selon iOS.
+3. Dans Safari, ouvrir Fnac Pulse, toucher le menu de la page à gauche de l’adresse, puis **Réglages du site web → Position → Demander** ou **Autoriser**. L’autorisation du site et celle de la PWA installée peuvent être distinctes.
+4. Revenir dans l’application et toucher **Vérifier**. Si le refus persiste, fermer puis rouvrir la PWA et réessayer. Ces vérifications ne demandent ni réinitialisation globale des autorisations ni réinstallation ; cette dernière peut effacer le profil local et la session.
+
+Voir les instructions d’Apple sur le [service de localisation](https://support.apple.com/fr-fr/102647) et les [réglages de site Safari](https://support.apple.com/fr-fr/guide/iphone/iphb01fc3c85/ios). Les simulations ne remplacent pas un test sur l’iPhone concerné.
+
 ### Première connexion et PIN personnel
 
 - Sur un téléphone sans profil, sélectionner le magasin et le département, puis saisir son prénom. S’il n’existe pas dans ce magasin, choisir et confirmer un **PIN personnel de 4 chiffres** : le profil et l’accès sont créés sans intervention d’un administrateur. Un même prénom peut exister dans deux magasins différents.

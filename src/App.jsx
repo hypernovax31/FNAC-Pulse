@@ -264,7 +264,7 @@ function TodayDetails({scope,stats,services,date,department,offline,onClose}) {
   const subtitle=mine?'Toutes vos ventes personnelles du jour':`Ventes du département ${department?.name||'actuel'} aujourd’hui.`;
   return <Modal title={title} subtitle={subtitle} onClose={onClose}>
     <div className={`today-detail-total ${mine?'personal':'team'}`}><div><span>AUJOURD’HUI{date?` · ${dateLabel(date,{day:'numeric',month:'long'})}`:''}</span><strong>{count??'—'} <small>{count>1?'services':'service'}</small></strong></div><span className="today-detail-total-icon">{mine?<UserRound size={20}/>:<UsersRound size={20}/>}</span></div>
-    <div className="today-detail-heading"><strong>Détail par service</strong><span>{rows.length} {rows.length>1?'types':'type'}</span></div>
+    <div className="today-detail-heading"><strong>Détail par service</strong></div>
     {!ready?<div className="today-detail-empty">Le détail des ventes est indisponible.</div>:rows.length?<ul className="today-detail-list">{rows.map(row=><li key={row.id}><span>{row.name}</span><strong>{row.count}</strong></li>)}</ul>:<div className="today-detail-empty">Aucune vente enregistrée pour le moment.</div>}
     {offline&&<p className="today-detail-offline">Dernières données disponibles · en attente de connexion.</p>}
   </Modal>;
@@ -354,6 +354,7 @@ export default function App() {
   const [startupStatus,setStartupStatus]=useState('ready');
   const [startupPermissionsOpen,setStartupPermissionsOpen]=useState(isStandalone);
   const [locationStatus,setLocationStatus]=useState('checking');
+  const [locationFeedback,setLocationFeedback]=useState(null);
   const [startupLocation,setStartupLocation]=useState(null);
   const [startupNotificationPending,setStartupNotificationPending]=useState(startupPushPending);
   const [startupNotificationError,setStartupNotificationError]=useState('');
@@ -367,7 +368,7 @@ export default function App() {
   const [notificationBusy,setNotificationBusy]=useState(false);
   const [pending,setPending]=useState({});
   const [toast,setToast]=useState(null);
-  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), notificationPrompted=useRef(false), notificationAbort=useRef(null), notificationStartInFlight=useRef(false), locationRequest=useRef(0), locationInFlight=useRef(false), locationTimer=useRef(null);
+  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), notificationPrompted=useRef(false), notificationAbort=useRef(null), notificationStartInFlight=useRef(false), locationRequest=useRef(0), locationAttempt=useRef(0), locationInFlight=useRef(false), locationTimer=useRef(null);
   const pushAvailable=typeof window!=='undefined'&&!(platform.os==='ios'&&!installed)&&window.isSecureContext&&'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
   const notificationKey=JSON.stringify([session?.storeId,session?.sellerId,session?.uid,session?.accessVersion,authReady,notificationPermission,pushAvailable,notificationCheck]);
   const checkingCurrent=notificationCheckedKey!==notificationKey;
@@ -415,7 +416,10 @@ export default function App() {
     let cancelled=false;
     readLocationPermission().then(status=>{
       if(cancelled)return;
-      if(status==='granted')requestStartupLocation();else setLocationStatus(status);
+      if(status==='granted')requestStartupLocation();
+      // Sur iOS, l'état retourné par Permissions ne suffit pas à conclure que
+      // la PWA est bloquée : seule une tentative peut confirmer le refus.
+      else setLocationStatus(platform.os==='ios'&&status==='denied'?'prompt':status);
     });
     return ()=>{cancelled=true;locationRequest.current++;locationInFlight.current=false;clearTimeout(locationTimer.current);};
   },[]);
@@ -646,18 +650,29 @@ export default function App() {
     const next=!soundEnabled;saveSound(next);setSoundEnabled(next);sound.current?.setEnabled(next);
     if(startupStatus==='unavailable')setStartupStatus('ready');
   }
-  function requestStartupLocation(){
+  function requestStartupLocation(interactive=false){
     if(locationInFlight.current)return;
+    const attempt=interactive?++locationAttempt.current:0;
+    if(interactive)setLocationFeedback({attempt,result:'checking'});
     const geolocation=typeof navigator==='undefined'?null:navigator.geolocation;
-    if(typeof geolocation?.getCurrentPosition!=='function'){setLocationStatus('unsupported');return;}
+    if(typeof geolocation?.getCurrentPosition!=='function'){
+      setLocationStatus('unsupported');
+      if(interactive)setLocationFeedback({attempt,result:'unsupported'});
+      return;
+    }
     const request=++locationRequest.current;locationInFlight.current=true;setLocationStatus('locating');
     const fail=error=>{
       if(request!==locationRequest.current)return;
-      clearTimeout(locationTimer.current);locationInFlight.current=false;setStartupLocation(null);setLocationStatus(error?.code===1?'denied':'unavailable');
+      locationRequest.current++;clearTimeout(locationTimer.current);locationInFlight.current=false;setStartupLocation(null);
+      const result=error?.code===1?'denied':error?.code===3?'timeout':'unavailable';
+      setLocationStatus(result==='denied'?'denied':'unavailable');
+      // Un refus peut être immédiat : le statut seul resterait inchangé et le
+      // bouton semblerait inactif. Chaque essai a donc un résultat visible.
+      if(interactive)setLocationFeedback({attempt,result});
     };
     // Certains appareils ne rappellent jamais l'API si les services de
     // localisation sont inaccessibles ; ne pas laisser les boutons bloqués.
-    clearTimeout(locationTimer.current);locationTimer.current=setTimeout(()=>fail(),15000);
+    clearTimeout(locationTimer.current);locationTimer.current=setTimeout(()=>fail({code:3}),15000);
     try {
       // Appelé directement depuis le bouton si une autorisation est nécessaire.
       // Au chargement automatique, on ne l'appelle que si elle est déjà accordée.
@@ -665,9 +680,10 @@ export default function App() {
         if(request!==locationRequest.current)return;
         const latitude=coords?.latitude,longitude=coords?.longitude;
         if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||Math.abs(latitude)>90||Math.abs(longitude)>180){fail();return;}
-        clearTimeout(locationTimer.current);locationInFlight.current=false;setStartupLocation({latitude,longitude});setLocationStatus('granted');
+        locationRequest.current++;clearTimeout(locationTimer.current);locationInFlight.current=false;setStartupLocation({latitude,longitude});setLocationStatus('granted');
+        if(interactive)setLocationFeedback({attempt,result:'granted'});
       },fail,{enableHighAccuracy:false,timeout:12000,maximumAge:300000});
-    } catch {fail();}
+    } catch(error) {fail(error);}
   }
   function closeStartupPermissions(){notificationPrompted.current=true;setStartupPermissionsOpen(false);}
   function enterStartup(){
@@ -815,7 +831,7 @@ export default function App() {
   }
   const installationDialog=installModal&&<InstallDialog platform={platform} base={APP_BASE} promptAvailable={!!installPrompt} installError={installError} onInstall={installApp} onClose={()=>setInstallModal(false)}/>;
   if(startupGate)return <StartupGate base={APP_BASE} enabled={soundEnabled} ready={startupReady} status={startupStatus} onStart={enterStartup} onSound={toggleSound} onContinue={continueWithoutStartupSound}/>;
-  if(startupPermissionsOpen)return <><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div><StartupPermissionsDialog permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} locationStatus={locationStatus} onNotification={requestStartupNotifications} onLocation={requestStartupLocation} onClose={closeStartupPermissions}/></>;
+  if(startupPermissionsOpen)return <><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div><StartupPermissionsDialog platform={platform} permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} locationStatus={locationStatus} locationFeedback={locationFeedback} onNotification={requestStartupNotifications} onLocation={()=>requestStartupLocation(true)} onClose={closeStartupPermissions}/></>;
   if(!data)return <><div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>{installationDialog}</>;
   const stats=data.stats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
   return <><div className="app-shell">

@@ -6,6 +6,12 @@ Ce guide configure **GitHub Pages + Firebase Spark + Cloudflare Workers/Queues F
 >
 > Ne partagez jamais ici ou dans Git de mot de passe, PIN, fichier JSON de compte de service, clé privée VAPID, `PIN_PEPPER` ou jeton d'accès. La configuration Web Firebase, l'URL Worker et la **clé VAPID publique** ne sont pas des secrets. Les règles Firestore et les contrôles du Worker, et non la confidentialité de la configuration Web, protègent les données.
 
+## Mise à jour : détails des ventes et localisation
+
+Publier uniquement GitHub Pages ; le Worker et les règles Firestore ne changent pas. Aucune vente, session, préférence ou donnée n’est effacée. Fermer puis rouvrir la PWA en ligne pour prendre la mise à jour. Les détails **Ma journée** et **Ventes de l’équipe** conservent leurs quantités par service sans le compteur de types.
+
+Sur iPhone, tester **Activer** puis **Vérifier** après un refus : chaque geste doit produire un résultat visible, sans dépendre de l’inscription réseau des notifications. Le diagnostic iPhone est accessible sous le bouton. Les réglages système, Safari et ceux du site ou de la PWA peuvent être distincts ; voir [l’aide de localisation du README](README.md#si-la-localisation-est-refusée-sur-iphone). iOS peut refuser immédiatement et l’application ne peut pas imposer une nouvelle invite. Tester sur l’appareil réel ; **Continuer** reste disponible et permet le choix manuel du magasin.
+
 ## Mise à jour : accueil tactile et signature
 
 Publier l'interface GitHub Pages ; le Worker, les règles Firestore, les ventes, les objectifs, les PIN et les sessions ne changent pas. Au premier lancement de la PWA après cette mise à jour, l'écran de bienvenue attend **Toucher pour commencer** : l'appel au lecteur audio se fait directement dans ce geste, sans tentative automatique préalable. Le nouveau parcours est présenté une fois même aux installations qui avaient déjà traité l'ancienne invitation sonore, puis il est mémorisé localement. Un onglet normal ne l'affiche pas. Le bouton est accessible au clavier ; le réglage sonore existant est conservé et peut être modifié sur l'écran. Si la lecture échoue ou prend trop de temps, un nouveau geste permet de réessayer ou de continuer sans son. Le volume, le mode silencieux et les politiques du système peuvent encore empêcher d'entendre le MP3 ; tester sur un iPhone réel. Effacer le stockage ou réinstaller peut faire réapparaître l'écran.

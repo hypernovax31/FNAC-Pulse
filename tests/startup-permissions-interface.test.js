@@ -29,17 +29,23 @@ const text=node=>typeof node==='string'||typeof node==='number'?String(node):!no
 const session={storeId:'near',sellerId:1,uid:'fictif',accessVersion:'v1'};
 const data={stores:[{id:'near',name:'Fnac Près',lat:43.6,lon:1.4,active:true},{id:'far',name:'Fnac Loin',lat:48,lon:2,active:true}],sellers:[{id:1,name:'Morgan',storeId:'near',departmentId:'tech',active:true}],services:[],departmentsByStore:{near:[{id:'tech',name:'Technique',active:true}],far:[{id:'tech',name:'Technique',active:true}]},today:'2026-11-02',stats:null};
 
-function environment({geoPermission='prompt',notificationPermission='default',notificationResult='granted',wanted=false,geoDeferred=false,notificationDeferred=false,auth='manual',existingTouch=true}={}) {
+function environment({geoPermission='prompt',geoResult='success',notificationPermission='default',notificationResult='granted',wanted=false,geoDeferred=false,notificationDeferred=false,prepareDeferred=false,auth='manual',existingTouch=true}={}) {
   const names=['window','navigator','document','Notification','localStorage','Audio','__startupTest'],old=new Map(names.map(name=>[name,Object.getOwnPropertyDescriptor(globalThis,name)]));
   const values=new Map();if(existingTouch)values.set('fnac-pulse-touch-welcome-v1','done');if(wanted)values.set('fnac-pulse-fcm-enabled','1');
   const storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)};
-  const e={values,gesture:false,notifications:[],locations:[],sounds:[],prepares:0,prepareFails:false,subscriptions:0,requests:[],auth:null,geoSuccess:null};
+  const e={values,gesture:false,notifications:[],locations:[],sounds:[],prepares:0,prepareFails:false,subscriptions:0,requests:[],auth:null,geoSuccess:null,geoResult};
   const permission={permission:notificationPermission,requestPermission(){
     e.notifications.push({gesture:e.gesture});
     if(notificationDeferred)return new Promise(resolve=>{e.resolveNotification=value=>{this.permission=value;resolve(value);};});
     this.permission=notificationResult;return Promise.resolve(notificationResult);
   }};
-  const geo={getCurrentPosition(success,error,options){e.locations.push({gesture:e.gesture,options});if(geoDeferred){e.geoSuccess=success;e.geoError=error;}else success({coords:{latitude:43.61,longitude:1.42}});}};
+  const geo={getCurrentPosition(success,error,options){
+    e.locations.push({gesture:e.gesture,options});
+    if(geoDeferred){e.geoSuccess=success;e.geoError=error;}
+    else if(e.geoResult==='denied')error({code:1});
+    else if(e.geoResult==='unavailable')error({code:2});
+    else success({coords:{latitude:43.61,longitude:1.42}});
+  }};
   const registration={pushManager:{getSubscription:async()=>null}};
   const nav={standalone:true,userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)',platform:'iPhone',maxTouchPoints:5,geolocation:geo,serviceWorker:{register:async()=>registration,ready:Promise.resolve(registration)},permissions:{query:async({name})=>({state:name==='geolocation'?geoPermission:permission.permission,addEventListener(){},removeEventListener(){}})}};
   const media=query=>({matches:query==='(display-mode: standalone)',addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}});
@@ -48,7 +54,11 @@ function environment({geoPermission='prompt',notificationPermission='default',no
   const mock={
     observe(fn){e.auth=fn;if(auth!=='manual')queueMicrotask(()=>fn(auth));return ()=>{if(e.auth===fn)e.auth=null;};},
     async api(path,options={}){e.requests.push({path,method:options.method||'GET',body:options.body});if(path.startsWith('/api/bootstrap'))return data;if(path==='/api/goals')return {goals:{}};if(path.startsWith('/api/summary-goals'))return {};return {};},
-    async prepare({signal}={}){if(signal?.aborted)throw Error('annulé');e.prepares++;if(e.prepareFails)throw Error('hors ligne');return 'token-fictif';},
+    async prepare({signal}={}){
+      if(signal?.aborted)throw Error('annulé');e.prepares++;if(e.prepareFails)throw Error('hors ligne');
+      if(prepareDeferred)return await new Promise((resolve,reject)=>{e.resolvePrepare=()=>resolve('token-fictif');signal?.addEventListener('abort',()=>reject(Error('annulé')),{once:true});});
+      return 'token-fictif';
+    },
     async subscribe(api,{signal}={}){if(signal?.aborted)throw Error('annulé');e.subscriptions++;storage.setItem('fnac-pulse-fcm-enabled','1');return {};},
     async unsubscribe(){storage.removeItem('fnac-pulse-fcm-enabled');},
   };
@@ -97,13 +107,100 @@ test('PWA : autorisations existantes réutilisées sans nouvelle demande et sess
 });
 
 test('PWA : refus et notifications coupées ne sont pas activés silencieusement, accès toujours possible',async()=>{
-  const e=environment({geoPermission:'denied',notificationPermission:'granted',auth:session});let tree;
+  const e=environment({geoPermission:'denied',geoResult:'denied',notificationPermission:'granted',auth:session});let tree;
   try {
-    tree=await mount();assert.match(text(tree.toJSON()),/Bien démarrer/);assert.match(text(tree.toJSON()),/Bloquée/);
+    tree=await mount();assert.match(text(tree.toJSON()),/Bien démarrer/);assert.doesNotMatch(text(section(tree,'Géolocalisation')),/refusé/);
     assert.equal(e.locations.length,0);assert.equal(e.notifications.length,0);assert.equal(e.subscriptions,0);
+    await e.press(action(tree,'Géolocalisation'));assert.equal(e.locations[0].gesture,true);
+    assert.match(text(section(tree,'Géolocalisation')),/Vérification 1 : accès refusé/);
     await e.press(button(tree,'Continuer'));await act(async()=>{await tick();});
     assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);assert.match(text(tree.toJSON()),/Morgan/);assert.equal(e.subscriptions,0);
     assert.equal(e.values.get('fnac-pulse-fcm-enabled'),undefined);
+  } finally {await finish(tree,e);}
+});
+
+test('iPhone : l’état Permissions refusé ne remplace pas une vraie tentative depuis le bouton',async()=>{
+  const e=environment({geoPermission:'denied',geoResult:'success',notificationPermission:'denied',auth:null});let tree;
+  try {
+    tree=await mount();assert.equal(e.locations.length,0);
+    assert.equal(action(tree,'Géolocalisation').props.disabled,false);
+    assert.match(text(action(tree,'Géolocalisation')),/Activer/);
+    await e.press(action(tree,'Géolocalisation'));
+    assert.equal(e.locations.length,1);assert.equal(e.locations[0].gesture,true);
+    assert.match(text(section(tree,'Géolocalisation')),/Autorisée/);
+    assert.match(text(section(tree,'Géolocalisation')),/Vérification 1 : position obtenue/);
+  } finally {await finish(tree,e);}
+});
+
+test('iPhone : refus immédiats visibles à chaque appui, aide détaillée et réessai après réglage',async()=>{
+  const e=environment({geoPermission:'denied',geoResult:'denied',notificationPermission:'denied',auth:null});let tree;
+  try {
+    tree=await mount();await e.press(action(tree,'Géolocalisation'));
+    let geo=section(tree,'Géolocalisation');
+    assert.match(text(geo),/Vérification 1 : accès refusé/);
+    assert.match(text(geo),/Comment autoriser sur iPhone/);assert.match(text(geo),/Sites Safari/);
+    assert.match(text(geo),/Réglages du site web/);assert.match(text(geo),/application installée peuvent être distinctes/);
+    assert.equal(action(tree,'Géolocalisation').props.disabled,false);
+    await e.press(action(tree,'Géolocalisation'));geo=section(tree,'Géolocalisation');
+    assert.match(text(geo),/Vérification 2 : accès refusé/);assert.equal(e.locations.length,2);
+    assert(e.locations.every(item=>item.gesture));
+    const status=geo.findByProps({className:'startup-location-result'});
+    assert.equal(status.props.role,'status');assert.equal(status.props['aria-live'],'polite');
+    e.geoResult='success';await e.press(action(tree,'Géolocalisation'));
+    assert.equal(e.locations.length,3);assert.match(text(section(tree,'Géolocalisation')),/Vérification 3 : position obtenue/);
+  } finally {await finish(tree,e);}
+});
+
+test('La préparation réseau des notifications ne bloque pas la géolocalisation',async()=>{
+  const e=environment({notificationPermission:'granted',prepareDeferred:true,auth:null});let tree;
+  try {
+    tree=await mount();await e.press(action(tree,'Notifications d’équipe'));
+    assert.equal(e.prepares,1);assert.equal(typeof e.resolvePrepare,'function');
+    assert.equal(action(tree,'Géolocalisation').props.disabled,false);
+    await e.press(action(tree,'Géolocalisation'));
+    assert.equal(e.locations.length,1);assert.equal(e.locations[0].gesture,true);
+    assert.match(text(section(tree,'Géolocalisation')),/Vérification 1 : position obtenue/);
+    await act(async()=>{e.resolvePrepare();await tick();await tick();});
+    assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),'1');
+  } finally {await finish(tree,e);}
+});
+
+test('Une invite de notification qui ne répond pas ne rend pas le bouton de position inerte',async()=>{
+  const e=environment({notificationDeferred:true,geoResult:'denied',auth:null});let tree;
+  try {
+    tree=await mount();await e.press(action(tree,'Notifications d’équipe'));
+    assert.equal(e.notifications.length,1);assert.equal(action(tree,'Géolocalisation').props.disabled,false);
+    await e.press(action(tree,'Géolocalisation'));
+    assert.equal(e.locations.length,1);assert.equal(e.locations[0].gesture,true);
+    assert.match(text(section(tree,'Géolocalisation')),/Vérification 1 : accès refusé/);
+    await act(async()=>{e.resolveNotification('denied');await tick();await tick();});
+  } finally {await finish(tree,e);}
+});
+
+test('Deux appuis pendant une recherche ne lancent qu’une demande de position',async()=>{
+  const e=environment({geoDeferred:true,notificationPermission:'denied',auth:null});let tree;
+  try {
+    tree=await mount();const activate=action(tree,'Géolocalisation');
+    await act(async()=>{e.gesture=true;try{activate.props.onClick();activate.props.onClick();}finally{e.gesture=false;}await tick();});
+    assert.equal(e.locations.length,1);assert.equal(e.locations[0].gesture,true);
+    await act(async()=>{e.geoSuccess({coords:{latitude:43.61,longitude:1.42}});await tick();});
+    assert.match(text(section(tree,'Géolocalisation')),/Vérification 1 : position obtenue/);
+  } finally {await finish(tree,e);}
+});
+
+test('Expiration de la position : réessai possible et résultat tardif abandonné',async()=>{
+  const e=environment({geoDeferred:true,notificationPermission:'denied',auth:null});let tree;
+  try {
+    tree=await mount();await e.press(action(tree,'Géolocalisation'));
+    const lateSuccess=e.geoSuccess;assert.equal(action(tree,'Géolocalisation').props.disabled,true);
+    await act(async()=>{e.geoError({code:3});await tick();});
+    assert.match(text(section(tree,'Géolocalisation')),/Vérification 1 : la recherche a expiré/);
+    assert.equal(action(tree,'Géolocalisation').props.disabled,false);
+    await act(async()=>{lateSuccess({coords:{latitude:43.61,longitude:1.42}});await tick();});
+    assert.match(text(section(tree,'Géolocalisation')),/Vérification 1 : la recherche a expiré/);
+    await e.press(action(tree,'Géolocalisation'));
+    await act(async()=>{e.geoSuccess({coords:{latitude:43.61,longitude:1.42}});await tick();});
+    assert.match(text(section(tree,'Géolocalisation')),/Vérification 2 : position obtenue/);
   } finally {await finish(tree,e);}
 });
 

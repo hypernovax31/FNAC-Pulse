@@ -2,9 +2,9 @@ import React from 'react';
 import { BellRing, MapPin, Check, ArrowRight, Info } from 'lucide-react';
 import { Modal } from './Admin';
 
-// Les deux demandes sont séparées : sur iOS notamment, chaque dialogue système
-// doit suivre un appui direct, et deux demandes simultanées peuvent se masquer.
-export function StartupPermissionsDialog({permission,pushAvailable,notificationReady,notificationsEnabled,notificationBusy,notificationError,hasSession,locationStatus,onNotification,onLocation,onClose}) {
+// Chaque dialogue système suit un appui direct. L'enregistrement réseau du
+// push ne doit pas empêcher de demander la géolocalisation.
+export function StartupPermissionsDialog({platform,permission,pushAvailable,notificationReady,notificationsEnabled,notificationBusy,notificationError,hasSession,locationStatus,locationFeedback,onNotification,onLocation,onClose}) {
   const unavailable=permission==='unsupported'||!pushAvailable,blocked=permission==='denied';
   let notificationText;
   if(blocked)notificationText='Bloquées : autorisez-les dans les réglages de l’appareil ou du navigateur.';
@@ -19,13 +19,18 @@ export function StartupPermissionsDialog({permission,pushAvailable,notificationR
     locating:'Recherche de votre position…',
     granted:'Autorisée sur cet appareil.',
     prompt:'Propose le magasin référencé le plus proche.',
-    denied:'Bloquée : autorisez la localisation dans les réglages de l’appareil ou du navigateur.',
+    denied:'L’appareil ou le navigateur a refusé l’accès à la position.',
     unavailable:'Position indisponible pour le moment. Vous pouvez réessayer.',
     unsupported:'La géolocalisation n’est pas disponible sur cet appareil.',
   }[locationStatus]||'Propose le magasin référencé le plus proche.';
   const locationBusy=locationStatus==='checking'||locationStatus==='locating';
+  const resultText=locationFeedback?({
+    checking:'recherche en cours…',granted:'position obtenue.',denied:'accès refusé. Vérifiez les autorisations, puis réessayez.',
+    unavailable:'position indisponible.',timeout:'la recherche a expiré. Vous pouvez réessayer.',unsupported:'fonction indisponible sur cet appareil.',
+  })[locationFeedback.result]:'';
+  const showIosHelp=platform?.os==='ios'&&locationStatus!=='granted'&&!locationBusy&&locationStatus!=='unsupported';
   return <Modal title="Bien démarrer" subtitle="Préparez Fnac Pulse sur cet appareil." onClose={onClose}>
-    <p className="startup-permissions-intro">Activez les autorisations dès maintenant. Votre appareil vous demandera de confirmer chaque choix.</p>
+    <p className="startup-permissions-intro">Choisissez les autorisations à activer. Votre appareil peut vous demander de confirmer chaque choix.</p>
     <div className="startup-permissions-list">
       <section className="startup-permission-card" aria-label="Notifications d’équipe">
         <span className="startup-permission-icon"><BellRing size={19}/></span>
@@ -35,7 +40,18 @@ export function StartupPermissionsDialog({permission,pushAvailable,notificationR
       <section className="startup-permission-card" aria-label="Géolocalisation">
         <span className="startup-permission-icon location"><MapPin size={19}/></span>
         <div className="startup-permission-copy"><strong>Géolocalisation</strong><p role="status">{locationText}</p></div>
-        {locationStatus==='granted'?<span className="startup-permission-done"><Check size={15}/> Autorisée</span>:locationStatus!=='unsupported'?<button type="button" className="startup-permission-action" aria-label={locationStatus==='denied'||locationStatus==='unavailable'?'Vérifier la géolocalisation':'Activer la géolocalisation'} aria-busy={locationBusy} onClick={onLocation} disabled={locationBusy||notificationBusy}>{locationBusy?'Un instant…':locationStatus==='denied'||locationStatus==='unavailable'?'Vérifier':'Activer'}<ArrowRight size={14}/></button>:null}
+        {locationStatus==='granted'?<span className="startup-permission-done"><Check size={15}/> Autorisée</span>:locationStatus!=='unsupported'?<button type="button" className="startup-permission-action" aria-label={locationStatus==='denied'||locationStatus==='unavailable'?'Vérifier la géolocalisation':'Activer la géolocalisation'} aria-busy={locationBusy} onClick={onLocation} disabled={locationBusy}>{locationBusy?'Un instant…':locationStatus==='denied'||locationStatus==='unavailable'?'Vérifier':'Activer'}<ArrowRight size={14}/></button>:null}
+        <p className="startup-location-result" role="status" aria-live="polite">{resultText?`Vérification ${locationFeedback.attempt} : ${resultText}`:''}</p>
+        {showIosHelp&&<details className="startup-location-help">
+          <summary>Comment autoriser sur iPhone ?</summary>
+          <ol>
+            <li>Dans Réglages → Confidentialité et sécurité → Service de localisation, activez le service. Dans la liste, vérifiez « Sites Safari » et « Fnac Pulse » s’il apparaît : l’accès ne doit pas être sur « Jamais ».</li>
+            <li>Dans Réglages → Apps → Safari → Position, choisissez « Demander » plutôt que « Refuser ».</li>
+            <li>Dans Safari, ouvrez Fnac Pulse. Dans le menu de la page, choisissez Réglages du site web → Position → « Demander » ou « Autoriser ».</li>
+            <li>Revenez dans Fnac Pulse et touchez Vérifier. Si le refus persiste, fermez puis rouvrez l’application et réessayez.</li>
+          </ol>
+          <p>Les autorisations du site Safari et de l’application installée peuvent être distinctes. Un refus mémorisé peut empêcher l’affichage d’une nouvelle demande.</p>
+        </details>}
       </section>
     </div>
     <p className="startup-permissions-privacy"><Info size={14}/><span>Votre position reste sur cet appareil et sert uniquement à proposer un magasin. Vous pouvez aussi le choisir vous-même.</span></p>
