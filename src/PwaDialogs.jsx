@@ -37,20 +37,23 @@ export function NotificationsDialog({permission,enabled,checkError,unconfirmed,p
   } else if(permission==='unsupported'||!pushAvailable) {
     note='Les notifications Web ne sont pas disponibles dans ce contexte. Vérifiez votre navigateur, HTTPS et, sur iPhone ou iPad, iOS/iPadOS 16.4 ou plus.';label='Notifications indisponibles';disabled=true;
   } else if(!hasSession) {
-    note=pendingProfile?(pendingError?'Autorisation accordée, mais la préparation n’a pas abouti. Une nouvelle tentative sera faite après le choix de votre profil.':'Autorisation accordée. Après le choix de votre profil, l’application essaiera automatiquement d’y associer cet appareil.'):'Choisissez votre magasin, votre département et votre profil pour activer les notifications sur cet appareil.';
+    note=pendingProfile?(pendingError?'Préparation indisponible. Choisissez votre profil pour réessayer.':'Profil à choisir pour terminer l’activation.'):'Choisissez votre profil pour activer les notifications.';
     button=onSelectProfile;label='Choisir mon profil';
   } else if(checking) {
     note='Nous vérifions l’activation sur cet appareil.';label='Vérification…';disabled=true;
   } else if(enabled===true) {
     note='Les notifications sont activées sur cet appareil. Leur réception dépend aussi des réglages système et du réseau.';button=onDisable;label='Désactiver sur cet appareil';
   } else {
-    note=unconfirmed?'L’autorisation est accordée, mais l’abonnement Fnac Pulse n’est pas confirmé. Appuyez pour l’activer sur cet appareil.':permission==='granted'?'L’autorisation est accordée. Activez les notifications pour inscrire cet appareil auprès de Fnac Pulse.':'Un appui est nécessaire pour demander l’autorisation au navigateur. Les notifications concernent votre magasin et votre département.';button=onEnable;label='Activer les notifications';
+    note=unconfirmed?'L’autorisation est accordée, mais l’abonnement Fnac Pulse n’est pas confirmé. Appuyez pour l’activer sur cet appareil.':permission==='granted'?'L’autorisation est accordée. Activez les notifications sur cet appareil.':'Un appui est nécessaire pour demander l’autorisation au navigateur.';button=onEnable;label='Activer les notifications';
   }
   // Le réseau ne doit pas empêcher d'ouvrir le choix du profil ou l'aide à l'installation.
   const actionBusy=busy&&button!==onSelectProfile&&button!==onInstall;
-  return <Modal title="Notifications d’équipe" subtitle="Suivez les ventes des autres vendeurs de votre département." onClose={onClose}>
-    <div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{pendingProfile?(pendingError?'Activation à finaliser':'Autorisation accordée'):enabled===true?'Notifications activées':checking?'Vérification des notifications':'Restez informés'}</strong><p>Les ventes de vos collègues peuvent vous être signalées sur cet appareil, même lorsque l’application est fermée.</p></div></div>
-    <div className="notification-details"><div><Check size={16}/> Pas d’alerte pour vos propres ventes</div><div><Check size={16}/> Uniquement pour votre magasin et votre département</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div></div>
+  const headline=checkError?'Vérification indisponible':needInstall?'Installation requise':permission==='denied'?'Notifications bloquées':
+    permission==='unsupported'||!pushAvailable?'Notifications indisponibles':!hasSession?(pendingProfile?(pendingError?'Activation à finaliser':'Autorisation accordée'):'Profil à choisir'):
+    checking?'Vérification des notifications':enabled===true?'Notifications activées':'À activer sur cet appareil';
+  return <Modal title="Notifications d’équipe" onClose={onClose}>
+    <div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{headline}</strong></div></div>
+    <div className="notification-details"><div><Check size={16}/> Pas d’alerte pour vos propres ventes</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div><div><Check size={16}/> Son Fnac en premier plan, selon l’appareil</div></div>
     <div className="notification-device-note"><Info size={15}/><span>{note}</span></div>
     <button type="button" className={enabled===true?'outline-button full-button':'primary-button full-button'} disabled={actionBusy||disabled} onClick={button}>{actionBusy?'Un instant…':label} {enabled===true?<BellOff size={16}/>:<Bell size={16}/>}</button>
     {enabled!==true&&<button type="button" className="notification-later" onClick={onClose}>Plus tard</button>}

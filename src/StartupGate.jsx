@@ -21,7 +21,7 @@ export function StartupGate({base='/',enabled=true,ready=true,status='ready',onS
           {!ready?'Préparation…':busy?'Ouverture…':failed?'Réessayer':'Accéder aux services'} <ArrowRight size={18} aria-hidden="true"/>
         </button>
         {failed&&<button type="button" className="startup-continue" onClick={onContinue}>Continuer sans son</button>}
-        <button type="button" className="startup-sound-toggle" onClick={onSound} disabled={busy} aria-pressed={enabled} aria-label={enabled?'Désactiver le son au lancement':'Activer le son au lancement'}>
+        <button type="button" className="startup-sound-toggle" onClick={onSound} disabled={busy} aria-pressed={enabled} aria-label={enabled?'Désactiver le son Fnac':'Activer le son Fnac'}>
           {enabled?<Volume2 size={17} aria-hidden="true"/>:<VolumeX size={17} aria-hidden="true"/>}<span>{enabled?'SON activée':'SON désactivé'}</span>
         </button>
       </section>

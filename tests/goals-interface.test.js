@@ -62,7 +62,7 @@ test('Objectifs : journée vide, aucun objectif, date invalide et lecture hors l
   const empty=render(GoalsPanel,{...props,goals:{}});
   assert.match(empty,/Définir un objectif/);assert.match(empty,/Période des objectifs/);assert.match(empty,/Aucun objectif prévu aujourd’hui/);
   const rest=render(GoalsPanel,{...props,date:'2026-11-01'});
-  assert.match(rest,/Aucun objectif prévu aujourd’hui\./);assert.match(rest,/Les services sans objectif sont masqués\. Pensez à ajouter vos objectifs\./);assert.doesNotMatch(rest,/Retrouvez tous les services/);
+  assert.match(rest,/Aucun objectif prévu aujourd’hui\./);assert.match(rest,/Pensez à ajouter vos objectifs\./);assert.doesNotMatch(rest,/Les services sans objectif sont masqués|Retrouvez tous les services/);
   const invalid=render(GoalsPanel,{...props,date:'2026-02-30'});
   assert.match(invalid,/Les cibles du jour sont indisponibles/);assert.doesNotMatch(invalid,/Aucun objectif prévu aujourd’hui/);
   const unavailable=render(GoalsPanel,{...props,stats:null,offline:true});

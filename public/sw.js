@@ -1,6 +1,6 @@
 /* Fnac Pulse: app shell and Web Push. Works at a domain root or under /FNAC-Pulse/.
    The backend remains necessary; sales are never queued offline. */
-const CACHE = 'fnac-pulse-shell-v36';
+const CACHE = 'fnac-pulse-shell-v37';
 const APP_URL = new URL(self.registration.scope);
 const APP_PATH = APP_URL.pathname;
 const appAsset = path => new URL(path, APP_URL).pathname;
@@ -53,15 +53,26 @@ self.addEventListener('push', event => {
     const candidate = new URL(payload.url || '.', APP_URL);
     if (candidate.origin === APP_URL.origin && candidate.pathname.startsWith(APP_PATH)) target = candidate.href;
   } catch {}
-  event.waitUntil(self.registration.showNotification(payload.title || 'Fnac Pulse', {
-    body: payload.body || 'Une nouvelle vente vient d’être enregistrée.',
-    icon: appAsset('icons/icon-192-v3.png'),
-    badge: appAsset('icons/icon-192-v3.png'),
-    tag: payload.tag || `sale-${Date.now()}`,
-    // Motif indicatif : les systèmes récents peuvent ignorer cette option.
-    vibrate: [70, 70, 70, 70, 70],
-    data: { url: target },
-  }));
+  event.waitUntil((async () => {
+    let visible = false;
+    try {
+      const clients = await self.clients.matchAll({type:'window',includeUncontrolled:true});
+      visible = clients.some(client => {
+        try { const url = new URL(client.url); return client.visibilityState === 'visible' && url.origin === APP_URL.origin && url.pathname.startsWith(APP_PATH); }
+        catch { return false; }
+      });
+    } catch {} // Si l'état du client est inconnu, conserver l'alerte système normale.
+    await self.registration.showNotification(payload.title || 'Fnac Pulse', {
+      body: payload.body || 'Une nouvelle vente vient d’être enregistrée.',
+      icon: appAsset('icons/icon-192-v3.png'),
+      badge: appAsset('icons/icon-192-v3.png'),
+      tag: payload.tag || `sale-${Date.now()}`,
+      // Au premier plan, l'application joue le MP3 : éviter un second son.
+      // En arrière-plan, laisser le système choisir son son et sa vibration.
+      ...(visible ? {silent:true} : {vibrate:[70,70,70,70,70]}),
+      data: { url: target },
+    });
+  })());
 });
 self.addEventListener('notificationclick', event => {
   event.notification.close();

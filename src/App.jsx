@@ -12,6 +12,7 @@ import { parisToday } from './cloud-stats';
 import { sellerStoreId } from './catalog';
 import { storeSelectionGroups } from './store-directory.js';
 import { StoreSearch } from './StoreSearch';
+import { NameSuggestions } from './NameSuggestions';
 import { departmentsForStore, sellerDepartmentId, sellersForDepartment } from './departments';
 import { cleanSellerName, sameSellerName, validSellerName } from './seller-registration.js';
 import { serviceIconKey } from './service-icons';
@@ -171,7 +172,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
   }
   if(unavailable)return <div className="profile-unavailable" role="alert"><p>Le profil enregistré sur cet appareil n’est plus disponible. Contactez votre responsable.</p><button type="button" className="outline-button" onClick={onForgetProfile}>Retirer le profil de cet appareil</button></div>;
   const mode=CLOUD?pinMode:registerable?'register':'local',setup=['register','setup','migrate'].includes(mode);
-  const optionsId=`seller-names-${modal?'dialog':'welcome'}`;
+  const nameId=`seller-name-${modal?'dialog':'welcome'}`;
   return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={submit}>
     {fixed&&<div className="remembered-profile"><Avatar name={rememberedPerson.name} id={rememberedPerson.id}/><div><span>VOTRE PROFIL SUR CET APPAREIL</span><strong>{rememberedPerson.name}</strong><small>{rememberedStore.name} · {departments.find(d=>d.id===department)?.name||'Votre département'}</small></div></div>}
     <div className="session-fields">
@@ -179,7 +180,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
         <div className="session-field store-field"><label htmlFor={`store-search-${modal?'dialog':'welcome'}`}>VOTRE MAGASIN</label><StoreSearch id={`store-search-${modal?'dialog':'welcome'}`} stores={storeGroups.all} value={store} onUnselectedChange={setUnselectedStore} onEdit={cancelLocate} onChange={value=>{cancelLocate();changeStore(value);}} disabled={formBusy}/></div>
         <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver un magasin proche" title="Trouver un magasin proche parmi ceux géolocalisés" disabled={geoBusy||formBusy}><Crosshair size={17}/></button>
         <label className="session-field department-field"><span>VOTRE DÉPARTEMENT</span><div className="select-wrap"><UsersRound size={16}/><select aria-label="Votre département" value={department} onChange={e=>{cancelLocate();changeDepartment(e.target.value);}} disabled={formBusy||!store||!departments.length} required><option value="">Choisir un département</option>{departments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
-        <label className="session-field seller-field"><span>VOTRE PRÉNOM</span><div className="select-wrap name-wrap"><UserRound size={16}/><input aria-label="Votre prénom" list={optionsId} type="text" autoComplete="given-name" maxLength={60} placeholder="Saisissez votre prénom" value={name} onChange={e=>{cancelLocate();setName(e.target.value);clearSecrets();}} disabled={formBusy||!department} required/><datalist id={optionsId}>{storeSellers.map(s=><option key={s.id} value={s.name}/>)}</datalist></div></label>
+        <NameSuggestions key={`${store}:${department}`} id={nameId} sellers={storeSellers} value={name} onChange={value=>{cancelLocate();setName(value);clearSecrets();}} disabled={formBusy||!department}/>
       </>}
       {CLOUD&&mode==='login'&&<label className="session-field pin-field"><span>CODE PIN PERSONNEL</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{4}" maxLength={4} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} placeholder="4 chiffres" disabled={formBusy} required/></label>}
       {(mode==='local'||mode==='login')&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==4)}>{formBusy?'Connexion…':modal?'Enregistrer':'Se connecter'} <ArrowRight size={16}/></button>}
@@ -224,7 +225,7 @@ function Sidebar({onNavigate,onAdmin,onSession,onInstall,showInstall,activeNav})
   </aside>;
 }
 function Header({session,seller,store,connected,notificationsEnabled,notificationError,notificationUnconfirmed,notificationPendingProfile,notificationPendingError,soundEnabled,onBell,onSound,onSession,onAdmin,onTheme,onInstall,showInstall}) {
-  const soundLabel=soundEnabled?'Désactiver le son au lancement':'Activer le son au lancement';
+  const soundLabel=soundEnabled?'Désactiver le son Fnac':'Activer le son Fnac';
   const bellLabel=notificationError?'État des notifications indisponible':notificationPendingError?'Activation des notifications à finaliser':notificationPendingProfile?'Notifications autorisées, activation après le choix du profil':notificationsEnabled===null?'Vérification des notifications':notificationUnconfirmed?'Activation des notifications à confirmer':notificationsEnabled?'Notifications activées':'Notifications non activées';
   return <header className="topbar">
     <div className="mobile-brand"><Brand compact/></div>
@@ -375,6 +376,9 @@ export default function App() {
   const displayedEnabled=checkingCurrent?(notificationPermission==='granted'?null:false):notificationsEnabled,displayedError=checkingCurrent?'':notificationError,displayedUnconfirmed=!checkingCurrent&&notificationUnconfirmed;
   const notificationPendingProfile=!session&&startupNotificationPending&&notificationPermission==='granted'&&pushAvailable;
   const notificationNotice=notificationBanner({permission:notificationPermission,enabled:displayedEnabled,hasSession:!!session,platform,installed,error:displayedError,unconfirmed:displayedUnconfirmed,pushAvailable,pendingProfile:notificationPendingProfile,pendingError:!!startupNotificationError});
+  const startupGateRef=useRef(startupGate),alertSoundReady=useRef(false);
+  startupGateRef.current=startupGate;
+  alertSoundReady.current=displayedEnabled===true&&!notificationBusy&&notificationPermission==='granted'&&!startupGate&&!startupPermissionsOpen;
   const startupNotificationReady=pushAvailable&&notificationPermission==='granted'&&!notificationError&&!startupNotificationError&&(notificationsEnabled===true||(CLOUD&&notificationsWanted())||(!session&&startupNotificationPending));
   const store=data?.stores?.find(s=>s.id===session?.storeId), seller=data?.sellers?.find(s=>s.id===session?.sellerId&&sellerStoreId(s)===session?.storeId);
   const activeDepartmentId=seller?sellerDepartmentId(seller):'';
@@ -408,9 +412,14 @@ export default function App() {
       }
     };
     const displayChanged=()=>{if(needsStartupTouch({standalone:isStandalone()}))setStartupGate(true);};
+    // Sur les ouvertures suivantes, préparer le même lecteur au premier geste,
+    // sans jouer le MP3 ni réafficher l'accueil tactile déjà terminé.
+    const prepare=event=>{if(event.isTrusted!==false&&!startupGateRef.current)player.prepareFromGesture();};
+    const visibility=()=>{if(document.visibilityState==='hidden')player.stop();};
     const media=window.matchMedia?.('(display-mode: standalone)');
     window.addEventListener('storage',sync);media?.addEventListener?.('change',displayChanged);
-    return ()=>{window.removeEventListener('storage',sync);media?.removeEventListener?.('change',displayChanged);startupAttempt.current++;startupInFlight.current=false;clearTimeout(startupTimer.current);player.dispose();if(sound.current===player)sound.current=null;};
+    document.addEventListener('pointerdown',prepare,true);document.addEventListener('click',prepare,true);document.addEventListener('keydown',prepare,true);document.addEventListener('visibilitychange',visibility);
+    return ()=>{window.removeEventListener('storage',sync);media?.removeEventListener?.('change',displayChanged);document.removeEventListener('pointerdown',prepare,true);document.removeEventListener('click',prepare,true);document.removeEventListener('keydown',prepare,true);document.removeEventListener('visibilitychange',visibility);startupAttempt.current++;startupInFlight.current=false;clearTimeout(startupTimer.current);player.dispose();if(sound.current===player)sound.current=null;};
   },[]);
   useEffect(()=>{
     if(!isStandalone())return;
@@ -448,6 +457,14 @@ export default function App() {
   },[]);
 
   const flash=useCallback((message,options={})=>{clearTimeout(toastTimer.current);setToast({message,...options});toastTimer.current=setTimeout(()=>setToast(null),options.duration||5500);},[]);
+  const announceSale=useCallback(sale=>{
+    flash(saleMessage(sale.serviceName,sale.sellerName),{tone:'celebrate'});
+    // Les notifications système gardent leur son propre en arrière-plan. Le
+    // son Fnac n'est tenté qu'au premier plan, pour un abonnement confirmé.
+    const allowed=()=>alertSoundReady.current&&readNotificationPermission()==='granted'&&(!CLOUD||notificationsWanted())&&document.visibilityState==='visible';
+    if(!allowed())return;
+    sound.current?.playNotification({visible:true,notificationsEnabled:true,stillAllowed:allowed});
+  },[flash]);
   const refresh=useCallback(async()=>{
     if(CLOUD&&!authReady)return;
     const n=++requestNumber.current;
@@ -535,14 +552,12 @@ export default function App() {
     return listenStore(session,cloudDay,clientId.current,(next,live)=>{
       setData(next);setLoadFailed(false);setConnection(live?'live':'offline');
       try{localStorage.setItem(CACHE_KEY,JSON.stringify({data:next,session}));}catch{}
-    },sale=>{
-      flash(saleMessage(sale.serviceName,sale.sellerName),{tone:'celebrate'});
-    },error=>{
+    },announceSale,error=>{
       setConnection('offline');
       if(error?.code==='permission-denied'){sellerLogout().catch(()=>{});setSession(null);setData(d=>d?{...d,stats:null}:d);localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);localStorage.removeItem(SUMMARY_CACHE_KEY);flash('Votre accès a changé. Reconnectez-vous avec votre code PIN.',{tone:'warning'});}
       else flash('Connexion interrompue. Les données seront actualisées au retour du réseau.',{tone:'warning'});
     },()=>loadGoals(),queueSummary);
-  },[session,authReady,cloudDay,flash,loadGoals,queueSummary]);
+  },[session,authReady,cloudDay,flash,announceSale,loadGoals,queueSummary]);
   useEffect(()=>{
     if(CLOUD)return;
     if(!session){setConnection('waiting');return;}
@@ -551,7 +566,7 @@ export default function App() {
     source.addEventListener('change',e=>{
       try {
         const event=JSON.parse(e.data);
-        if(event.kind==='sale'&&event.clientId!==clientId.current&&isOtherSellerSale(event,session.sellerId)&&(event.departmentId||'tech')===activeDepartmentId)flash(saleMessage(event.serviceName,event.sellerName),{tone:'celebrate'});
+        if(event.kind==='sale'&&event.clientId!==clientId.current&&isOtherSellerSale(event,session.sellerId)&&(event.departmentId||'tech')===activeDepartmentId)announceSale(event);
         if(event.kind==='goals-reset'||event.kind==='service-delete'||(event.kind==='goals'&&Number(event.sellerId)===Number(session.sellerId)))loadGoals();
         if(event.kind==='goals'||event.kind==='goals-reset'||event.kind==='service-delete'||event.kind==='config')queueSummary();
       } catch{}
@@ -559,7 +574,7 @@ export default function App() {
     });
     source.onerror=()=>setConnection('offline');
     return ()=>source.close();
-  },[session,refresh,flash,loadGoals,queueSummary,activeDepartmentId]);
+  },[session,refresh,announceSale,loadGoals,queueSummary,activeDepartmentId]);
   useEffect(()=>{
     const syncDay=()=>setCloudDay(parisToday());
     const onOnline=()=>{syncDay();refresh();loadGoals();queueSummary();};
@@ -649,6 +664,7 @@ export default function App() {
   function navigate(id){setActiveNav(id);if(id==='objectifs'&&!session){changeSession();return;}document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});}
   function toggleSound(){
     const next=!soundEnabled;saveSound(next);setSoundEnabled(next);sound.current?.setEnabled(next);
+    if(next&&!startupGateRef.current)sound.current?.prepareFromGesture();
     if(startupStatus==='unavailable')setStartupStatus('ready');
   }
   function requestStartupLocation(interactive=false){

@@ -81,15 +81,16 @@ test('Permission accordée au lancement : pas de carte redondante en attente du 
 test('Modale notifications : action utilisateur, état bloqué, profil et erreur vérifiable',()=>{
   const base={permission:'default',enabled:false,checkError:'',pushAvailable:true,platform:{os:'android'},installed:true,hasSession:true,busy:false};
   const normal=render(NotificationsDialog,base);
-  assert.match(normal,/Activer les notifications/);assert.match(normal,/Un appui est nécessaire/);assert.match(normal,/votre magasin et votre département/);
-  assert.match(normal,/Pas d’alerte pour vos propres ventes/);assert.match(normal,/ventes de vos collègues/);
+  assert.match(normal,/Activer les notifications/);assert.match(normal,/Un appui est nécessaire/);
+  assert.match(normal,/Pas d’alerte pour vos propres ventes/);assert.match(normal,/Son Fnac en premier plan, selon l’appareil/);
+  assert.doesNotMatch(normal,/Suivez les ventes des autres vendeurs|Les ventes de (service|vos collègues) peuvent vous être signalées|Uniquement pour votre magasin et votre département/);
   const blocked=render(NotificationsDialog,{...base,permission:'denied'});
   assert.match(blocked,/Notifications bloquées/);assert.match(blocked,/<button[^>]+disabled=""[^>]*>Notifications bloquées/);
   const missingProfile=render(NotificationsDialog,{...base,hasSession:false});assert.match(missingProfile,/Choisir mon profil/);
   const pending=render(NotificationsDialog,{...base,permission:'granted',hasSession:false,pendingProfile:true});
-  assert.match(pending,/Autorisation accordée/);assert.match(pending,/essaiera automatiquement d’y associer cet appareil/);assert.match(pending,/Choisir mon profil/);assert.doesNotMatch(pending,/Notifications activées/);
+  assert.match(pending,/Autorisation accordée/);assert.match(pending,/Profil à choisir pour terminer l’activation/);assert.match(pending,/Choisir mon profil/);assert.doesNotMatch(pending,/Notifications activées|essaiera automatiquement d’y associer cet appareil/);
   const pendingError=render(NotificationsDialog,{...base,permission:'granted',enabled:null,hasSession:false,pendingProfile:true,pendingError:true});
-  assert.match(pendingError,/Activation à finaliser/);assert.match(pendingError,/préparation n’a pas abouti/);assert.match(pendingError,/nouvelle tentative sera faite après/);assert.doesNotMatch(pendingError,/Notifications activées/);
+  assert.match(pendingError,/Activation à finaliser/);assert.match(pendingError,/Préparation indisponible/);assert.match(pendingError,/Choisissez votre profil pour réessayer/);assert.doesNotMatch(pendingError,/Notifications activées/);
   const unavailable=render(NotificationsDialog,{...base,permission:'unsupported',pushAvailable:false,platform:{os:'ios'},installed:false});assert.match(unavailable,/Voir comment installer/);
   const checking=render(NotificationsDialog,{...base,enabled:null});assert.match(checking,/Vérification…/);
   const error=render(NotificationsDialog,{...base,enabled:null,checkError:'unavailable'});assert.match(error,/Réessayer la vérification/);

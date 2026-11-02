@@ -14,7 +14,7 @@ const bundled=await build({entryPoints:['src/App.jsx'],bundle:true,platform:'nod
   b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`
     export const CLOUD=true,ADMIN_SESSION='admin';
     export const observeVendor=fn=>globalThis.__startupTest.observe(fn);
-    export const listenStore=()=>()=>{};
+    export const listenStore=(...args)=>globalThis.__startupTest.listen(...args);
     export const prepareFcm=options=>globalThis.__startupTest.prepare(options);
     export const subscribeFcm=(api,options)=>globalThis.__startupTest.subscribe(api,options);
     export const unsubscribeFcm=()=>globalThis.__startupTest.unsubscribe();
@@ -33,7 +33,7 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
   const names=['window','navigator','document','Notification','localStorage','Audio','__startupTest'],old=new Map(names.map(name=>[name,Object.getOwnPropertyDescriptor(globalThis,name)]));
   const values=new Map();if(existingTouch)values.set('fnac-pulse-touch-welcome-v1','done');if(wanted)values.set('fnac-pulse-fcm-enabled','1');
   const storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)};
-  const e={values,gesture:false,notifications:[],locations:[],sounds:[],prepares:0,prepareFails:false,subscriptions:0,requests:[],auth:null,geoSuccess:null,geoResult};
+  const e={values,gesture:false,notifications:[],locations:[],sounds:[],audioLoads:0,audioInstances:0,audioReject:false,listenCalls:0,onSale:null,prepares:0,prepareFails:false,subscriptions:0,requests:[],auth:null,geoSuccess:null,geoResult};
   const permission={permission:notificationPermission,requestPermission(){
     e.notifications.push({gesture:e.gesture});
     if(notificationDeferred)return new Promise(resolve=>{e.resolveNotification=value=>{this.permission=value;resolve(value);};});
@@ -53,6 +53,7 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
   const doc={visibilityState:'visible',body:{style:{}},documentElement:{dataset:{},style:{}},activeElement:null,addEventListener(){},removeEventListener(){},getElementById(){return null;},querySelector(){return null;}};
   const mock={
     observe(fn){e.auth=fn;if(auth!=='manual')queueMicrotask(()=>fn(auth));return ()=>{if(e.auth===fn)e.auth=null;};},
+    listen(_session,_day,_client,onChange,onSale){e.listenCalls++;e.onSale=onSale;return ()=>{if(e.onSale===onSale)e.onSale=null;};},
     async api(path,options={}){e.requests.push({path,method:options.method||'GET',body:options.body});if(path.startsWith('/api/bootstrap'))return data;if(path==='/api/goals')return {goals:{}};if(path.startsWith('/api/summary-goals'))return {};return {};},
     async prepare({signal}={}){
       if(signal?.aborted)throw Error('annulé');e.prepares++;if(e.prepareFails)throw Error('hors ligne');
@@ -63,7 +64,8 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
     async unsubscribe(){storage.removeItem('fnac-pulse-fcm-enabled');},
   };
   const put=(name,value)=>Object.defineProperty(globalThis,name,{configurable:true,writable:true,value});
-  class AudioMock {play(){e.sounds.push({gesture:e.gesture});return Promise.resolve();}pause(){}}
+  class AudioMock {constructor(){e.audioInstances++;this.paused=true;}load(){e.audioLoads++;}play(){e.sounds.push({gesture:e.gesture});if(e.audioReject)return Promise.reject(Error('lecture refusée'));this.paused=false;return Promise.resolve();}pause(){this.paused=true;}}
+  e.doc=doc;e.permission=permission;
   put('window',win);put('navigator',nav);put('document',doc);put('Notification',permission);put('localStorage',storage);put('Audio',AudioMock);put('__startupTest',mock);
   e.restore=()=>{for(const [name,descriptor] of old)if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];};
   e.authAs=async value=>{assert(e.auth);await act(async()=>{e.auth(value);await tick();await tick();});};
@@ -270,7 +272,7 @@ test('Préparation en attente : pas de carte redondante et choix du profil acces
     tree=await mount();await e.press(action(tree,'Notifications d’équipe'));await e.press(button(tree,'Continuer'));
     assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),'1');assert.equal(tree.root.findAllByProps({'aria-label':'Activation des notifications'}).length,0);
     await e.press(tree.root.findByProps({'aria-label':'Notifications autorisées, activation après le choix du profil'}));
-    assert.match(text(tree.toJSON()),/Autorisation accordée/);assert.match(text(tree.toJSON()),/essaiera automatiquement d’y associer cet appareil/);
+    assert.match(text(tree.toJSON()),/Autorisation accordée/);assert.match(text(tree.toJSON()),/Profil à choisir pour terminer l’activation/);
     assert.equal(button(tree,'Choisir mon profil').props.disabled,false);
     await act(async()=>{e.resolvePrepare();await tick();await tick();});
   } finally {await finish(tree,e);}
@@ -305,5 +307,30 @@ test('Déconnexion pendant la demande : ne pas réactiver les notifications apr�
     await e.press(tree.root.findByProps({'aria-label':'Mon profil, Morgan'}));await e.press(button(tree,'Se déconnecter'));
     await act(async()=>{e.resolveNotification('granted');await tick();await tick();});
     assert.equal(e.prepares,0);assert.equal(e.subscriptions,0);assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),undefined);assert.equal(e.values.get('fnac-pulse-fcm-enabled'),undefined);
+  } finally {await finish(tree,e);}
+});
+
+test('Son des alertes cloud : état courant, premier plan, refus et aucun réabonnement du flux',async()=>{
+  const e=environment({geoPermission:'granted',notificationPermission:'granted',wanted:true,auth:session});let tree;
+  const sale=(name='Camille')=>({serviceName:'DMax',sellerName:name});
+  const announce=async item=>act(async()=>{assert(e.onSale);e.onSale(item);await tick();await tick();});
+  try {
+    tree=await mount();await act(async()=>{await tick();await tick();});
+    assert(tree.root.findByProps({'aria-label':'Notifications activées'}));assert.equal(e.sounds.length,0);assert(e.onSale);
+    const listens=e.listenCalls,subscriptions=e.subscriptions;
+    await announce(sale());assert.equal(e.sounds.length,1);assert.match(text(tree.toJSON()),/1 DMax fait par Camille/);
+    await e.press(tree.root.findByProps({'aria-label':'Désactiver le son Fnac'}));await announce(sale('Alex'));
+    assert.equal(e.sounds.length,1);assert.match(text(tree.toJSON()),/1 DMax fait par Alex/);
+    await e.press(tree.root.findByProps({'aria-label':'Activer le son Fnac'}));await announce(sale('Sam'));
+    assert.equal(e.sounds.length,2);assert.equal(e.audioInstances,1);assert.equal(e.listenCalls,listens);assert.equal(e.subscriptions,subscriptions);
+    e.doc.visibilityState='hidden';await announce(sale('Lou'));assert.equal(e.sounds.length,2);
+    e.doc.visibilityState='visible';e.permission.permission='denied';await announce(sale('Noa'));assert.equal(e.sounds.length,2);
+    e.permission.permission='granted';e.values.delete('fnac-pulse-fcm-enabled');await announce(sale('Léa'));assert.equal(e.sounds.length,2);
+    e.values.set('fnac-pulse-fcm-enabled','1');e.audioReject=true;await announce(sale('Sacha'));
+    assert.equal(e.sounds.length,3);assert.match(text(tree.toJSON()),/1 DMax fait par Sacha/); // l'alerte reste visible même si play() est rejeté
+    e.audioReject=false;
+    await e.press(tree.root.findByProps({'aria-label':'Notifications activées'}));await e.press(button(tree,'Désactiver sur cet appareil'));
+    await announce(sale('Robin'));assert.equal(e.sounds.length,3);assert.match(text(tree.toJSON()),/1 DMax fait par Robin/);
+    assert.equal(e.listenCalls,listens); // le flux de ventes ne redémarre pas lors d'un changement de préférence
   } finally {await finish(tree,e);}
 });

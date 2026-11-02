@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const manifest = JSON.parse(fs.readFileSync(new URL('../public/manifest.webmanifest', import.meta.url), 'utf8'));
 const source = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
 
-function serviceWorker(scope) {
+function serviceWorker(scope, windows = []) {
   const handlers = new Map(), added = [], deleted = [], shown = [];
   const base = new URL(scope).pathname;
   const cache = {
@@ -19,13 +19,13 @@ function serviceWorker(scope) {
   };
   const worker = {
     registration: { scope, async showNotification(title, options) { shown.push({title, options}); } },
-    clients: { async claim() {}, async matchAll() {return [];}, async openWindow() {} },
+    clients: { async claim() {}, async matchAll() {return windows;}, async openWindow() {} },
     addEventListener(type, handler) { handlers.set(type, handler); },
     async skipWaiting() {},
   };
   const caches = {
     async open() { return cache; },
-    async keys() { return ['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','fnac-pulse-shell-v8','fnac-pulse-shell-v9','fnac-pulse-shell-v10','fnac-pulse-shell-v11','fnac-pulse-shell-v12','fnac-pulse-shell-v13','fnac-pulse-shell-v14','fnac-pulse-shell-v15','fnac-pulse-shell-v16','fnac-pulse-shell-v17','fnac-pulse-shell-v18','fnac-pulse-shell-v19','fnac-pulse-shell-v20','fnac-pulse-shell-v21','fnac-pulse-shell-v22','fnac-pulse-shell-v23','fnac-pulse-shell-v24','fnac-pulse-shell-v25','fnac-pulse-shell-v34','fnac-pulse-shell-v35','another-application']; },
+    async keys() { return ['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','fnac-pulse-shell-v8','fnac-pulse-shell-v9','fnac-pulse-shell-v10','fnac-pulse-shell-v11','fnac-pulse-shell-v12','fnac-pulse-shell-v13','fnac-pulse-shell-v14','fnac-pulse-shell-v15','fnac-pulse-shell-v16','fnac-pulse-shell-v17','fnac-pulse-shell-v18','fnac-pulse-shell-v19','fnac-pulse-shell-v20','fnac-pulse-shell-v21','fnac-pulse-shell-v22','fnac-pulse-shell-v23','fnac-pulse-shell-v24','fnac-pulse-shell-v25','fnac-pulse-shell-v34','fnac-pulse-shell-v35','fnac-pulse-shell-v36','another-application']; },
     async delete(key) { deleted.push(key); },
     async match() { return undefined; },
   };
@@ -50,7 +50,7 @@ for (const scope of ['https://example.test/', 'https://example.test/FNAC-Pulse/'
     assert.deepEqual(Array.from(sw.added[0]), [base,`${base}manifest.webmanifest`,`${base}icons/icon-192-v3.png`,`${base}icons/icon-512-v3.png`,`${base}icons/icon-maskable-512-v3.png`,`${base}icons/apple-touch-icon-v3.png`,`${base}icons/icon-192.png`,`${base}fnac.svg`,`${base}FNAC%20-%20SIGNATURE.mp3`]);
     assert.deepEqual(Array.from(sw.added[1]), [`${base}assets/app.js`,`${base}assets/app.css`]);
     await dispatch(sw.handlers.get('activate'));
-    assert.deepEqual(sw.deleted,['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','fnac-pulse-shell-v8','fnac-pulse-shell-v9','fnac-pulse-shell-v10','fnac-pulse-shell-v11','fnac-pulse-shell-v12','fnac-pulse-shell-v13','fnac-pulse-shell-v14','fnac-pulse-shell-v15','fnac-pulse-shell-v16','fnac-pulse-shell-v17','fnac-pulse-shell-v18','fnac-pulse-shell-v19','fnac-pulse-shell-v20','fnac-pulse-shell-v21','fnac-pulse-shell-v22','fnac-pulse-shell-v23','fnac-pulse-shell-v24','fnac-pulse-shell-v25','fnac-pulse-shell-v34','fnac-pulse-shell-v35']);
+    assert.deepEqual(sw.deleted,['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','fnac-pulse-shell-v8','fnac-pulse-shell-v9','fnac-pulse-shell-v10','fnac-pulse-shell-v11','fnac-pulse-shell-v12','fnac-pulse-shell-v13','fnac-pulse-shell-v14','fnac-pulse-shell-v15','fnac-pulse-shell-v16','fnac-pulse-shell-v17','fnac-pulse-shell-v18','fnac-pulse-shell-v19','fnac-pulse-shell-v20','fnac-pulse-shell-v21','fnac-pulse-shell-v22','fnac-pulse-shell-v23','fnac-pulse-shell-v24','fnac-pulse-shell-v25','fnac-pulse-shell-v34','fnac-pulse-shell-v35','fnac-pulse-shell-v36']);
     await dispatch(sw.handlers.get('push'),{data:{json:()=>({title:'Test', url:'https://elsewhere.invalid/'})}});
     assert.equal(sw.shown[0].options.icon,`${base}icons/icon-192-v3.png`);
     assert.deepEqual(Array.from(sw.shown[0].options.vibrate),[70,70,70,70,70]);
@@ -59,6 +59,19 @@ for (const scope of ['https://example.test/', 'https://example.test/FNAC-Pulse/'
   });
 }
 
+
+test('Push local : silencieux au premier plan pour éviter un double son, système normal sinon',async()=>{
+  const scope='https://example.test/FNAC-Pulse/',windows=[],sw=serviceWorker(scope,windows);
+  const push=()=>dispatch(sw.handlers.get('push'),{data:{json:()=>({title:'Test',tag:'sale-fictive'})}});
+  windows.push({url:scope,visibilityState:'visible'});await push();
+  assert.equal(sw.shown.at(-1).options.silent,true);assert.equal(sw.shown.at(-1).options.vibrate,undefined);
+  windows[0].visibilityState='hidden';await push();
+  assert.equal(sw.shown.at(-1).options.silent,undefined);assert.deepEqual(Array.from(sw.shown.at(-1).options.vibrate),[70,70,70,70,70]);
+  windows[0]={url:'https://example.test/autre-site/',visibilityState:'visible'};await push();
+  assert.equal(sw.shown.at(-1).options.silent,undefined);
+  windows[0]={url:'https://elsewhere.test/FNAC-Pulse/',visibilityState:'visible'};await push();
+  assert.equal(sw.shown.at(-1).options.silent,undefined);
+});
 
 test('PWA : icônes versionnées, tailles, masque et compatibilité des anciennes notifications', () => {
   const iconDir = new URL('../public/icons/', import.meta.url);
@@ -81,6 +94,6 @@ test('PWA : icônes versionnées, tailles, masque et compatibilité des ancienne
   assert.match(html,/rel="icon"[^>]+icon-192-v3\.png/);
   assert.match(html,/rel="apple-touch-icon"[^>]+apple-touch-icon-v3\.png/);
   const cloudWorker=fs.readFileSync(new URL('../src/sw-cloud.js',import.meta.url),'utf8');
-  assert.match(cloudWorker,/fnac-pulse-shell-v36/);
+  assert.match(cloudWorker,/fnac-pulse-shell-v37/);
   for(const icon of manifest.icons)assert.ok(cloudWorker.includes(icon.src));
 });

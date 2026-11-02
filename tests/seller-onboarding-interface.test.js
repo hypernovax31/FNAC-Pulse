@@ -97,3 +97,57 @@ test('Recherche sans sélection : aide hors de la rangée et géolocalisation to
     assert.match(text(tree.toJSON()),/Fnac Test proposé/);
   } finally {if(tree)await act(async()=>tree.unmount());restore();if(prior)Object.defineProperty(globalThis,'navigator',prior);else delete globalThis.navigator;}
 });
+
+test('Prénoms : suggestions visibles, limitées au magasin et au département, sélection clavier sans doublon',async()=>{
+  const requests=[],restore=apiMock(async(path,options)=>{requests.push(options.body);return {needsPin:false,pinLength:4,pinSalt:'profil-existant'};});let tree;
+  const custom={...data,stores:[...data.stores,{id:'store-2',name:'Fnac Autre',active:true}],sellers:[...data.sellers,
+    {id:3,name:'Émilie',storeId:'store-1',departmentId:'tech',active:true},
+    {id:4,name:'Elliot',storeId:'store-1',departmentId:'tech',active:true},
+    {id:5,name:'Emma',storeId:'store-1',departmentId:'tech',active:false},
+    {id:6,name:'Enzo',storeId:'store-2',departmentId:'tech',active:true}]};
+  const key=key=>({key,preventDefault(){},stopPropagation(){}}),options=()=>tree.root.findAllByProps({role:'option'}).map(text);
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(SessionForm,{data:custom,onSubmit:async()=>{}}));});
+    assert.equal(field(tree,'Votre prénom').props.disabled,true);
+    await chooseScope(tree);await act(async()=>field(tree,'Votre prénom').props.onFocus());
+    assert.equal(field(tree,'Votre prénom').props.role,'combobox');assert.equal(field(tree,'Votre prénom').props['aria-expanded'],true);
+    assert.deepEqual(options(),['Elliot','Émilie','Morgan']);
+    await change(tree,'Votre prénom','emil');assert.deepEqual(options(),['Émilie']);
+    await act(async()=>field(tree,'Votre prénom').props.onKeyDown(key('ArrowDown')));
+    assert.match(field(tree,'Votre prénom').props['aria-activedescendant'],/option-0$/);
+    await act(async()=>{field(tree,'Votre prénom').props.onKeyDown(key('Enter'));await tick();});
+    assert.equal(field(tree,'Votre prénom').props.value,'Émilie');assert.equal(field(tree,'Votre prénom').props['aria-expanded'],false);
+    assert.equal(requests.at(-1).sellerId,3);assert.match(text(tree.toJSON()),/Profil existant : Émilie/);
+    assert.equal(field(tree,'Code PIN personnel').props.maxLength,4);assert.equal(click(tree,'Créer mon profil'),undefined);
+    await change(tree,'Votre département','editorial');await act(async()=>field(tree,'Votre prénom').props.onFocus());
+    assert.deepEqual(options(),['Élodie']);
+    await act(async()=>tree.root.findByProps({role:'option'}).props.onClick());assert.equal(field(tree,'Votre prénom').props.value,'Élodie');
+    await act(async()=>field(tree,'Votre prénom').props.onFocus());await act(async()=>field(tree,'Votre prénom').props.onKeyDown(key('Escape')));
+    assert.equal(field(tree,'Votre prénom').props['aria-expanded'],false);
+  } finally {if(tree)await act(async()=>tree.unmount());restore();}
+});
+
+test('Prénoms : la saisie libre reste disponible, y compris sans suggestion',async()=>{
+  const restore=apiMock(async()=>({needsPin:true}));let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(SessionForm,{data,onSubmit:async()=>{}}));});
+    await chooseScope(tree);await change(tree,'Votre prénom','Nouvelle');
+    assert.equal(tree.root.findAllByProps({role:'option'}).length,0);
+    assert.match(text(tree.toJSON()),/Aucun prénom trouvé dans ce département/);assert.match(text(tree.toJSON()),/Créez votre profil/);
+    assert.equal(field(tree,'Votre nouveau code PIN').props.maxLength,4);
+  } finally {if(tree)await act(async()=>tree.unmount());restore();}
+});
+
+test('Prénoms nombreux : liste bornée, défilement indiqué et recherche dans tous les profils',async()=>{
+  const restore=apiMock(async()=>({needsPin:false,pinLength:4}));let tree;
+  const custom={...data,sellers:Array.from({length:35},(_,i)=>({id:i+1,name:`Vendeur ${String(i+1).padStart(2,'0')}`,storeId:'store-1',departmentId:'tech',active:true}))};
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(SessionForm,{data:custom,onSubmit:async()=>{}}));});await chooseScope(tree);
+    await act(async()=>field(tree,'Votre prénom').props.onFocus());
+    assert.equal(tree.root.findAllByProps({role:'option'}).length,30);assert.match(text(tree.toJSON()),/faites défiler ou précisez votre recherche/);
+    await change(tree,'Votre prénom','35');const matches=tree.root.findAllByProps({role:'option'});
+    assert.equal(matches.length,1);assert.equal(text(matches[0]),'Vendeur 35');
+    await act(async()=>{matches[0].props.onClick();await tick();});assert.match(text(tree.toJSON()),/Profil existant : Vendeur 35/);
+    assert.equal(field(tree,'Code PIN personnel').props.maxLength,4);
+  } finally {if(tree)await act(async()=>tree.unmount());restore();}
+});

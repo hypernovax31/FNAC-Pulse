@@ -14,11 +14,11 @@ const render=(component,props={})=>renderToStaticMarkup(React.createElement(comp
 
 test('En-tête : son séparé, cloche barrée et aucun point vert de direct',()=>{
   const off=render(Header,{connected:'live',notificationsEnabled:false,soundEnabled:false});
-  assert.match(off,/aria-label="Activer le son au lancement"/);assert.match(off,/lucide-volume-x/);
+  assert.match(off,/aria-label="Activer le son Fnac"/);assert.match(off,/lucide-volume-x/);
   assert.match(off,/aria-label="Notifications non activées"/);assert.match(off,/lucide-bell-off/);
   assert.doesNotMatch(off,/live-dot/);assert.match(off,/aria-label="Apparence"/);
   const on=render(Header,{connected:'live',notificationsEnabled:true,soundEnabled:true});
-  assert.match(on,/aria-label="Désactiver le son au lancement"/);assert.match(on,/aria-label="Notifications activées"/);
+  assert.match(on,/aria-label="Désactiver le son Fnac"/);assert.match(on,/aria-label="Notifications activées"/);
   const pending=render(Header,{notificationsEnabled:false,notificationPendingProfile:true});
   assert.match(pending,/Notifications autorisées, activation après le choix du profil/);assert.doesNotMatch(pending,/lucide-bell-off/);
   const error=render(Header,{notificationsEnabled:false,notificationPendingProfile:true,notificationPendingError:true});
