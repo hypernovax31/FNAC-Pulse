@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import { ArrowRight, Check, Pencil, Plus, Target, RotateCw } from 'lucide-react';
 import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, WORKDAY_NAMES, WORKDAY_ORDER, goalReference, goalTargets, hasGoal, parseGoalInputs, normalizeWorkdays, validWorkdays, workdaysLabel } from './goals.js';
 import { validGoalDate, personalGoalCards, personalGoalMetric } from './goal-display.js';
@@ -72,7 +72,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
       <label><span className="form-label">CIBLE</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min="0" max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={busy||disabled||!service} onChange={e=>{setAmount(e.target.value);setNotice('');}} required/></label>
     </div>
     <div className="goal-preview" aria-live="polite"><span className="form-label">CIBLES CALCULÉES POUR LA PÉRIODE EN COURS</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PREVIEW_LABELS[period]}</span><strong>{preview?formatNumber(preview[period]):'—'}</strong></div>)}</div><p className="goal-preview-hint">Ces quantités sont des objectifs à atteindre, pas les ventes déjà réalisées.</p></div>
-    {showPlanning&&<details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Modifiez ces jours dans le bloc Jours travaillés ci-dessus. Les jours fériés sont inclus ; la répartition en nombres entiers peut donner 0 certains jours. Si vous changez de période de référence, vérifiez la quantité saisie avant d’enregistrer.</p></details>}
+    {showPlanning&&<details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Modifiez ces jours dans la fiche du vendeur, onglet Vendeurs. Les jours fériés sont inclus ; la répartition en nombres entiers peut donner 0 certains jours. Si vous changez de période de référence, vérifiez la quantité saisie avant d’enregistrer.</p></details>}
     {stale&&<div className="goal-conflict" role="alert"><span>Cet objectif a été modifié ailleurs.</span><button type="button" onClick={()=>loadService(service)}><RotateCw size={13}/> Recharger les valeurs</button></div>}
     {error&&<div className="form-error" role="alert">{error}</div>}
     {notice&&<div className="goal-saved" role="status">{notice}</div>}
@@ -83,6 +83,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
 
 // Jours habituels par vendeur, du lundi au dimanche ; formulaire réservé à l'administration.
 export function WorkdaysForm({workdays,revision,onSave,disabled=false}) {
+  const titleId=useId();
   const [selected,setSelected]=useState(()=>normalizeWorkdays(workdays));
   const [editRevision,setEditRevision]=useState(revision||null);
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
@@ -103,8 +104,8 @@ export function WorkdaysForm({workdays,revision,onSave,disabled=false}) {
     } catch(e){setError(e.message||'Impossible d’enregistrer les jours travaillés.');}
     finally{setBusy(false);}
   }
-  return <form className="workdays-form" aria-labelledby="admin-workdays-title" onSubmit={submit}>
-    <div className="workdays-heading"><div><h4 id="admin-workdays-title">Jours travaillés</h4><p>Choisissez les jours habituels de ce vendeur, du lundi au dimanche. Sélectionnez au moins un jour.</p></div>{!revision&&<span>Par défaut · à vérifier</span>}</div>
+  return <form className="workdays-form" aria-labelledby={titleId} onSubmit={submit}>
+    <div className="workdays-heading"><div><h4 id={titleId}>Jours travaillés</h4><p>Choisissez les jours habituels de ce vendeur, du lundi au dimanche. Sélectionnez au moins un jour.</p></div>{!revision&&<span>Par défaut · à vérifier</span>}</div>
     <fieldset className="workdays-list" disabled={busy||disabled}><legend className="sr-only">Jours travaillés de ce vendeur</legend>
       {WORKDAY_ORDER.map(id=><label className={`workday-option ${selected.includes(id)?'is-selected':''}`} key={id}>
         <input type="checkbox" checked={selected.includes(id)} onChange={()=>toggle(id)}/><span>{WORKDAY_NAMES[id][0].toUpperCase()+WORKDAY_NAMES[id].slice(1)}</span>

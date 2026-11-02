@@ -4,11 +4,14 @@ import { api } from './api';
 import { CLOUD, adminLogin, adminLogout, changeAdminPassword } from './cloud';
 import { sellersForStore, orderServices, serviceRemovedForStore } from './catalog';
 import { departmentsForStore, sellerDepartmentId } from './departments';
-import { GoalForm, WorkdaysForm } from './Goals';
+import { GoalForm } from './Goals';
+import { SellerCard } from './SellerCard';
 import { SalesResetPanel } from './SalesReset';
+import { SalesHistoryPanel } from './SalesHistory';
 import { GoalsResetPanel } from './GoalsReset';
 import { SellerDeletePanel } from './SellerDelete';
 import { ServiceDeletePanel } from './ServiceDelete';
+import { AdminTabs } from './AdminTabs';
 import { normalizeWorkdays } from './goals.js';
 
 function directoryDate(value) {
@@ -68,12 +71,12 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [countsRevision,setCountsRevision]=useState(0);
   const [adminGoals,setAdminGoals]=useState(null);
   const [adminWorkdays,setAdminWorkdays]=useState(null);
-  const [adminWorkdaysRevision,setAdminWorkdaysRevision]=useState(null);
   const [goalsFor,setGoalsFor]=useState('');
   const [goalsLoading,setGoalsLoading]=useState(false);
   const goalScope=useRef('');goalScope.current=`${adminStore}:${adminSeller}:${tab}`;
   const [name,setName]=useState('');
   const [newSellerDepartment,setNewSellerDepartment]=useState('');
+  const [expandedSeller,setExpandedSeller]=useState(null);
   const [serviceDeleteRequest,setServiceDeleteRequest]=useState(null);
   const [serviceDeleteReady,setServiceDeleteReady]=useState(false);
   const [editing,setEditing]=useState(null);
@@ -100,7 +103,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   },[token,adminStore,adminSeller,tab,countsRevision]);
 
   function applyAdminGoals(result) {
-    setAdminGoals(result.goals);setAdminWorkdays(normalizeWorkdays(result.workdays));setAdminWorkdaysRevision(result.workdaysRevision||null);
+    setAdminGoals(result.goals);setAdminWorkdays(normalizeWorkdays(result.workdays));
   }
   useEffect(()=>{
     if(!token||!adminStore||!adminSeller||tab!=='goals')return;
@@ -114,19 +117,6 @@ export default function Admin({onClose,data,session,onChanged}) {
     const scope=`${adminStore}:${adminSeller}:${tab}`;setBusy(true);setError('');setNotice('');
     try {
       const result=await api('/api/admin/goals',{method:'POST',token,body:{...body,storeId:adminStore,sellerId:Number(adminSeller)}});
-      if(goalScope.current===scope)applyAdminGoals(result);
-      onChanged();return result;
-    } catch(e) {
-      if(e.status===409&&goalScope.current===scope) {
-        try{const latest=await api(`/api/admin/goals?storeId=${encodeURIComponent(adminStore)}&sellerId=${encodeURIComponent(adminSeller)}`,{token});if(goalScope.current===scope)applyAdminGoals(latest);}catch{}
-      }
-      throw e;
-    } finally {setBusy(false);}
-  }
-  async function saveAdminWorkdays(body) {
-    const scope=`${adminStore}:${adminSeller}:${tab}`;setBusy(true);setError('');setNotice('');
-    try {
-      const result=await api('/api/admin/workdays',{method:'POST',token,body:{...body,storeId:adminStore,sellerId:Number(adminSeller)}});
       if(goalScope.current===scope)applyAdminGoals(result);
       onChanged();return result;
     } catch(e) {
@@ -165,8 +155,8 @@ export default function Admin({onClose,data,session,onChanged}) {
     try {await work();if(success)setNotice(success);await loadAll();onChanged();}
     catch(e){setError(e.message);} finally{setBusy(false);}
   }
-  function switchTab(next){if(next!==tab)setServiceDeleteReady(false);setTab(next);setCountsFor('');setError('');setNotice('');setEditing(null);setName('');setServiceDeleteRequest(null);}
-  function changeStore(value){setAdminStore(value);setAdminSeller('');setCounts({});setCountsFor('');setEditing(null);setNewSellerDepartment('');setServiceDeleteRequest(null);setServiceDeleteReady(false);setError('');setNotice('');}
+  function switchTab(next){if(next!==tab)setServiceDeleteReady(false);setTab(next);setCountsFor('');setError('');setNotice('');setEditing(null);setName('');setExpandedSeller(null);setServiceDeleteRequest(null);}
+  function changeStore(value){setAdminStore(value);setAdminSeller('');setCounts({});setCountsFor('');setEditing(null);setNewSellerDepartment('');setExpandedSeller(null);setServiceDeleteRequest(null);setServiceDeleteReady(false);setError('');setNotice('');}
   const activeSellers=sellersForStore(all.sellers,adminStore);
   const storeSellers=sellersForStore(all.sellers,adminStore,{activeOnly:false});
   const storeDepartments=adminStore?departmentsForStore(all,adminStore,{activeOnly:false}):[];
@@ -201,9 +191,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   </Modal>;
 
   return <Modal title="Administration" subtitle={adminStoreName?`Magasin sélectionné : ${adminStoreName}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={onClose} wide>
-    <div className="admin-tabs" role="tablist" aria-label="Rubriques administration">
-      {[['sales','Ventes'],['goals','Objectifs'],['departments','Départements'],['sellers','Vendeurs'],['services','Services'],['stores','Magasins'],['security','Sécurité']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} disabled={busy} onClick={()=>switchTab(key)} className={tab===key?'active':''}>{label}</button>)}
-    </div>
+    <AdminTabs tab={tab} onSelect={switchTab} disabled={busy}/>
     {error&&<div className="admin-alert error" role="alert">{error}</div>}
     {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
     <div className="admin-body">
@@ -218,13 +206,13 @@ export default function Admin({onClose,data,session,onChanged}) {
           {activeServices.map(s=><div className="admin-count-row" key={s.id}><strong>{s.name}</strong><div><input type="number" min="0" max={CLOUD?100:999} aria-label={`Nombre de ventes ${s.name}`} value={counts[s.id]??0} onChange={e=>setCounts(c=>({...c,[s.id]:e.target.value}))}/><button disabled={busy} className="small-outline-button" onClick={()=>run(async()=>{const n=Number(counts[s.id]??0);if(!Number.isInteger(n)||n<0||n>(CLOUD?100:999))throw new Error(`La quantité doit être comprise entre 0 et ${CLOUD?100:999}.`);await api('/api/admin/adjust',{method:'POST',token,body:{storeId:adminStore,sellerId:Number(adminSeller),serviceId:s.id,count:n}})},'Total mis à jour.')}>Enregistrer</button></div></div>)}
         </div>:<div className="empty-admin">{countsLoading?'Chargement des ventes…':'Ventes indisponibles. Réessayez en changeant de sélection.'}</div>:<div className="empty-admin">Sélectionnez un magasin et un vendeur pour modifier les ventes.</div>}
         <div className="admin-note"><Info size={15}/> Les corrections ne déclenchent pas de notification de vente.</div>
-        <SalesResetPanel key={adminStore} storeId={adminStore} storeName={adminStoreName} token={token} disabled={busy} onUpdate={()=>{setCountsRevision(value=>value+1);onChanged();}}/>
+        <SalesHistoryPanel key={`history:${adminStore}`} storeId={adminStore} storeName={adminStoreName} sellers={storeSellers} services={all.services} departments={storeDepartments} today={data.today} token={token} disabled={busy||!allLoaded} onBusy={setBusy} onReload={()=>{loadAll();onChanged();}} onUpdate={()=>{setCountsRevision(value=>value+1);onChanged();}}/>
+        <SalesResetPanel key={`reset:${adminStore}`} storeId={adminStore} storeName={adminStoreName} token={token} disabled={busy} onUpdate={()=>{setCountsRevision(value=>value+1);onChanged();}}/>
       </>}
       {tab==='goals'&&adminStore&&<>
-        <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Choisissez les jours travaillés, puis les objectifs par service. Les autres périodes sont calculées automatiquement.</p></div></div>
+        <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Définissez les objectifs par service. Les jours travaillés se règlent dans chaque fiche de l’onglet Vendeurs.</p></div></div>
         <div className="admin-selects admin-selects-single"><label><span className="form-label">Vendeur</span><select aria-label="Vendeur pour les objectifs" className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>setAdminSeller(e.target.value)}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label></div>
         {adminSeller ? goalsFor===`${adminStore}:${adminSeller}`&&adminGoals&&adminWorkdays ? <React.Fragment key={`${adminStore}:${adminSeller}`}>
-          <WorkdaysForm workdays={adminWorkdays} revision={adminWorkdaysRevision} onSave={saveAdminWorkdays} disabled={busy}/>
           <section className="admin-goals-services" aria-labelledby="admin-goals-services-title"><div className="workdays-heading"><div><h4 id="admin-goals-services-title">Services</h4><p>Définissez une cible et sa période de référence pour chaque service.</p></div></div><GoalForm services={activeServices} goals={adminGoals} workdays={adminWorkdays} date={data.today} onSave={saveAdminGoals} disabled={busy} showPlanning/></section>
         </React.Fragment> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un vendeur pour gérer ses objectifs.</div>}
         <div className="admin-note"><Info size={15}/> Les objectifs se répètent et toute modification s’applique aux périodes suivantes.</div>
@@ -249,14 +237,23 @@ export default function Admin({onClose,data,session,onChanged}) {
             {tab==='sellers'&&<select className="text-input" aria-label="Département du nouveau vendeur" value={departmentForNewSeller} onChange={e=>setNewSellerDepartment(e.target.value)} disabled={busy||!activeDepartments.length} required>{activeDepartments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select>}
             <button className="primary-button" disabled={busy||(tab==='sellers'&&!departmentForNewSeller)}><Plus size={16}/> Ajouter</button>
           </form>
-          {(tab==='sellers'?storeSellers:orderedServices).length===0?<div className="empty-admin">{tab==='sellers'?'Aucun vendeur dans ce magasin. Ajoutez le premier prénom ci-dessus.':'Aucun service dans ce magasin.'}</div>:<div className="entity-list">{(tab==='sellers'?storeSellers:orderedServices).map((item,index)=><div className={`entity-row ${tab==='sellers'?'seller-entity-row':'service-entity-row'} ${!item.active?'is-archived':''}`} key={item.id}>
-            {editing===item.id ? <form className="edit-entity" onSubmit={e=>{e.preventDefault();run(async()=>{await api(`/api/admin/entities/${tab}/${item.id}`,{method:'PATCH',token,body:{name:editName,...(tab==='sellers'?{storeId:adminStore}:{})}});setEditing(null);},'Nom modifié.')}}><input className="text-input" aria-label={`Nouveau nom de ${item.name}`} value={editName} onChange={e=>setEditName(e.target.value)} autoFocus maxLength={60} required/><button className="icon-button" aria-label="Enregistrer le nom" title="Enregistrer" disabled={busy}><Check size={17}/></button><button className="icon-button" type="button" aria-label="Annuler la modification" title="Annuler" onClick={()=>setEditing(null)}><X size={17}/></button></form> : <><div className="entity-name"><strong>{item.name}</strong>{!item.active&&<span className="archived-label">{item.deletingJob?'Suppression en cours':tab==='services'?'Inactif':'Archivé'}</span>}</div>{tab==='sellers'&&<label className="entity-department"><span className="sr-only">Département de {item.name}</span><select className="text-input" aria-label={`Département de ${item.name}`} value={sellerDepartmentId(item)} disabled={busy||!!item.deletingJob} onChange={e=>{const departmentId=e.target.value;run(()=>api(`/api/admin/entities/sellers/${item.id}`,{method:'PATCH',token,body:{storeId:adminStore,departmentId}}),'Vendeur réaffecté. Les ventes passées restent dans leur département d’origine.');}}>{storeDepartments.filter(d=>d.active||d.id===sellerDepartmentId(item)).map(d=><option value={d.id} key={d.id}>{d.name}{d.active?'':' · archivé'}</option>)}</select></label>}<div className="entity-actions">
-              {tab==='services'&&<><button className="icon-button order-button" aria-label={`Monter ${item.name}`} title="Monter" disabled={busy||index===0} onClick={()=>moveService(index,-1)}><ArrowUp size={16}/></button><button className="icon-button order-button" aria-label={`Descendre ${item.name}`} title="Descendre" disabled={busy||index===orderedServices.length-1} onClick={()=>moveService(index,1)}><ArrowDown size={16}/></button></>}
-              <button className="icon-button" aria-label={`Modifier ${item.name}`} title="Modifier" disabled={busy||!!item.deletingJob} onClick={()=>{setEditing(item.id);setEditName(item.name)}}><Pencil size={15}/></button>
-              {tab==='sellers'&&<button className="icon-button" aria-label={`${item.active?'Archiver':'Restaurer'} ${item.name}`} title={item.active?'Archiver':'Restaurer'} disabled={busy||!!item.deletingJob} onClick={()=>{if(item.active&&!window.confirm(`Archiver « ${item.name} » ? Son historique sera conservé.`))return;run(()=>api(`/api/admin/entities/sellers/${item.id}`,{method:'PATCH',token,body:{active:!item.active,storeId:adminStore}}),item.active?'Élément archivé.':'Élément restauré.')}}>{item.active?<Archive size={15}/>:<RotateCcw size={15}/>}</button>}
-              {tab==='services'&&!item.active&&<button type="button" className="icon-button" aria-label={`Réactiver ${item.name} pour tous les magasins`} title="Réactiver pour tous les magasins" disabled={busy} onClick={()=>{if(!window.confirm(`Réactiver « ${item.name} » pour tous les magasins ? Ses données existantes seront conservées.`))return;run(()=>api(`/api/admin/entities/services/${item.id}`,{method:'PATCH',token,body:{active:true}}),'Service réactivé pour tous les magasins.');}}><RotateCcw size={15}/></button>}
-              {tab==='services'&&<button type="button" className="icon-button service-delete-icon" aria-label={`Supprimer ${item.name} de ${adminStoreName}`} title={`Supprimer ce service de ${adminStoreName}`} disabled={busy||!allLoaded||!serviceDeleteReady} onClick={()=>setServiceDeleteRequest({id:Number(item.id),name:item.name,storeName:adminStoreName})}><Trash2 size={16}/></button>}</div></>}
-          </div>)}</div>}
+          {tab==='sellers' ? (storeSellers.length===0?<div className="empty-admin">Aucun vendeur dans ce magasin. Ajoutez le premier prénom ci-dessus.</div>:<div className="seller-card-list">{storeSellers.map(item=><SellerCard key={item.id}
+            seller={item} departments={storeDepartments} storeId={adminStore} token={token} busy={busy}
+            editing={editing===item.id} editName={editName} onEditName={setEditName}
+            onEdit={()=>{setEditing(item.id);setEditName(item.name);}} onCancelEdit={()=>setEditing(null)}
+            onRename={()=>run(async()=>{await api(`/api/admin/entities/sellers/${item.id}`,{method:'PATCH',token,body:{name:editName,storeId:adminStore}});setEditing(null);},'Nom modifié.')}
+            onDepartment={departmentId=>run(()=>api(`/api/admin/entities/sellers/${item.id}`,{method:'PATCH',token,body:{storeId:adminStore,departmentId}}),'Vendeur réaffecté. Les ventes passées restent dans leur département d’origine.')}
+            onArchive={()=>{if(item.active&&!window.confirm(`Archiver « ${item.name} » ? Son historique sera conservé.`))return;run(()=>api(`/api/admin/entities/sellers/${item.id}`,{method:'PATCH',token,body:{active:!item.active,storeId:adminStore}}),item.active?'Élément archivé.':'Élément restauré.');}}
+            workdaysOpen={expandedSeller===item.id} onToggleWorkdays={()=>setExpandedSeller(old=>old===item.id?null:item.id)} onBusy={setBusy} onChanged={onChanged}/>)}</div>)
+          : (orderedServices.length===0?<div className="empty-admin">Aucun service dans ce magasin.</div>:<div className="entity-list">{orderedServices.map((item,index)=><div className={`entity-row service-entity-row ${!item.active?'is-archived':''}`} key={item.id}>
+            {editing===item.id?<form className="edit-entity" onSubmit={e=>{e.preventDefault();run(async()=>{await api(`/api/admin/entities/services/${item.id}`,{method:'PATCH',token,body:{name:editName}});setEditing(null);},'Nom modifié.')}}><input className="text-input" aria-label={`Nouveau nom de ${item.name}`} value={editName} onChange={e=>setEditName(e.target.value)} autoFocus maxLength={60} required/><button className="icon-button" aria-label="Enregistrer le nom" title="Enregistrer" disabled={busy}><Check size={17}/></button><button className="icon-button" type="button" aria-label="Annuler la modification" title="Annuler" onClick={()=>setEditing(null)}><X size={17}/></button></form>
+            :<><div className="entity-name"><strong>{item.name}</strong>{!item.active&&<span className="archived-label">Inactif</span>}</div><div className="entity-actions">
+              <button className="icon-button order-button" aria-label={`Monter ${item.name}`} title="Monter" disabled={busy||index===0} onClick={()=>moveService(index,-1)}><ArrowUp size={16}/></button><button className="icon-button order-button" aria-label={`Descendre ${item.name}`} title="Descendre" disabled={busy||index===orderedServices.length-1} onClick={()=>moveService(index,1)}><ArrowDown size={16}/></button>
+              <button className="icon-button" aria-label={`Modifier ${item.name}`} title="Modifier" disabled={busy} onClick={()=>{setEditing(item.id);setEditName(item.name);}}><Pencil size={15}/></button>
+              {!item.active&&<button type="button" className="icon-button" aria-label={`Réactiver ${item.name} pour tous les magasins`} title="Réactiver pour tous les magasins" disabled={busy} onClick={()=>{if(!window.confirm(`Réactiver « ${item.name} » pour tous les magasins ? Ses données existantes seront conservées.`))return;run(()=>api(`/api/admin/entities/services/${item.id}`,{method:'PATCH',token,body:{active:true}}),'Service réactivé pour tous les magasins.');}}><RotateCcw size={15}/></button>}
+              <button type="button" className="icon-button service-delete-icon" aria-label={`Supprimer ${item.name} de ${adminStoreName}`} title={`Supprimer ce service de ${adminStoreName}`} disabled={busy||!allLoaded||!serviceDeleteReady} onClick={()=>setServiceDeleteRequest({id:Number(item.id),name:item.name,storeName:adminStoreName})}><Trash2 size={16}/></button>
+            </div></>}
+          </div>)}</div>)}
           {tab==='services'&&<>
             <ServiceDeletePanel key={adminStore} storeId={adminStore} storeName={adminStoreName} token={token} disabled={busy||!allLoaded} requested={serviceDeleteRequest} onRequestHandled={()=>setServiceDeleteRequest(null)} onAvailabilityChange={setServiceDeleteReady} onUpdate={()=>{loadAll();onChanged();}}/>
             {removedServices.length>0&&<details className="removed-services"><summary>Services retirés de ce magasin ({removedServices.length})</summary><p>Vous pouvez réactiver un service pour ce magasin. Les ventes et objectifs effacés ne seront pas récupérés.</p><div className="entity-list">{removedServices.map(item=><div className="entity-row" key={item.id}><div className="entity-name"><strong>{item.name}</strong>{!item.active&&<span className="archived-label">Inactif partout</span>}</div><button type="button" className="small-outline-button" disabled={busy||!serviceDeleteReady} onClick={()=>{

@@ -27,6 +27,12 @@ class MemoryDb {
       .map(([,v])=>structuredClone(v)).filter(x=>(!field||(op==='EQUAL'?x.data[field]===value:x.data[field]>=value))&&x.id>after)
       .sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0).slice(0,limit);
   }
+  async salesPeriodPage(path,{start,end,limit=200,afterDate='',afterId=''}={}) {
+    return [...this.docs].filter(([k])=>k.startsWith(path+'/')&&!k.slice(path.length+1).includes('/'))
+      .map(([,v])=>structuredClone(v)).filter(x=>typeof x.data.businessDate==='string'&&x.data.businessDate>=start&&x.data.businessDate<=end&&
+        (!afterDate||x.data.businessDate<afterDate||(x.data.businessDate===afterDate&&x.id<afterId)))
+      .sort((a,b)=>b.data.businessDate.localeCompare(a.data.businessDate)||b.id.localeCompare(a.id)).slice(0,limit);
+  }
 }
 function makeMessage(body){return {body,acked:false,retried:false,ack(){this.acked=true},retry(){this.retried=true}};}
 async function activateSeller(req,storeId,sellerId,newProof,adminToken) {
@@ -1486,4 +1492,96 @@ test('Suppression service cloud : une vente rejouée pendant son retrait ne reç
   const remove={storeId:store,serviceId:1,jobId:'service-replay-test-0001',expectedName:base.services[0].name,expectedStoreName:base.stores.find(s=>s.id===store).name,confirmation:'SUPPRIMER'};
   const commit=db.commit.bind(db);let started=false;db.commit=async writes=>{if(!started&&writes.some(w=>w.path===`pulseStores/${store}/sales/${requestId}`)){started=true;assert.equal((await req('/api/admin/services/delete','POST',remove)).body.status,'running');}return commit(writes);};
   const replay=await req('/api/sales','POST',sale,'seller');assert.equal(started,true);assert.equal(replay.status,409);
+});
+
+test('Historique admin : périodes passées, pagination, corrections individuelles et isolation atomique',async()=>{
+  const db=new MemoryDb(),identities=new Map([['admin',{sub:'administrator'}],['seller',{sub:'seller',role:'seller'}]]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,token)=>{if(!identities.has(token))throw Error();return identities.get(token);}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator'},ctx={waitUntil(){}};
+  const req=async(path,method='GET',body,token='admin')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  const base=(await req('/api/bootstrap','GET',undefined,'')).body,store=LEGACY_STORE_ID,other=base.stores.find(s=>s.name==='Fnac Bordeaux').id;
+  const catalog=(await db.get('pulse/catalog')).data,seller=catalog.sellers.find(s=>s.id===1),storeName=catalog.stores.find(s=>s.id===store).name;
+  seller.active=false;catalog.sellerFlags.s1=false; // Un vendeur archivé reste consultable.
+  const sale=(id,sellerId,date,extra={})=>({id,storeId:store,sellerId,serviceId:1,departmentId:'tech',businessDate:date,createdAt:`${date}T12:00:00Z`,source:'sale',deletedAt:null,...extra});
+  const writes=[db.write('pulse/catalog',catalog),
+    db.write(`pulseStores/${store}/sales/a-target-01`,sale('a-target-01',1,'2026-10-29')),
+    db.write(`pulseStores/${store}/sales/a-target-02`,sale('a-target-02',1,'2026-10-30',{source:'adjustment',serviceId:2,departmentId:'editorial'})),
+    db.write(`pulseStores/${store}/sales/a-previous-1`,sale('a-previous-1',1,'2026-09-30')),
+    db.write(`pulseStores/${store}/sales/a-deleted-01`,sale('a-deleted-01',1,'2026-10-29',{deletedAt:'2026-10-29T16:00:00Z'})),
+    db.write(`pulseStores/${store}/sales/a-other-user`,sale('a-other-user',2,'2026-10-30')),
+    db.write(`pulseStores/${other}/sales/a-target-01`,sale('a-target-01',1,'2026-10-29',{storeId:other})),
+    db.write('pulseOutbox/a-target-01',{saleId:'a-target-01',storeId:store,status:'pending'}),
+    db.write('pulseOutbox/a-target-02',{saleId:'a-target-02',storeId:store,status:'pending'})];
+  for(let i=0;i<205;i++){const id=`z-other-${String(i).padStart(4,'0')}`;writes.push(db.write(`pulseStores/${store}/sales/${id}`,sale(id,2,'2026-10-29')));}
+  await db.commit(writes);
+  const query=(period,anchor,extra='')=>`/api/admin/sales/history?storeId=${store}&sellerId=1&period=${period}&anchor=${anchor}${extra}`;
+  assert.equal((await req(query('day','2026-10-29'),'GET',undefined,'')).status,401);
+  assert.equal((await req(query('day','2026-10-29'),'GET',undefined,'seller')).status,403);
+  assert.equal((await req(query('day','2026-02-30'))).status,400);
+  assert.equal((await req(query('day','2999-01-01'))).status,400);
+  assert.equal((await req(`/api/admin/sales/history?storeId=${other}&sellerId=1&period=month&anchor=2026-10-29`)).status,400);
+  let first=(await req(query('day','2026-10-29'))).body;assert.deepEqual(first.sales,[]);assert(first.next);
+  let second=(await req(query('day','2026-10-29',`&afterDate=${first.next.date}&afterId=${first.next.id}`))).body;
+  assert.deepEqual(second.sales.map(s=>s.id),['a-target-01']);assert.equal(second.next,null);
+  const month=[];let next=null;do {const result=(await req(query('month','2026-10-29',next?`&afterDate=${next.date}&afterId=${next.id}`:''))).body;month.push(...result.sales);next=result.next;}while(next);
+  assert.deepEqual(month.map(s=>s.id).sort(),['a-target-01','a-target-02']);
+  const day=(await req(query('day','2026-09-30'))).body;assert.deepEqual(day.sales.map(s=>s.id),['a-previous-1']);
+  const body={storeId:store,sellerId:1,period:'month',anchor:'2026-10-29',saleIds:['a-target-01'],requestId:'correction-test-0001',confirmation:'SUPPRIMER',expectedSellerName:seller.name,expectedStoreName:storeName};
+  assert.equal((await req('/api/admin/sales/correct','POST',body,'')).status,401);
+  assert.equal((await req('/api/admin/sales/correct','POST',{...body,confirmation:''})).status,400);
+  assert.equal((await req('/api/admin/sales/correct','POST',{...body,saleIds:['a-target-01','a-target-01']})).status,400);
+  assert.equal((await req('/api/admin/sales/correct','POST',{...body,saleIds:Array.from({length:21},(_,i)=>`sale-${i}`)})).status,400);
+  assert.equal((await req('/api/admin/sales/correct','POST',{...body,saleIds:['a-target-01','a-other-user']})).status,409);
+  assert.equal((await db.get(`pulseStores/${store}/sales/a-target-01`)).data.deletedAt,null);
+  assert.equal((await req('/api/admin/sales/correct','POST',{...body,saleIds:['a-previous-1']})).status,409);
+  const corrected=await req('/api/admin/sales/correct','POST',body);assert.equal(corrected.status,200);assert.equal(corrected.body.deleted,1);
+  assert((await db.get(`pulseStores/${store}/sales/a-target-01`)).data.deletedAt);
+  assert.equal((await db.get(`pulseStores/${store}/sales/a-target-02`)).data.deletedAt,null);
+  assert.equal((await db.get(`pulseStores/${other}/sales/a-target-01`)).data.deletedAt,null);
+  assert.deepEqual((await db.get('pulseOutbox/a-target-01')).data,{status:'reset'});
+  assert.equal((await db.get('pulseOutbox/a-target-02')).data.status,'pending');
+  assert.equal((await req('/api/admin/sales/correct','POST',body)).body.duplicate,true);
+  assert.equal((await req('/api/admin/sales/correct','POST',{...body,saleIds:['a-target-02']})).status,409);
+  const before=(await db.get(`pulseStores/${store}/sales/a-target-02`)).data;
+  const race={...body,saleIds:['a-target-02'],requestId:'correction-race-0001'};
+  const commit=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{if(!raced&&writes.some(w=>w.path==='pulseSalesCorrections/correction-race-0001')){raced=true;await commit([db.write(`pulseStores/${store}/sales/a-target-02`,{...before,serviceId:3})]);}return commit(writes);};
+  assert.equal((await req('/api/admin/sales/correct','POST',race)).status,409);
+  assert.equal((await db.get(`pulseStores/${store}/sales/a-target-02`)).data.deletedAt,null);
+  assert.equal(await db.get('pulseSalesCorrections/correction-race-0001'),null);
+});
+
+test('Notifications : une vente corrigée avant ou pendant la mise en file et la consommation reste neutralisée',async()=>{
+  const db=new MemoryDb(),sent=[],queued=[],waits=[],store=LEGACY_STORE_ID;
+  const claims={role:'seller',sub:'author-race',storeId:store,sellerId:1,accessVersion:'v1'};
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,token)=>token==='admin'?{sub:'administrator'}:claims,
+    sendFcm:async(_env,token)=>sent.push(token)});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(messages){queued.push(...messages.map(m=>m.body));}}};
+  const ctx={waitUntil(p){waits.push(p)}};
+  const req=async(path,method='GET',body,token='admin')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),authorization:`Bearer ${token}`},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  const base=(await req('/api/bootstrap')).body,storeName=base.stores.find(s=>s.id===store).name,date=parisToday();
+  const token='notification-token-peer-correction-test-0001',tokenId=await digestBase64(token);
+  await db.commit([db.write('pulseAccess/author-race',{active:true,storeId:store,sellerId:1,version:'v1'}),
+    db.write('pulseAccess/peer-race',{active:true,storeId:store,sellerId:2,version:'v2'}),
+    db.write(`pulseTokens/${tokenId}`,{token,uid:'peer-race',storeId:store,accessVersion:'v2'})]);
+  const sale=id=>({id,storeId:store,sellerId:1,departmentId:'tech',serviceId:1,createdAt:new Date().toISOString(),businessDate:date,source:'sale',deletedAt:null});
+  const outbox=id=>({saleId:id,storeId:store,sellerId:1,departmentId:'tech',status:'queued',createdAt:Date.now(),sellerName:'Morgan',serviceName:'DMax'});
+  const correction=(id,requestId)=>({storeId:store,sellerId:1,period:'day',anchor:date,saleIds:[id],requestId,confirmation:'SUPPRIMER',expectedSellerName:'Morgan',expectedStoreName:storeName});
+  const consume=async id=>{const msg=makeMessage({saleId:id,storeId:store,tokenId});await worker.queue({messages:[msg]},env);assert(msg.acked);};
+  // Défense supplémentaire si une ancienne outbox existe alors que la vente est déjà tombstonée.
+  const deleted='push-deleted-00001';await db.commit([db.write(`pulseStores/${store}/sales/${deleted}`,{...sale(deleted),deletedAt:new Date().toISOString()}),db.write(`pulseOutbox/${deleted}`,outbox(deleted))]);
+  await consume(deleted);assert.deepEqual(sent,[]);
+  // Correction précisément entre la première lecture et l'appel FCM.
+  const racing='push-racing-000001';await db.commit([db.write(`pulseStores/${store}/sales/${racing}`,sale(racing)),db.write(`pulseOutbox/${racing}`,outbox(racing))]);
+  const getMany=db.getMany.bind(db);let consumeRace=true;
+  db.getMany=async paths=>{if(consumeRace&&paths.length===3&&paths[0]===`pulseStores/${store}/sales/${racing}`){consumeRace=false;assert.equal((await req('/api/admin/sales/correct','POST',correction(racing,'correction-push-0001'))).status,200);}return getMany(paths);};
+  await consume(racing);assert.equal(consumeRace,false);assert.deepEqual(sent,[]);assert.deepEqual((await db.get(`pulseOutbox/${racing}`)).data,{status:'reset'});
+  // Une autre vente correcte est envoyée une seule fois au collègue.
+  const normal='push-normal-000001';await db.commit([db.write(`pulseStores/${store}/sales/${normal}`,sale(normal)),db.write(`pulseOutbox/${normal}`,outbox(normal))]);
+  await consume(normal);await consume(normal);assert.deepEqual(sent,[token]);
+  // Correction pendant que la mise en file lit les appareils : aucun message en file.
+  const query=db.query.bind(db);let dispatchRace=true;
+  db.query=async(path,...args)=>{if(dispatchRace&&path==='pulseTokens'){dispatchRace=false;assert.equal((await req('/api/admin/sales/correct','POST',correction('push-dispatch-0001','correction-push-0002'))).status,200);}return query(path,...args);};
+  assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'push-dispatch-0001'},'seller')).status,200);await Promise.all(waits.splice(0));
+  assert.equal(dispatchRace,false);assert(!queued.some(m=>m.saleId==='push-dispatch-0001'));assert.deepEqual((await db.get('pulseOutbox/push-dispatch-0001')).data,{status:'reset'});
 });

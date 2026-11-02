@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url),{act}=TestRenderer;
 const bundled=await build({entryPoints:['src/Admin.jsx'],bundle:true,platform:'node',format:'cjs',write:false,external:['react','lucide-react'],logLevel:'silent',plugins:[{name:'admin-mocks',setup(b){
   b.onResolve({filter:/^\.\/api$/},()=>({path:'api',namespace:'mock'}));
   b.onResolve({filter:/^\.\/cloud$/},()=>({path:'cloud',namespace:'mock'}));
-  b.onLoad({filter:/^api$/,namespace:'mock'},()=>({contents:`export const api=(...x)=>globalThis.__adminTestApi(...x);export const uid=()=>"admin-test-job-0001";`,loader:'js'}));
+  b.onLoad({filter:/^api$/,namespace:'mock'},()=>({contents:`export const api=(...x)=>globalThis.__adminTestApi(...x);export const uid=()=>"admin-test-job-0001";export const dateLabel=x=>x;export const timeLabel=x=>x;`,loader:'js'}));
   b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`export const CLOUD=true;export const adminLogin=()=>{};export const adminLogout=()=>{};export const changeAdminPassword=()=>{};`,loader:'js'}));
 }}]});
 const module={exports:{}};new Function('module','exports','require',bundled.outputFiles[0].text)(module,module.exports,require);
@@ -26,14 +26,27 @@ test('Administration : vendeurs, ajout, réinitialisation PIN et suppression dan
     calls.push({path,...options});
     if(path==='/api/admin/all')return {sellers,services:[],serviceOrders:{},departmentsByStore:{[store]:[{id:'tech',name:'Technique',active:true}]}};
     if(path.startsWith('/api/admin/counts'))return {counts:[]};
+    if(path.startsWith('/api/admin/goals?'))return {goals:{},workdays:[1,2,3,4,5],workdaysRevision:'planning-before'};
+    if(path==='/api/admin/workdays')return {goals:{},workdays:options.body.workdays,workdaysRevision:'planning-after'};
     if(path.includes('/reset?')||path.includes('/sellers/delete?'))return {status:'idle',jobId:null,deletedSales:0};
     return {ok:true};
   };let tree;
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},session:{storeId:store,sellerId:1},data:{stores:[{id:store,name:'Fnac Test'}],services:[],today:'2026-11-01'}}));await tick();});
-    const tabs=tree.root.findAllByProps({role:'tab'});assert(tabs.some(x=>text(x)==='Vendeurs'));assert(!tabs.some(x=>text(x)==='Codes PIN'));
+    const tabs=tree.root.findAllByProps({role:'tab'});assert.deepEqual(tabs.map(text),['Magasins','Ventes','Objectifs','Départements','Vendeurs','Services','Sécurité']);assert(!tabs.some(x=>text(x)==='Codes PIN'));
     await act(async()=>{tabs.find(x=>text(x)==='Vendeurs').props.onClick();await tick();});
     const copy=text(tree.toJSON());assert.match(copy,/Vendeurs et accès/);assert.match(copy,/Accès et codes PIN/);assert.match(copy,/Supprimer définitivement un vendeur/);assert.match(copy,/Benoît/);
+    const alice=tree.root.findAllByType('article').find(card=>text(card).includes('Alice'));assert(alice);
+    assert(alice.findByProps({'aria-label':'Département de Alice'}));
+    await act(async()=>{alice.findAllByType('button').find(button=>text(button).includes('Jours travaillés')).props.onClick();await tick();});
+    const workdays=alice.findByProps({className:'workdays-form'});assert.equal(workdays.findAllByType('input').length,7);
+    assert.equal(workdays.props['aria-labelledby'],workdays.findByType('h4').props.id);
+    const sunday=workdays.findAllByType('label').find(label=>text(label).includes('Dimanche')).findByType('input');
+    await act(async()=>sunday.props.onChange());await act(async()=>{workdays.props.onSubmit({preventDefault(){}});await tick();});
+    assert(calls.some(x=>x.path==='/api/admin/workdays'&&x.body.storeId===store&&x.body.sellerId===1&&x.body.workdays.includes(0)));
+    await act(async()=>{tree.root.findAllByProps({role:'tab'}).find(x=>text(x)==='Objectifs').props.onClick();await tick();});
+    assert.equal(tree.root.findAllByProps({className:'workdays-form'}).length,0);assert.match(text(tree.toJSON()),/Planning et calcul/);
+    await act(async()=>{tree.root.findAllByProps({role:'tab'}).find(x=>text(x)==='Vendeurs').props.onClick();await tick();});
     const input=tree.root.findByProps({'aria-label':'Nom du vendeur'});
     await act(async()=>input.props.onChange({target:{value:'Clara'}}));
     const addForm=tree.root.findAllByType('form').find(f=>f.findAllByProps({'aria-label':'Nom du vendeur'}).length);

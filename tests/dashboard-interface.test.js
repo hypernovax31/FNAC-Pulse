@@ -9,7 +9,7 @@ import {build} from 'esbuild';
 const require=createRequire(import.meta.url);
 const bundled=await build({entryPoints:['src/App.jsx'],bundle:true,platform:'node',format:'cjs',external:['react','lucide-react'],write:false,logLevel:'silent',define:{'import.meta.env':JSON.stringify({BASE_URL:'/',VITE_BACKEND:'local'})}});
 const module={exports:{}};new Function('module','exports','require',bundled.outputFiles[0].text)(module,module.exports,require);
-const {Header,DateChip,ActivityCard,Summary,MobileNav,default:App}=module.exports;
+const {Header,DateChip,ActivityCard,Summary,MobileNav,TodayOverview,TodayDetails,default:App}=module.exports;
 const render=(component,props={})=>renderToStaticMarkup(React.createElement(component,props));
 
 test('En-tête : son séparé, cloche barrée et aucun point vert de direct',()=>{
@@ -70,7 +70,7 @@ test('Tableau de bord : invitation en haut si notifications non accordées et te
     globalThis.Notification={permission:'default'};
     const html=render(App);
     assert(html.indexOf('Restez informés')<html.indexOf('VOTRE TABLEAU DE BORD'));
-    assert.match(html,/VENTE QUOTIDIENNE/);assert.match(html,/Une vente de services \? Un clic et c’est enregistré\./);
+    assert.match(html,/VENTES QUOTIDIENNES/);assert.match(html,/Une vente de services \? Un clic et c’est enregistré\./);
     assert.doesNotMatch(html,/session-strip|VOTRE ESPACE DE VENTE/);assert.match(html,/aria-label="Mon profil, Morgan"/);
     assert.match(html,/La vente, c’est notre rayon\. Les services aussi\. 😉/);
     globalThis.Notification={permission:'granted'};
@@ -89,7 +89,7 @@ test('Aujourd’hui : total personnel en premier, ventes de l’équipe en secon
   globalThis.localStorage={getItem:key=>values[key]??null,setItem(){},removeItem(){}};
   try {
     const html=render(App),match=html.match(/<section class="today-overview"[^>]*>(.*?)<\/section>/);
-    assert(match);assert.match(html,/<section class="today-overview" id="today"/);assert.match(html,/kicker-line[^>]*><\/span> AUJOURD’HUI/);assert.match(html,/Votre journée en chiffres/);assert.doesNotMatch(html,/EN UN COUP D’ŒIL/);
+    assert(match);assert.match(html,/<section class="today-overview" id="today"/);assert.match(html,/kicker-line[^>]*><\/span> AUJOURD’HUI/);assert.doesNotMatch(html,/Votre journée en chiffres|EN UN COUP D’ŒIL/);
     const cards=match[1].split(/class="stat-card stat-card-[^"]+"/).slice(1);assert.equal(cards.length,2);
     assert.match(cards[0],/Ma journée/);assert.match(cards[0],/stat-value">3/);
     assert.match(cards[1],/Ventes de l’équipe/);assert.match(cards[1],/stat-value">7/);assert.match(cards[1],/Dans votre département/);
@@ -105,4 +105,25 @@ test('Navigation mobile : les cinq boutons pointent vers leurs sections',async()
     assert.deepEqual(selected,['today','objectifs','services','ranking','summary']);
     assert.equal(buttons[0].props['aria-current'],'location');
   } finally {if(tree)await act(async()=>tree.unmount());}
+});
+
+test('Aujourd’hui : les cartes ouvrent le détail correspondant et restent inactives sans données',async()=>{
+  const selected=[],stats={mineTotal:2,day:{total:4}}, {act}=TestRenderer;let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(TodayOverview,{stats,hasSession:true,onShow:value=>selected.push(value)}));});
+    const buttons=tree.root.findAllByType('button');assert.equal(buttons.length,2);assert(buttons.every(button=>!button.props.disabled));
+    for(const button of buttons)await act(async()=>button.props.onClick());assert.deepEqual(selected,['mine','team']);
+    await act(async()=>tree.update(React.createElement(TodayOverview,{stats:null,hasSession:false,onShow:value=>selected.push(value)})));
+    assert(tree.root.findAllByType('button').every(button=>button.props.disabled));
+  }finally{if(tree)await act(async()=>tree.unmount());}
+});
+
+test('Détail Aujourd’hui : chiffres personnels et équipe, zéro et données indisponibles',()=>{
+  const stats={mineTotal:2,day:{total:3,byService:[{id:1,name:'DMax',count:3},{id:2,name:'Garantie',count:0}],mineByService:[{serviceId:1,count:1},{serviceId:2,count:1}]},summary:{store:{day:{byService:[{id:1,name:'DMax'},{id:2,name:'Garantie'}]}}}};
+  const mine=render(TodayDetails,{scope:'mine',stats,services:[],date:'2026-10-29',onClose(){}});
+  assert.match(mine,/Ma journée/);assert.match(mine,/DMax/);assert.match(mine,/Garantie/);assert.match(mine,/avant un changement de département/);
+  const team=render(TodayDetails,{scope:'team',stats,services:[],date:'2026-10-29',department:{name:'Technique'},onClose(){}});
+  assert.match(team,/Ventes de l’équipe/);assert.match(team,/département Technique/);assert.match(team,/DMax/);assert.doesNotMatch(team,/Garantie/);
+  assert.match(render(TodayDetails,{scope:'team',stats:{day:{total:0,byService:[]}},services:[],onClose(){}}),/Aucune vente enregistrée/);
+  assert.match(render(TodayDetails,{scope:'mine',stats:{mineTotal:2,day:{}},services:[],onClose(){}}),/détail des ventes est indisponible/);
 });

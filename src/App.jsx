@@ -23,6 +23,7 @@ import { readPushOrigin } from './push-origin.js';
 import { calendarChip } from './calendar';
 import { readDeviceProfile, saveDeviceProfile, clearDeviceProfile } from './device-profile';
 import { GoalForm, GoalsPanel } from './Goals';
+import { todayBreakdown } from './today-breakdown.js';
 import { normalizeWorkdays } from './goals.js';
 import { saleMessage } from './sale-message';
 import { isStandalone, installPlatform, notificationBanner } from './install.js';
@@ -232,14 +233,30 @@ function Header({session,seller,store,connected,notificationsEnabled,notificatio
     </div>
   </header>;
 }
-function StatCard({label,value,detail,Icon,tone}) {
-  return <article className={`stat-card stat-card-${tone}`}><div className="stat-top"><span>{label}</span><span className={`stat-icon ${tone}`} aria-hidden="true"><Icon size={18}/></span></div><div className="stat-value">{value??'—'}<span>{value===undefined||value===null?'':value>1?'services':'service'}</span></div><p className="stat-detail">{detail}</p></article>;
+function StatCard({label,value,detail,Icon,tone,onClick}) {
+  const available=Number.isInteger(value)&&value>=0&&!!onClick;
+  return <button type="button" className={`stat-card stat-card-${tone}`} onClick={onClick} disabled={!available} aria-label={available?`${label} : ${value} ${value>1?'services':'service'}. Voir le détail.`:`${label} : données indisponibles`}>
+    <span className="stat-top"><span>{label}</span><span className={`stat-icon ${tone}`} aria-hidden="true"><Icon size={18}/></span></span>
+    <span className="stat-value">{value??'—'}<span>{value===undefined||value===null?'':value>1?'services':'service'}</span></span>
+    <span className="stat-detail"><span>{detail}</span>{available&&<ChevronRight size={14} aria-hidden="true"/>}</span>
+  </button>;
 }
-function TodayOverview({stats,hasSession}) {
+function TodayOverview({stats,hasSession,onShow}) {
   return <section className="today-overview" id="today" aria-labelledby="today-title">
-    <div className="today-heading"><div><div className="section-kicker"><span className="kicker-line"/> AUJOURD’HUI</div><h2 id="today-title">Votre journée en chiffres</h2></div><span className="today-context">{hasSession?'Votre activité et votre équipe':'Choisissez votre espace pour démarrer'}</span></div>
-    <div className="stats-grid" aria-label="Chiffres clés"><StatCard label="Ma journée" value={stats?.mineTotal} detail="Mes services enregistrés" Icon={UserRound} tone="gold"/><StatCard label="Ventes de l’équipe" value={stats?.day.total} detail="Dans votre département" Icon={UsersRound} tone="soft-blue"/></div>
+    <div className="today-heading"><h2 className="section-kicker" id="today-title"><span className="kicker-line"/> AUJOURD’HUI</h2><span className="today-context">{hasSession?'Votre activité et votre équipe':'Choisissez votre espace pour démarrer'}</span></div>
+    <div className="stats-grid" aria-label="Chiffres clés"><StatCard label="Ma journée" value={stats?.mineTotal} detail="Mes services enregistrés" Icon={UserRound} tone="gold" onClick={hasSession&&onShow?()=>onShow('mine'):null}/><StatCard label="Ventes de l’équipe" value={stats?.day?.total} detail="Dans votre département" Icon={UsersRound} tone="soft-blue" onClick={hasSession&&onShow?()=>onShow('team'):null}/></div>
   </section>;
+}
+function TodayDetails({scope,stats,services,date,department,offline,onClose}) {
+  const mine=scope==='mine',title=mine?'Ma journée':'Ventes de l’équipe',count=mine?stats?.mineTotal:stats?.day?.total;
+  const rows=todayBreakdown(stats,services,scope),ready=mine?Array.isArray(stats?.day?.mineByService):Array.isArray(stats?.day?.byService);
+  const subtitle=mine?'Toutes vos ventes du jour, même avant un changement de département.':`Ventes du département ${department?.name||'actuel'} aujourd’hui.`;
+  return <Modal title={title} subtitle={subtitle} onClose={onClose}>
+    <div className={`today-detail-total ${mine?'personal':'team'}`}><div><span>AUJOURD’HUI{date?` · ${dateLabel(date,{day:'numeric',month:'long'})}`:''}</span><strong>{count??'—'} <small>{count>1?'services':'service'}</small></strong></div><span className="today-detail-total-icon">{mine?<UserRound size={20}/>:<UsersRound size={20}/>}</span></div>
+    <div className="today-detail-heading"><strong>Détail par service</strong><span>{rows.length} {rows.length>1?'types':'type'}</span></div>
+    {!ready?<div className="today-detail-empty">Le détail des ventes est indisponible.</div>:rows.length?<ul className="today-detail-list">{rows.map(row=><li key={row.id}><span>{row.name}</span><strong>{row.count}</strong></li>)}</ul>:<div className="today-detail-empty">Aucune vente enregistrée pour le moment.</div>}
+    {offline&&<p className="today-detail-offline">Dernières données disponibles · en attente de connexion.</p>}
+  </Modal>;
 }
 function ServiceCard({service,index,count,session,pending,onAdd,onRemove}) {
   const iconKey=serviceIconKey(service), Icon=icons[iconKey]||MoreHorizontal;
@@ -296,7 +313,7 @@ function MobileNav({onNavigate,active}) {
 function urlBase64ToUint8Array(base64) {const padding='='.repeat((4-base64.length%4)%4);const raw=atob((base64+padding).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
 function readNotificationPermission() {return typeof Notification==='undefined'?'unsupported':Notification.permission;}
 
-export { Header, DateChip, ActivityCard, Summary, MobileNav, TodayOverview };
+export { Header, DateChip, ActivityCard, Summary, MobileNav, TodayOverview, TodayDetails };
 export default function App() {
   const [session,setSession]=useState(()=>CLOUD?null:getSession());
   const [deviceProfile,setDeviceProfile]=useState(()=>CLOUD?readDeviceProfile(undefined,getSession()):null);
@@ -316,6 +333,7 @@ export default function App() {
   const [installError,setInstallError]=useState('');
   const [themeModal,setThemeModal]=useState(false);
   const [goalModal,setGoalModal]=useState(null);
+  const [todayDetail,setTodayDetail]=useState(null);
   const [goalState,setGoalState]=useState({owner:'',...goalData(null),loading:false,error:''});
   const [summaryState,setSummaryState]=useState({key:'',data:null,loading:false,error:''});
   const [theme,setTheme]=useState(readTheme);
@@ -470,6 +488,7 @@ export default function App() {
     };
     initialize();return ()=>{cancelled=true;clearTimeout(timer);};
   },[]);
+  useEffect(()=>{setTodayDetail(null);},[session?.storeId,session?.sellerId]);
   useEffect(()=>{if(!CLOUD)return;return observeVendor(next=>{
     if(next){const profile=saveDeviceProfile(next);if(profile)setDeviceProfile(profile);}
     setSession(next);setAuthReady(true);if(!next)localStorage.removeItem(SESSION_KEY);
@@ -696,9 +715,9 @@ export default function App() {
         {notificationNotice&&<section className="notification-card notification-prompt" aria-label="Activation des notifications"><span className="notification-icon"><BellOff size={18}/></span><div><strong>Restez informés</strong><p>{notificationNotice.message}</p></div><button onClick={notificationNotice.action==='install'?openInstall:notificationNotice.action==='retry'?retryNotifications:openNotifications}>{notificationNotice.label} <ArrowRight size={13}/></button></section>}
         <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><DateChip today={cloudDay}/></div>
         {!session&&<WelcomePanel data={data} onSubmit={selectSession} deviceProfile={deviceProfile} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>}
-        <TodayOverview stats={stats} hasSession={!!session}/>
+        <TodayOverview stats={stats} hasSession={!!session} onShow={setTodayDetail}/>
         {session&&<GoalsPanel services={data.services} goals={currentGoals} workdays={goalState.workdays} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
-        <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> VENTE QUOTIDIENNE</div><h2>Ajouter un service</h2><p>Une vente de services ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
+        <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> VENTES QUOTIDIENNES</div><h2>Ajouter un service</h2><p>Une vente de services ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
           <Summary stats={stats} hasSession={!!session} storeId={session?.storeId} departments={departments} goals={currentSummary} goalsLoading={summaryState.key===summaryKey&&summaryState.loading} goalsError={summaryState.key===summaryKey?summaryState.error:''} onRetry={loadSummaryGoals}/>
         </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/></div></div>
         <footer className="page-footer">La vente, c’est notre rayon. Les services aussi. 😉</footer>
@@ -708,6 +727,7 @@ export default function App() {
     {sessionModal&&<Modal title={CLOUD?'Mon profil':'Changer d’espace'} subtitle={CLOUD?'Votre espace sur cet appareil.':'Sélectionnez votre magasin, votre département et votre profil vendeur.'} onClose={()=>setSessionModal(false)}>
       {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button></>:<><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/><p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></>}
     </Modal>}
+    {todayDetail&&session&&stats&&<TodayDetails scope={todayDetail} stats={stats} services={data.services} date={data.today} department={department} offline={connection==='offline'} onClose={()=>setTodayDetail(null)}/>}
     {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={()=>setGoalModal(null)}><GoalForm services={data.services} goals={currentGoals} workdays={goalState.workdays} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={()=>setGoalModal(null)} disabled={connection==='offline'}/></Modal>}
     {adminModal&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>}
     {notificationsModal&&<NotificationsDialog permission={notificationPermission} enabled={displayedEnabled} checkError={displayedError} unconfirmed={displayedUnconfirmed} pushAvailable={pushAvailable} platform={platform} installed={installed} hasSession={!!session} busy={notificationBusy} onClose={()=>setNotificationsModal(false)} onEnable={enableNotifications} onDisable={disableNotifications} onRetry={retryNotifications} onInstall={openInstall} onSelectProfile={()=>{setNotificationsModal(false);changeSession();}}/>}

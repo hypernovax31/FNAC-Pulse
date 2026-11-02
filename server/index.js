@@ -16,6 +16,7 @@ import { localPushTargets } from './push-targets.js';
 import { DEFAULT_DEPARTMENTS, TECH_DEPARTMENT_ID, departmentsForStore, sellerDepartmentId } from '../src/departments.js';
 import { summaryGoals } from '../src/summary-goals.js';
 import { SALES_RESET_CONFIRMATION } from '../src/sales-reset.js';
+import { MAX_SALE_CORRECTION, SALE_CORRECTION_CONFIRMATION, saleHistoryRange, saleCorrectionFingerprintInput } from '../src/sale-history.js';
 import { summarize, earliestDate } from '../src/cloud-stats.js';
 import { DIRECTORY_VERSION, mergeStoreDirectory } from '../src/store-directory.js';
 import directorySnapshot from './fnac-directory.json' with {type:'json'};
@@ -52,6 +53,9 @@ CREATE TABLE IF NOT EXISTS sales_reset_requests (
   job_id TEXT PRIMARY KEY, store_id TEXT NOT NULL, deleted_sales INTEGER NOT NULL, completed_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sales_reset_store ON sales_reset_requests(store_id, completed_at);
+CREATE TABLE IF NOT EXISTS sale_correction_requests (
+  request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, count INTEGER NOT NULL, created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS goals_reset_requests (
   job_id TEXT PRIMARY KEY, store_id TEXT NOT NULL, department_id TEXT NOT NULL, department_name TEXT NOT NULL,
   total_sellers INTEGER NOT NULL, reset_sellers INTEGER NOT NULL, completed_at INTEGER NOT NULL
@@ -684,6 +688,51 @@ app.post('/api/admin/sales/reset',requireAdmin,(req,res)=>{
     return {status:'done',jobId,deletedSales,startedAt:when,finishedAt:when};
   })();
   broadcast(storeId,{kind:'reset'});res.json(result);
+});
+app.get('/api/admin/sales/history',requireAdmin,(req,res)=>{
+  const {storeId,sellerId,period,anchor,afterDate='',afterId=''}=req.query,range=saleHistoryRange(period,anchor,parisToday());
+  const safeSale=/^[A-Za-z0-9_-]{1,128}$/;
+  if(!range||!activeStore(storeId)||!isId(sellerId)||
+     !db.prepare('SELECT 1 FROM sellers WHERE id=? AND store_id=?').get(Number(sellerId),storeId)||
+     (!!afterDate!==!!afterId)||(afterDate&&(!saleHistoryRange('day',afterDate,afterDate)||afterDate<range.start||afterDate>range.end||!safeSale.test(afterId))))
+    return failure(res,'Choisissez un magasin, un vendeur et une période valides.');
+  const rows=db.prepare(`SELECT s.id,s.service_id AS serviceId,s.business_date AS businessDate,
+      s.created_at AS createdAt,s.department_id AS departmentId,s.source
+    FROM sales s WHERE s.store_id=? AND s.seller_id=? AND s.business_date>=? AND s.business_date<=? AND s.deleted_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM store_service_removals r WHERE r.store_id=s.store_id AND r.service_id=s.service_id)
+      AND (?='' OR s.business_date<? OR (s.business_date=? AND s.id<?))
+    ORDER BY s.business_date DESC,s.id DESC LIMIT 200`)
+    .all(storeId,Number(sellerId),range.start,range.end,afterDate,afterDate,afterDate,afterId);
+  const last=rows.at(-1);
+  res.json({sales:rows,next:rows.length===200?{date:last.businessDate,id:last.id}:null,range});
+});
+app.post('/api/admin/sales/correct',requireAdmin,(req,res)=>{
+  const {storeId,sellerId,period,anchor,saleIds,requestId,confirmation,expectedSellerName,expectedStoreName}=req.body||{};
+  const currentDate=parisToday(),range=saleHistoryRange(period,anchor,currentDate),safeSale=/^[A-Za-z0-9_-]{1,128}$/;
+  if(!range||!isId(sellerId)||typeof storeId!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(storeId)||
+     typeof requestId!=='string'||!/^[A-Za-z0-9_-]{8,80}$/.test(requestId)||confirmation!==SALE_CORRECTION_CONFIRMATION||
+     typeof expectedSellerName!=='string'||typeof expectedStoreName!=='string'||!Array.isArray(saleIds)||
+     !saleIds.length||saleIds.length>MAX_SALE_CORRECTION||saleIds.some(id=>typeof id!=='string'||!safeSale.test(id))||new Set(saleIds).size!==saleIds.length)
+    return failure(res,'Confirmation ou sélection de ventes invalide.');
+  const fingerprint=crypto.createHash('sha256').update(saleCorrectionFingerprintInput({storeId,sellerId,period,anchor,saleIds})).digest('base64url');
+  const result=db.transaction(()=>{
+    const existing=db.prepare('SELECT * FROM sale_correction_requests WHERE request_id=?').get(requestId);
+    if(existing)return existing.fingerprint===fingerprint?{ok:true,deleted:existing.count,duplicate:true}:{error:'Cet identifiant de correction a déjà été utilisé.'};
+    const store=activeStore(storeId),person=db.prepare('SELECT * FROM sellers WHERE id=? AND store_id=?').get(Number(sellerId),storeId);
+    if(!store||!person||person.name!==expectedSellerName||store.name!==expectedStoreName)return {error:'Le vendeur ou le magasin a changé. Vérifiez votre sélection.'};
+    const find=db.prepare('SELECT * FROM sales WHERE id=? AND store_id=?'),removed=db.prepare('SELECT 1 FROM store_service_removals WHERE store_id=? AND service_id=?');
+    const rows=saleIds.map(id=>find.get(id,storeId));
+    if(rows.some(row=>!row||row.deleted_at||Number(row.seller_id)!==Number(sellerId)||
+      !saleHistoryRange('day',row.business_date,currentDate)||row.business_date<range.start||row.business_date>range.end||removed.get(storeId,row.service_id)))
+      return {error:'Une vente sélectionnée a changé ou n’appartient plus à cette période. Rechargez la liste.'};
+    const update=db.prepare('UPDATE sales SET deleted_at=? WHERE id=? AND store_id=? AND deleted_at IS NULL'),when=new Date().toISOString();
+    for(const row of rows)update.run(when,row.id,storeId);
+    db.prepare('INSERT INTO sale_correction_requests(request_id,fingerprint,count,created_at) VALUES (?,?,?,?)').run(requestId,fingerprint,rows.length,Date.now());
+    return {ok:true,deleted:rows.length};
+  })();
+  if(result.error)return failure(res,result.error,409);
+  if(!result.duplicate)broadcast(storeId,{kind:'adjustment'});
+  res.json(result);
 });
 app.get('/api/admin/counts',requireAdmin,(req,res) => {
   const {storeId,sellerId}=req.query;

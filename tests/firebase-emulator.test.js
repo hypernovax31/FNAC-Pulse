@@ -464,3 +464,39 @@ test('Émulateur Firestore : suppression service paginée, objectifs et magasins
   assert((await call(`/api/bootstrap?storeId=${store}`,'GET',undefined,'')).json.services.some(s=>s.id===1));
   assert.equal((await db.get(`pulseGoals/${a}`)).data.goals.s1,undefined);
 });
+
+test('Émulateur Firestore : historique paginé et correction atomique des ventes choisies',{skip:!enabled},async()=>{
+  const project='demo-fnac',store=LEGACY_STORE_ID;
+  const db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'});
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,token)=>{if(token!=='admin-token')throw Error('invalid');return {sub:'administrator'};}});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:'administrator'},ctx={waitUntil(){}};
+  async function call(path,method='GET',body,token='admin-token') {
+    const res=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    const json=await res.json();assert.notEqual(res.status,500,JSON.stringify(json));return {status:res.status,json};
+  }
+  await fetch(`http://127.0.0.1:8085/emulator/v1/projects/${project}/databases/(default)/documents`,{method:'DELETE'});
+  const bootstrap=await call('/api/bootstrap','GET',undefined,''),catalog=(await db.get('pulse/catalog')).data;
+  const storeName=catalog.stores.find(s=>s.id===store).name,sellerName=catalog.sellers.find(s=>s.id===1).name;
+  const collection=`pulseStores/${store}/sales`,sale=(id,sellerId,date)=>({id,storeId:store,sellerId,serviceId:1,businessDate:date,createdAt:`${date}T12:00:00Z`,departmentId:'tech',source:'sale',deletedAt:null});
+  const writes=[db.write(`${collection}/a-firebase-selected`,sale('a-firebase-selected',1,'2026-10-29')),
+    db.write(`${collection}/a-firebase-retained`,sale('a-firebase-retained',1,'2026-10-30')),
+    db.write(`${collection}/a-firebase-other`,sale('a-firebase-other',2,'2026-10-29')),
+    db.write('pulseOutbox/a-firebase-selected',{saleId:'a-firebase-selected',storeId:store,status:'pending'})];
+  for(let i=0;i<205;i++){const id=`z-firebase-${String(i).padStart(4,'0')}`;writes.push(db.write(`${collection}/${id}`,sale(id,2,'2026-10-29')));}
+  await db.commit(writes);
+  const p1=await db.salesPeriodPage(collection,{start:'2026-10-29',end:'2026-10-29',limit:5});assert.equal(p1.length,5);
+  const p2=await db.salesPeriodPage(collection,{start:'2026-10-29',end:'2026-10-29',limit:5,afterDate:p1.at(-1).data.businessDate,afterId:p1.at(-1).id});
+  assert.equal(p2.length,5);assert.equal(new Set([...p1,...p2].map(x=>x.id)).size,10);
+  const url=`/api/admin/sales/history?storeId=${store}&sellerId=1&period=month&anchor=2026-10-29`;
+  assert.equal((await call(url,'GET',undefined,'')).status,401);
+  let result=await call(url);assert.equal(result.status,200);assert(result.json.next);const rows=[...result.json.sales];
+  result=await call(`${url}&afterDate=${result.json.next.date}&afterId=${result.json.next.id}`);assert.equal(result.status,200);rows.push(...result.json.sales);
+  assert.deepEqual(rows.map(x=>x.id).sort(),['a-firebase-retained','a-firebase-selected']);
+  const body={storeId:store,sellerId:1,period:'month',anchor:'2026-10-29',saleIds:['a-firebase-selected'],requestId:'firebase-history-correction-001',confirmation:'SUPPRIMER',expectedSellerName:sellerName,expectedStoreName:storeName};
+  assert.equal((await call('/api/admin/sales/correct','POST',{...body,saleIds:['a-firebase-selected','a-firebase-other']})).status,409);
+  assert.equal((await db.get(`${collection}/a-firebase-selected`)).data.deletedAt,null);
+  assert.equal((await call('/api/admin/sales/correct','POST',body)).json.deleted,1);
+  assert((await db.get(`${collection}/a-firebase-selected`)).data.deletedAt);assert.equal((await db.get(`${collection}/a-firebase-retained`)).data.deletedAt,null);
+  assert.deepEqual((await db.get('pulseOutbox/a-firebase-selected')).data,{status:'reset'});
+  assert.equal((await call('/api/admin/sales/correct','POST',body)).json.duplicate,true);
+});

@@ -12,6 +12,7 @@ import { SALES_RESET_CONFIRMATION, salesGeneration, saleInGeneration } from '../
 import { GOALS_RESET_CONFIRMATION } from '../src/goals-reset.js';
 import { SELLER_DELETE_CONFIRMATION } from '../src/seller-delete.js';
 import { SERVICE_DELETE_CONFIRMATION } from '../src/service-delete.js';
+import { MAX_SALE_CORRECTION, SALE_CORRECTION_CONFIRMATION, saleHistoryRange, saleCorrectionFingerprintInput } from '../src/sale-history.js';
 import { cleanSellerName, sameSellerName, validSellerName } from '../src/seller-registration.js';
 
 const SELLERS=['Morgan','Anthony','Cedric','Philippe','Fabien','Florent','Eric','Tamera','Ikram','Selenia','Johan','Alice'];
@@ -22,6 +23,7 @@ const PIN_SALT=/^[A-Za-z0-9_-]{16,80}$/;
 // ciblées. Le reset global de 2026 est terminé et ne peut plus être relancé.
 const OPEN_PIN_RESET='open-pin-reset-2026-10-29';
 const SAFE_ID=/^[A-Za-z0-9_-]{8,80}$/;
+const SALE_DOC_ID=/^[A-Za-z0-9_-]{1,128}$/;
 const STORE_ID=/^[A-Za-z0-9_-]{1,80}$/;
 // Diagnostics anonymes : aucun jeton, identifiant ou texte utilisateur dans les journaux.
 const SAFE_FCM_CODES=new Set(['UNREGISTERED','INVALID_ARGUMENT','SENDER_ID_MISMATCH','QUOTA_EXCEEDED','UNAVAILABLE','INTERNAL','THIRD_PARTY_AUTH_ERROR','PERMISSION_DENIED','UNAUTHENTICATED','NOT_FOUND']);
@@ -1082,6 +1084,87 @@ export function createWorker(deps={}) {
     try{await db.commit(writes);}catch(e){if(conflict(e))fail(409,'Les ventes ont changé pendant la correction. Réessayez.');throw e;}
     return {ok:true};
   }
+  // Historique administrateur : une page est filtrée sur la date commerciale
+  // puis sur le vendeur. Le curseur suit les documents lus, même lorsque la
+  // page ne contient aucune vente de ce vendeur.
+  async function adminSalesHistory(db,selection) {
+    const {storeId,sellerId,period,anchor,afterDate='',afterId=''}=selection;
+    const range=saleHistoryRange(period,anchor,today());
+    if(!range||!isId(sellerId)||!STORE_ID.test(storeId||'')||
+       (!!afterDate!==!!afterId)||(afterDate&&(!saleHistoryRange('day',afterDate,afterDate)||afterDate<range.start||afterDate>range.end||!SALE_DOC_ID.test(afterId))))
+      fail(400,'Choisissez un magasin, un vendeur et une période valides.');
+    const c=await catalog(db),person=c.data.sellers.find(s=>Number(s.id)===Number(sellerId)&&sellerStoreId(s)===storeId&&!s.deletingJob);
+    if(!validStore(c.data,storeId)||!person)fail(400,'Choisissez un vendeur de ce magasin.');
+    const collection=`pulseStores/${storeId}/sales`,pageSize=200;
+    const [marker,rows]=await Promise.all([
+      db.get(salesMarkerPath(storeId)),
+      db.salesPeriodPage(collection,{...range,limit:pageSize,afterDate,afterId}),
+    ]);
+    const generation=salesGeneration(marker?.data);
+    const sales=rows.filter(row=>SALE_DOC_ID.test(row.id)&&Number(row.data.sellerId)===Number(sellerId)&&
+      (!row.data.storeId||row.data.storeId===storeId)&&!row.data.deletedAt&&
+      !serviceRemovedForStore(c.data,storeId,row.data.serviceId)&&saleInGeneration(row.data,generation))
+      .map(row=>({id:row.id,serviceId:Number(row.data.serviceId),businessDate:row.data.businessDate,
+        createdAt:row.data.createdAt||'',departmentId:saleDepartmentId(row.data),source:row.data.source==='adjustment'?'adjustment':'sale'}));
+    const last=rows.at(-1);
+    if(last&&!SALE_DOC_ID.test(last.id))fail(409,'Une vente de cet historique nécessite une vérification.');
+    return {sales,next:rows.length===pageSize?{date:last.data.businessDate,id:last.id}:null,range};
+  }
+  // La confirmation, l'ensemble précis des identifiants et son empreinte sont
+  // vérifiés avant une écriture atomique. Une réponse perdue peut être rejouée
+  // sans répéter la correction ni effacer d'autres ventes.
+  async function correctAdminSales(db,body) {
+    const {storeId,sellerId,period,anchor,saleIds,requestId,confirmation,expectedSellerName,expectedStoreName}=body;
+    const currentDate=today(),range=saleHistoryRange(period,anchor,currentDate);
+    if(!range||!STORE_ID.test(storeId||'')||!isId(sellerId)||!SAFE_ID.test(requestId||'')||
+       confirmation!==SALE_CORRECTION_CONFIRMATION||typeof expectedSellerName!=='string'||typeof expectedStoreName!=='string'||
+       !Array.isArray(saleIds)||!saleIds.length||saleIds.length>MAX_SALE_CORRECTION||
+       saleIds.some(id=>typeof id!=='string'||!SALE_DOC_ID.test(id))||new Set(saleIds).size!==saleIds.length)
+      fail(400,'Confirmation ou sélection de ventes invalide.');
+    const fingerprint=await digestBase64(saleCorrectionFingerprintInput({storeId,sellerId,period,anchor,saleIds}));
+    const requestPath=`pulseSalesCorrections/${requestId}`,paths=saleIds.map(id=>docPath(storeId,id));
+    const [request,c,marker,guard,reset,sellerDeletion,serviceDeletion,sales,outboxes]=await Promise.all([
+      db.get(requestPath),catalog(db),db.get(salesMarkerPath(storeId)),db.get(guardPath(storeId)),
+      db.get(salesResetPath(storeId)),db.get(sellerDeletePath(storeId)),db.get(serviceDeletePath(storeId)),
+      db.getMany(paths),db.getMany(saleIds.map(id=>`pulseOutbox/${id}`)),
+    ]);
+    if(request) {
+      if(request.data.fingerprint!==fingerprint)fail(409,'Cet identifiant de correction a déjà été utilisé.');
+      return {ok:true,deleted:Number(request.data.count)||saleIds.length,duplicate:true};
+    }
+    const person=c.data.sellers.find(s=>Number(s.id)===Number(sellerId)&&sellerStoreId(s)===storeId&&!s.deletingJob);
+    const store=c.data.stores.find(s=>s.id===storeId);
+    if(!validStore(c.data,storeId)||!person||person.name!==expectedSellerName||store?.name!==expectedStoreName)
+      fail(409,'Le vendeur ou le magasin a changé. Vérifiez votre sélection.');
+    if(reset?.data.status==='running'||sellerDeletion?.data.status==='running'||serviceDeletion?.data.status==='running')
+      fail(409,'Une suppression ou réinitialisation est en cours dans ce magasin. Attendez sa fin.');
+    const generation=salesGeneration(marker?.data);
+    if(sales.some(s=>!s||s.data.deletedAt||Number(s.data.sellerId)!==Number(sellerId)||
+      (s.data.storeId&&s.data.storeId!==storeId)||!saleHistoryRange('day',s.data.businessDate,currentDate)||
+      s.data.businessDate<range.start||s.data.businessDate>range.end||!isId(s.data.serviceId)||
+      serviceRemovedForStore(c.data,storeId,s.data.serviceId)||!saleInGeneration(s.data,generation)))
+      fail(409,'Une vente sélectionnée a changé ou n’appartient plus à cette période. Rechargez la liste.');
+    const writes=[db.verify('pulse/catalog',precondition(c)),db.verify(salesMarkerPath(storeId),precondition(marker)),
+      db.verify(salesResetPath(storeId),precondition(reset)),db.verify(sellerDeletePath(storeId),precondition(sellerDeletion)),
+      db.verify(serviceDeletePath(storeId),precondition(serviceDeletion)),db.write(guardPath(storeId),{revision:crypto.randomUUID()},precondition(guard))];
+    const deletedAt=new Date().toISOString();
+    for(let i=0;i<sales.length;i++) {
+      writes.push(db.write(paths[i],{...sales[i].data,deletedAt},precondition(sales[i])));
+      const outbox=outboxes[i];
+      if(outbox?.data.storeId===storeId&&outbox.data.saleId===saleIds[i])
+        writes.push(db.write(`pulseOutbox/${saleIds[i]}`,{status:'reset'},precondition(outbox)));
+    }
+    // Aucune identité ni liste de ventes dans ce journal privé d'idempotence.
+    writes.push(db.write(requestPath,{fingerprint,count:saleIds.length,createdAt:Date.now()},{exists:false}));
+    try {await db.commit(writes);}
+    catch(e) {
+      if(!conflict(e))throw e;
+      const existing=await db.get(requestPath);
+      if(existing?.data.fingerprint===fingerprint)return {ok:true,deleted:Number(existing.data.count)||saleIds.length,duplicate:true};
+      fail(409,'Les ventes ou le magasin ont changé. Rechargez la liste avant de recommencer.');
+    }
+    return {ok:true,deleted:saleIds.length};
+  }
   async function tokenSubscribe(req,env,db,body,method) {
     const s=await seller(req,env,db),token=body.token;
     if(typeof token!=='string'||token.length<20||token.length>4096||/[\s]/.test(token))fail(400,'Jeton de notification invalide.');
@@ -1117,13 +1200,19 @@ export function createWorker(deps={}) {
       // Ne mettre en file que les appareils du département concerné. Les accès
       // sont lus par lots pour rester sous les limites de sous-requêtes du Worker.
       const paths=[...new Set(tokens.map(t=>`pulseAccess/${t.data.uid}`))];
-      // Les anciens messages n'ont pas sellerId dans l'outbox : relire la vente
-      // avant la mise en file. Sans auteur identifiable, ne pas diffuser.
-      const [c,accesses,originSale]=await Promise.all([
+      // Relire la vente et l'outbox après la prise du bail : une correction a
+      // pu intervenir pendant le chargement des appareils. Les anciens messages
+      // sans sellerId retrouvent aussi leur auteur dans la vente.
+      const [c,accesses,originSale,currentOutbox]=await Promise.all([
         catalog(db),db.getMany?db.getMany(paths):Promise.all(paths.map(p=>db.get(p))),
-        isId(item.data.sellerId)?Promise.resolve(null):db.get(docPath(item.data.storeId,id)),
+        db.get(docPath(item.data.storeId,id)),db.get(path),
       ]);
-      const authorId=isId(item.data.sellerId)?Number(item.data.sellerId):Number(originSale?.data.sellerId);
+      if(currentOutbox?.data.status!=='dispatching'||currentOutbox.data.leaseUntil!==claim.leaseUntil)return;
+      if(!originSale||originSale.data.deletedAt) {
+        try{await db.commit([db.write(path,{status:'reset'},precondition(currentOutbox))]);}catch(e){if(!conflict(e))throw e;}
+        return;
+      }
+      const authorId=isId(item.data.sellerId)?Number(item.data.sellerId):Number(originSale.data.sellerId);
       const byPath=new Map(paths.map((p,i)=>[p,accesses[i]?.data]));
       const eligible=tokens.filter(t=>{
         const a=byPath.get(`pulseAccess/${t.data.uid}`),recipient=a&&sellerBy(c.data,a.sellerId,item.data.storeId);
@@ -1197,8 +1286,10 @@ export function createWorker(deps={}) {
     try {
       const skip=async()=>{const current=await db.get(path);if(current)await db.commit([db.write(path,{status:'skipped',leaseUntil:0},precondition(current))]);msg.ack();};
       const [tokenDoc,outbox,marker,originSale]=await Promise.all([db.get(`pulseTokens/${tokenId}`),db.get(`pulseOutbox/${saleId}`),db.get(salesMarkerPath(storeId)),db.get(docPath(storeId,saleId))]);
-      if(!tokenDoc || !outbox || tokenDoc.data.storeId!==storeId || outbox.data.storeId!==storeId ||
-         !saleInGeneration(outbox.data,salesGeneration(marker?.data)) || Date.now()-outbox.data.createdAt>60*60*1000) {await skip();return;}
+      if(!tokenDoc||!outbox||!originSale||originSale.data.deletedAt||outbox.data.status==='reset'||
+         tokenDoc.data.storeId!==storeId||outbox.data.storeId!==storeId||
+         !saleInGeneration(outbox.data,salesGeneration(marker?.data))||!saleInGeneration(originSale.data,salesGeneration(marker?.data))||
+         Date.now()-outbox.data.createdAt>60*60*1000) {await skip();return;}
       stage='authorize';
       const [a,c]=await Promise.all([db.get(`pulseAccess/${tokenDoc.data.uid}`),catalog(db)]);
       const recipient=a?.data&&sellerBy(c.data,a.data.sellerId,storeId);
@@ -1208,7 +1299,13 @@ export function createWorker(deps={}) {
       if(!originSale||!author||author.deletingJob||serviceRemovedForStore(c.data,storeId,originSale.data.serviceId)||!a?.data.active||a.data.version!==tokenDoc.data.accessVersion||a.data.storeId!==storeId||!recipient||!validStore(c.data,storeId)||
          Number(a.data.sellerId)===Number(originSale.data.sellerId)||tokenId===outbox.data.originTokenId||
          sellerDepartmentId(recipient)!==saleDepartmentId(outbox.data)){await skip();return;}
-      stage='fcm';await send(env,tokenDoc.data.token,outbox.data);
+      // Réduire la fenêtre entre une correction et l'appel FCM. Un message
+      // déjà remis à FCM ne peut toutefois pas être rappelé par la PWA.
+      const [latestSale,latestOutbox,latestMarker]=await db.getMany([docPath(storeId,saleId),`pulseOutbox/${saleId}`,salesMarkerPath(storeId)]);
+      const latestGeneration=salesGeneration(latestMarker?.data);
+      if(!latestSale||latestSale.data.deletedAt||!latestOutbox||latestOutbox.data.status==='reset'||latestOutbox.data.storeId!==storeId||
+         !saleInGeneration(latestSale.data,latestGeneration)||!saleInGeneration(latestOutbox.data,latestGeneration)) {await skip();return;}
+      stage='fcm';await send(env,tokenDoc.data.token,latestOutbox.data);
       stage='mark';const current=await db.get(path);if(current)await db.commit([db.write(path,{status:'sent',leaseUntil:0,sentAt:Date.now()},precondition(current))]);
       msg.ack();
     } catch(e) {
@@ -1277,6 +1374,8 @@ export function createWorker(deps={}) {
       if(method==='POST'&&path==='/api/admin/services/order')return saveServiceOrder(db,await readBody(req));
       if(method==='GET'&&path==='/api/admin/sales/reset')return readSalesReset(db,url.searchParams.get('storeId'));
       if(method==='POST'&&path==='/api/admin/sales/reset')return startSalesReset(db,env,await readBody(req));
+      if(method==='GET'&&path==='/api/admin/sales/history')return adminSalesHistory(db,Object.fromEntries(url.searchParams));
+      if(method==='POST'&&path==='/api/admin/sales/correct')return correctAdminSales(db,await readBody(req));
       if(method==='POST'&&path==='/api/admin/stores')return addStore(db,await readBody(req));
       if(method==='POST'&&path==='/api/admin/adjust')return adjust(db,await readBody(req));
       const entity=path.match(/^\/api\/admin\/entities\/(sellers|services)(?:\/(\d+))?$/);

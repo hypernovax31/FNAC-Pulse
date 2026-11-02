@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url),{act}=TestRenderer;
 const bundled=await build({entryPoints:['src/Admin.jsx'],bundle:true,platform:'node',format:'cjs',write:false,external:['react','lucide-react'],logLevel:'silent',plugins:[{name:'admin-fixture',setup(b){
   b.onResolve({filter:/^\.\/api$/},()=>({path:'api',namespace:'test'}));
   b.onResolve({filter:/^\.\/cloud$/},()=>({path:'cloud',namespace:'test'}));
-  b.onLoad({filter:/^api$/,namespace:'test'},()=>({contents:'export const api=(...args)=>globalThis.__adminFixtureApi(...args); export const uid=()=>"fixture-job-00001";',loader:'js'}));
+  b.onLoad({filter:/^api$/,namespace:'test'},()=>({contents:'export const api=(...args)=>globalThis.__adminFixtureApi(...args); export const uid=()=>"fixture-job-00001"; export const dateLabel=x=>x; export const timeLabel=x=>x;',loader:'js'}));
   b.onLoad({filter:/^cloud$/,namespace:'test'},()=>({contents:'export const CLOUD=false; export const adminLogin=()=>{}; export const adminLogout=()=>{}; export const changeAdminPassword=()=>{};',loader:'js'}));
 }}]});
 const module={exports:{}};new Function('module','exports','require',bundled.outputFiles[0].text)(module,module.exports,require);

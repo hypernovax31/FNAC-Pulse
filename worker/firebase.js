@@ -149,6 +149,22 @@ export class FirestoreRest {
     const rows=await this.request(`${parent}:runQuery`,{method:'POST',body:{structuredQuery}});
     return rows.filter(row=>row.document).map(row=>readDocument(row.document));
   }
+  // Une seule colonne indexée (businessDate) permet de parcourir une période
+  // sans demander d'index composite sellerId/date sur les projets existants.
+  async salesPeriodPage(collectionPath,{start,end,limit=200,afterDate='',afterId=''}={}) {
+    const parts=collectionPath.split('/'),collection=parts.pop();
+    const parent=parts.length?'/'+parts.map(encodeURIComponent).join('/'):'';
+    const field={fieldPath:'businessDate'};
+    const structuredQuery={from:[{collectionId:collection}],limit,
+      where:{compositeFilter:{op:'AND',filters:[
+        {fieldFilter:{field,op:'GREATER_THAN_OR_EQUAL',value:encodeValue(start)}},
+        {fieldFilter:{field,op:'LESS_THAN_OR_EQUAL',value:encodeValue(end)}},
+      ]}},
+      orderBy:[{field,direction:'DESCENDING'},{field:{fieldPath:'__name__'},direction:'DESCENDING'}]};
+    if(afterDate&&afterId)structuredQuery.startAt={values:[encodeValue(afterDate),{referenceValue:this.name(`${collectionPath}/${afterId}`)}],before:false};
+    const rows=await this.request(`${parent}:runQuery`,{method:'POST',body:{structuredQuery}});
+    return rows.filter(row=>row.document).map(row=>readDocument(row.document));
+  }
   write(path,data,precondition) {
     return {update:{name:this.name(path),fields:encodeFields(data)},...(precondition?{currentDocument:precondition}:{})};
   }
