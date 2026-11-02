@@ -14,11 +14,15 @@ const render=(component,props={})=>renderToStaticMarkup(React.createElement(comp
 
 test('En-tête : son séparé, cloche barrée et aucun point vert de direct',()=>{
   const off=render(Header,{connected:'live',notificationsEnabled:false,soundEnabled:false});
-  assert.match(off,/aria-label="Activer la signature au lancement"/);assert.match(off,/lucide-volume-x/);
+  assert.match(off,/aria-label="Activer le son au lancement"/);assert.match(off,/lucide-volume-x/);
   assert.match(off,/aria-label="Notifications non activées"/);assert.match(off,/lucide-bell-off/);
   assert.doesNotMatch(off,/live-dot/);assert.match(off,/aria-label="Apparence"/);
   const on=render(Header,{connected:'live',notificationsEnabled:true,soundEnabled:true});
-  assert.match(on,/aria-label="Couper la signature au lancement"/);assert.match(on,/aria-label="Notifications activées"/);
+  assert.match(on,/aria-label="Désactiver le son au lancement"/);assert.match(on,/aria-label="Notifications activées"/);
+  const pending=render(Header,{notificationsEnabled:false,notificationPendingProfile:true});
+  assert.match(pending,/Notifications autorisées, activation après le choix du profil/);assert.doesNotMatch(pending,/lucide-bell-off/);
+  const error=render(Header,{notificationsEnabled:false,notificationPendingProfile:true,notificationPendingError:true});
+  assert.match(error,/Activation des notifications à finaliser/);assert.match(error,/lucide-bell-off/);
 });
 
 test('Premier lancement PWA : l’accueil tactile masque le tableau de bord avant le geste',()=>{
@@ -27,7 +31,7 @@ test('Premier lancement PWA : l’accueil tactile masque le tableau de bord avan
   globalThis.localStorage={getItem(){return null;},setItem(){},removeItem(){}};
   try {
     const html=render(App);
-    assert.match(html,/Touchez le bouton pour accéder aux services/);assert.match(html,/Bienvenue sur/);
+    assert.match(html,/Appuyez sur le bouton pour accéder à l’application des services/);assert.match(html,/Bienvenue sur/);
     assert.match(html,/class="startup-start" disabled=""/);
     assert.doesNotMatch(html,/class="app-shell"/);assert.doesNotMatch(html,/Continuer sans son/);
   } finally {

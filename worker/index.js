@@ -189,7 +189,9 @@ export async function sendFcm(env,token,sale) {
   const r=await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/messages:send`,{
     method:'POST',headers:{Authorization:`Bearer ${access}`,'content-type':'application/json'},
     body:JSON.stringify({message:{token,notification:{title:'Une vente pour l’équipe !',body:saleMessage(sale.serviceName,sale.sellerName)},
-      webpush:{headers:{TTL:'3600',Urgency:'normal'},notification:{icon,badge:icon,tag:`sale-${sale.saleId}`},fcm_options:{link:appUrl.href}},
+      // Trois impulsions courtes, uniquement lorsque le navigateur et le
+      // système autorisent encore cette option Web Push non standard.
+      webpush:{headers:{TTL:'3600',Urgency:'normal'},notification:{icon,badge:icon,tag:`sale-${sale.saleId}`,vibrate:[70,70,70,70,70]},fcm_options:{link:appUrl.href}},
       data:{saleId:sale.saleId,storeId:sale.storeId}}}),
   });
   const data=await r.json().catch(()=>({}));

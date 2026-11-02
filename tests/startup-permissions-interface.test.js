@@ -88,6 +88,8 @@ test('PWA : autorisations dès le démarrage, avant données ou profil, puis rat
     await e.press(action(tree,'Géolocalisation'));
     assert.equal(e.locations.length,1);assert.equal(e.locations[0].gesture,true);assert.equal(e.locations[0].options.enableHighAccuracy,false);
     assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);
+    assert.equal(tree.root.findAllByProps({'aria-label':'Activation des notifications'}).length,0); // accord déjà donné, profil pas encore choisi
+    assert(tree.root.findByProps({'aria-label':'Notifications autorisées, activation après le choix du profil'}));
     assert.equal(tree.root.findByProps({'aria-label':'Votre magasin Fnac'}).props.value,'Fnac Près');
     assert.equal(e.requests.some(x=>JSON.stringify(x.body||{}).includes('43.61')),false);
     await e.authAs(session);await act(async()=>{await tick();await tick();});
@@ -247,6 +249,30 @@ test('Échec réseau : activation non présentée comme acquise et réessai poss
     e.prepareFails=false;await e.press(action(tree,'Notifications d’équipe'));
     assert.equal(e.prepares,2);assert.equal(e.notifications.length,1); // permission déjà accordée, pas de deuxième dialogue système
     assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);
+  } finally {await finish(tree,e);}
+});
+
+test('Préparation échouée avant profil : erreur actionnable, puis nouvelle tentative à la connexion',async()=>{
+  const e=environment({auth:null});e.prepareFails=true;let tree;
+  try {
+    tree=await mount();await e.press(action(tree,'Notifications d’équipe'));await e.press(button(tree,'Continuer'));
+    const card=section(tree,'Activation des notifications');
+    assert.match(text(card),/Activation à finaliser/);assert.match(text(card),/préparation a échoué/);assert.match(text(card),/En savoir plus/);
+    assert(tree.root.findByProps({'aria-label':'Activation des notifications à finaliser'}));
+    e.prepareFails=false;await e.authAs(session);await act(async()=>{await tick();await tick();});
+    assert.equal(e.subscriptions,1);assert.equal(e.values.get('fnac-pulse-fcm-enabled'),'1');assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),undefined);
+  } finally {await finish(tree,e);}
+});
+
+test('Préparation en attente : pas de carte redondante et choix du profil accessible',async()=>{
+  const e=environment({notificationPermission:'granted',prepareDeferred:true,auth:null});let tree;
+  try {
+    tree=await mount();await e.press(action(tree,'Notifications d’équipe'));await e.press(button(tree,'Continuer'));
+    assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),'1');assert.equal(tree.root.findAllByProps({'aria-label':'Activation des notifications'}).length,0);
+    await e.press(tree.root.findByProps({'aria-label':'Notifications autorisées, activation après le choix du profil'}));
+    assert.match(text(tree.toJSON()),/Autorisation accordée/);assert.match(text(tree.toJSON()),/essaiera automatiquement d’y associer cet appareil/);
+    assert.equal(button(tree,'Choisir mon profil').props.disabled,false);
+    await act(async()=>{e.resolvePrepare();await tick();await tick();});
   } finally {await finish(tree,e);}
 });
 

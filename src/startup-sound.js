@@ -1,8 +1,8 @@
 // Conserver la préférence historique : une personne qui avait coupé le son ne
 // doit pas le réentendre sans l'avoir réactivé elle-même.
 export const SOUND_KEY='fnac-pulse-sale-sound-v1';
-// Un nouveau parcours exigeant un geste est proposé une fois après cette mise
-// à jour, y compris si l'ancienne invitation avait déjà été fermée.
+// Mémorise le parcours tactile déjà terminé ; ne pas le réinitialiser lors
+// d'une mise à jour de l'interface.
 export const STARTUP_SOUND_KEY='fnac-pulse-touch-welcome-v1';
 export function soundEnabled(storage) {
   try {return (storage??globalThis.localStorage)?.getItem(SOUND_KEY)!=='off';} catch {return true;}

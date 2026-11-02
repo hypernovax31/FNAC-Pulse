@@ -64,6 +64,20 @@ test('Notification : permission, profil, navigateur et erreur de vérification r
   assert.equal(notificationBanner({...base,permission:'granted',unconfirmed:true}).label,'Confirmer');
 });
 
+test('Permission accordée au lancement : pas de carte redondante en attente du profil, erreurs visibles',()=>{
+  const pending={permission:'granted',enabled:false,hasSession:false,platform:{os:'android'},installed:true,pushAvailable:true,error:'',pendingProfile:true};
+  assert.equal(notificationBanner(pending),null);
+  assert.equal(notificationBanner({...pending,enabled:null}),null);
+  const failed=notificationBanner({...pending,enabled:null,pendingError:true});
+  assert.equal(failed.title,'Activation à finaliser');assert.match(failed.message,/préparation a échoué/);assert.equal(failed.action,'details');
+  assert.equal(notificationBanner({...pending,error:'unavailable'}).action,'retry');
+  assert.match(notificationBanner({...pending,permission:'denied'}).message,/bloquées/);
+  assert.equal(notificationBanner({...pending,permission:'unsupported',pushAvailable:false}).action,'details');
+  assert.equal(notificationBanner({...pending,platform:{os:'ios'},installed:false}).action,'install');
+  assert.match(notificationBanner({...pending,pendingProfile:false}).message,/profil/);
+  assert.match(notificationBanner({...pending,hasSession:true,unconfirmed:true}).message,/abonnement/);
+});
+
 test('Modale notifications : action utilisateur, état bloqué, profil et erreur vérifiable',()=>{
   const base={permission:'default',enabled:false,checkError:'',pushAvailable:true,platform:{os:'android'},installed:true,hasSession:true,busy:false};
   const normal=render(NotificationsDialog,base);
@@ -72,6 +86,10 @@ test('Modale notifications : action utilisateur, état bloqué, profil et erreur
   const blocked=render(NotificationsDialog,{...base,permission:'denied'});
   assert.match(blocked,/Notifications bloquées/);assert.match(blocked,/<button[^>]+disabled=""[^>]*>Notifications bloquées/);
   const missingProfile=render(NotificationsDialog,{...base,hasSession:false});assert.match(missingProfile,/Choisir mon profil/);
+  const pending=render(NotificationsDialog,{...base,permission:'granted',hasSession:false,pendingProfile:true});
+  assert.match(pending,/Autorisation accordée/);assert.match(pending,/essaiera automatiquement d’y associer cet appareil/);assert.match(pending,/Choisir mon profil/);assert.doesNotMatch(pending,/Notifications activées/);
+  const pendingError=render(NotificationsDialog,{...base,permission:'granted',enabled:null,hasSession:false,pendingProfile:true,pendingError:true});
+  assert.match(pendingError,/Activation à finaliser/);assert.match(pendingError,/préparation n’a pas abouti/);assert.match(pendingError,/nouvelle tentative sera faite après/);assert.doesNotMatch(pendingError,/Notifications activées/);
   const unavailable=render(NotificationsDialog,{...base,permission:'unsupported',pushAvailable:false,platform:{os:'ios'},installed:false});assert.match(unavailable,/Voir comment installer/);
   const checking=render(NotificationsDialog,{...base,enabled:null});assert.match(checking,/Vérification…/);
   const error=render(NotificationsDialog,{...base,enabled:null,checkError:'unavailable'});assert.match(error,/Réessayer la vérification/);

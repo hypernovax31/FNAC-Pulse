@@ -17,8 +17,14 @@ export function installPlatform(nav=typeof navigator==='undefined'?null:navigato
   return {os:ios?'ios':android?'android':'desktop',inApp};
 }
 
-export function notificationBanner({permission,enabled,hasSession,platform,installed,error,unconfirmed=false,pushAvailable=true}) {
+export function notificationBanner({permission,enabled,hasSession,platform,installed,error,unconfirmed=false,pushAvailable=true,pendingProfile=false,pendingError=false}) {
   if(error)return {message:'Impossible de vérifier les notifications. Vérifiez votre connexion puis réessayez.',action:'retry',label:'Réessayer'};
+  // L'autorisation a déjà été donnée au lancement. L'abonnement sera associé
+  // après connexion : ne pas réafficher une invitation à l'activer.
+  if(pendingProfile&&!hasSession&&permission==='granted'&&pushAvailable&&!(platform.os==='ios'&&!installed)){
+    if(pendingError)return {title:'Activation à finaliser',message:'Autorisation accordée, mais la préparation a échoué. Elle sera retentée après le choix de votre profil.',action:'details',label:'En savoir plus'};
+    return null;
+  }
   if(enabled!==false)return null;
   if(platform.os==='ios'&&!installed)return {message:'Sur iPhone et iPad, installez et ouvrez d’abord l’application sur l’écran d’accueil.',action:'install',label:'Installer'};
   if(permission==='denied')return {message:'Notifications bloquées : autorisez-les dans les réglages de votre appareil ou navigateur.',action:'details',label:'En savoir plus'};
