@@ -208,6 +208,7 @@ test('SQLite annuaire Fnac : migration non destructive et idempotente des magasi
     assert.equal(payload.stores.find(s=>s.fnacId==='cl57').id,LEGACY_STORE_ID);
     assert.deepEqual(payload.directoryRegions,['Fnac Guadeloupe','Fnac La Réunion']);
     assert(payload.stores.every(s=>s.directoryStatus!=='region'));
+    assert.deepEqual(payload.stores.filter(s=>s.directoryStatus==='regional-choice').map(s=>s.name).sort(),['Fnac Guadeloupe','Fnac La Réunion']);
     assert.equal(payload.stores.find(s=>s.fnacId==='cl449').id,'osm-node-3782323705');
     assert.equal(payload.stores.find(s=>s.fnacId==='cl56').name,"Fnac Toulouse - Jeanne-d'Arc (Micro)");
     assert(payload.stores.some(s=>s.id==='custom-shop'));
@@ -314,6 +315,9 @@ test('SQLite local : création autonome du profil, prénom existant et persistan
   async function request(route,method='GET',body,token){const r=await fetch(url+route,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,value:await r.json()};}
   try {
     const initial=(await request('/api/bootstrap')).value,store=LEGACY_STORE_ID,other=initial.stores.find(x=>x.name==='Fnac Bordeaux').id;
+    const region=initial.stores.find(x=>x.name==='Fnac Guadeloupe').id,regional={storeId:region,departmentId:'tech',name:'Profil Régional'};
+    assert.equal((await request('/api/auth/register','POST',regional)).status,400);
+    assert.equal((await request('/api/auth/register','POST',{...regional,regionalConsent:true})).status,200);
     assert.equal((await request('/api/auth/register','POST',{storeId:store,departmentId:'absent',name:'Ariane'})).status,400);
     const created=await request('/api/auth/register','POST',{storeId:store,departmentId:'editorial',name:'  Ariane   Test  '});assert.equal(created.status,200);
     assert.equal((await request('/api/auth/register','POST',{storeId:store,departmentId:'tech',name:'ariane test'})).status,409);

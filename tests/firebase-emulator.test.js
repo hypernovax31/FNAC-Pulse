@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import { initializeApp, deleteApp, getApp, getApps } from 'firebase/app';
-import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signInWithCustomToken, signInWithEmailAndPassword, applyActionCode, reload } from 'firebase/auth';
+import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signInWithCustomToken, signInWithEmailAndPassword, verifyBeforeUpdateEmail, checkActionCode, applyActionCode, reload } from 'firebase/auth';
 import { build } from 'esbuild';
 import { mkdir, unlink } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
@@ -50,7 +50,7 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     assert.equal((await call('/api/bootstrap')).status,200);
     const legacy=(await storeDb.get('pulse/catalog')).data;
     delete legacy.catalogVersion;delete legacy.sellerStores;delete legacy.serviceOrders;
-    delete legacy.storeDirectoryVersion;delete legacy.directorySync;
+    delete legacy.storeDirectoryVersion;delete legacy.storeRegionalChoicesVersion;delete legacy.directorySync;
     legacy.stores=legacyLocations.map(s=>({...s,active:true}));
     legacy.sellers=legacy.sellers.map(({storeId,...s})=>s);
     legacy.services=legacy.services.map(({priorityCode,...s})=>s);
@@ -67,6 +67,8 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     assert.equal(migratedCatalog.stores.find(s=>s.fnacId==='cl57').id,LEGACY_STORE_ID);
     assert.equal(migratedCatalog.stores.find(s=>s.fnacId==='cl449').id,'osm-node-3782323705');
     assert.equal(migratedCatalog.stores.filter(s=>s.directoryStatus==='official').length,189);
+    assert.deepEqual(migratedCatalog.stores.filter(s=>s.directoryStatus==='regional-choice').map(s=>s.name),['Fnac Guadeloupe','Fnac La Réunion']);
+    assert.equal((await storeDb.get('pulseBackups/catalog-before-fnac-regional-choices-v1')).data.catalog.stores.length,180);
     assert.deepEqual((await storeDb.get('pulseAccess/legacy-record')).data,oldAccess);
     assert.deepEqual((await storeDb.get(`pulseStores/${LEGACY_STORE_ID}/sales/historic`)).data,oldSale);
     const store=LEGACY_STORE_ID,other=bootstrap.json.stores.find(s=>s.name==='Fnac Bordeaux').id;
@@ -348,6 +350,14 @@ test('Émulateurs Firebase : inscription atomique et transition sans déconnexio
     const concurrent=await Promise.all([call('/api/auth/register','POST',a),call('/api/auth/register','POST',b)]);
     assert.deepEqual(concurrent.map(x=>x.status).sort(),[200,409]);
     assert.equal((await storeDb.get('pulse/catalog')).data.sellers.filter(s=>s.name===a.name).length,1);
+    const region=(await call('/api/bootstrap')).json.stores.find(s=>s.name==='Fnac Guadeloupe');
+    const regionalSalt='firebase-region-salt-2026',regionalProof=await pinProof(project,region.id,null,'3648',regionalSalt);
+    const regional={storeId:region.id,departmentId:'tech',name:'Profil Régional',pinSalt:regionalSalt,registrationId:'firebase-region-register-01',newProof:regionalProof};
+    assert.equal((await call('/api/auth/register','POST',regional)).status,400,'un ancien client ne crée pas de profil sans avertissement');
+    const regionalCreated=await call('/api/auth/register','POST',{...regional,regionalConsent:true});assert.equal(regionalCreated.status,200);
+    const regionalUser=(await signInWithCustomToken(auth,regionalCreated.json.customToken)).user;
+    assert.equal((await regionalUser.getIdTokenResult()).claims.storeId,region.id);
+    assert.equal((await call('/api/auth/register','POST',regional)).json.sellerId,regionalCreated.json.sellerId,'reprise idempotente sans nouveau profil');
   } finally {await deleteApp(app);}
 });
 
@@ -613,7 +623,17 @@ test('Émulateurs Firebase : création multi-admin, vérifications, reprise et s
     assert.equal(await cloud.adminAccountEmail(),newEmail,'l’ancien e-mail reste en vigueur avant confirmation');
     const change=(await oob()).find(x=>x.newEmail===changedEmail&&x.requestType==='VERIFY_AND_CHANGE_EMAIL');
     assert(change?.oobCode,'le lien de changement d’e-mail est créé');
-    await applyActionCode(targetAuth,change.oobCode);
+    // Un lien d'un autre compte ne doit pas être appliqué même s'il est valide.
+    const foreignEmail=`foreign-changed-${now}@example.test`;
+    await verifyBeforeUpdateEmail(targetAuth.currentUser,foreignEmail);
+    const foreign=(await oob()).find(x=>x.newEmail===foreignEmail&&x.requestType==='VERIFY_AND_CHANGE_EMAIL');assert(foreign?.oobCode);
+    const link=code=>`https://demo-fnac.firebaseapp.com/__/auth/action?mode=verifyAndChangeEmail&oobCode=${encodeURIComponent(code)}&apiKey=demo-key`;
+    await assert.rejects(cloud.inspectAdminEmailChange(link(foreign.oobCode)),/ne correspond pas au compte/);
+    assert.equal((await checkActionCode(targetAuth,foreign.oobCode)).operation,'VERIFY_AND_CHANGE_EMAIL','le lien étranger reste inutilisé');
+    const proof=await cloud.inspectAdminEmailChange(link(change.oobCode));
+    assert.equal(proof.newEmail,changedEmail);assert.equal(await cloud.adminAccountEmail(),newEmail,'la vérification seule ne modifie pas l’adresse');
+    const confirmed=await cloud.confirmAdminEmailChange(proof);assert.equal(confirmed.email,changedEmail);
+    await assert.rejects(cloud.inspectAdminEmailChange(link(change.oobCode)),/expiré ou déjà utilisé/);
     await signInWithEmailAndPassword(targetAuth,changedEmail,changedPassword);
     assert.equal(targetAuth.currentUser.uid,target.uid,'le changement conserve le même compte et les droits');
     assert.equal((await call('/api/admin/administrators','POST',{},await targetAuth.currentUser.getIdToken(true))).status,400);

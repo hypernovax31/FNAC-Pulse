@@ -15,6 +15,8 @@ const plugin={name:'admin-fixtures',setup(b){
     export const changeAdminPassword=(...x)=>globalThis.__adminTest.password(...x);
     export const createAdministrator=(...x)=>globalThis.__adminTest.create(...x);
     export const requestAdminEmailChange=(...x)=>globalThis.__adminTest.address(...x);
+    export const inspectAdminEmailChange=(...x)=>globalThis.__adminTest.inspect(...x);
+    export const confirmAdminEmailChange=(...x)=>globalThis.__adminTest.confirm(...x);
   `,loader:'js'}));
 }};
 async function load(entry){
@@ -23,7 +25,7 @@ async function load(entry){
 }
 const {AdminAccounts}=await load('src/AdminAccounts.jsx'),{DirectoryImport}=await load('src/DirectoryImport.jsx'),{AdminTabs}=await load('src/AdminTabs.jsx');
 const text=node=>typeof node==='string'||typeof node==='number'?String(node):!node?'':Array.isArray(node)?node.map(text).join(''):text(node.children);
-const form=(tree,id)=>tree.root.findByProps({'aria-labelledby':id}).findByType('form');
+const form=(tree,id)=>tree.root.findByProps({'aria-labelledby':id}).findAllByType('form')[0];
 const change=async(input,value)=>act(async()=>{input.props.onChange({target:{value}});await tick();});
 const submit=async(form)=>act(async()=>{form.props.onSubmit({preventDefault(){}});await tick();await tick();});
 function setup(){
@@ -36,6 +38,8 @@ function setup(){
     async email(...args){e.calls.push(['email',...args]);return 'responsable@example.test';},
     async password(...args){e.calls.push(['password',...args]);},
     async address(...args){e.calls.push(['address',...args]);},
+    async inspect(...args){e.calls.push(['inspect',...args]);return {code:'code-fictif',newEmail:'nouvelle@example.test'};},
+    async confirm(...args){e.calls.push(['confirm',...args]);return {email:'nouvelle@example.test',refreshed:true};},
     async create(...args){e.calls.push(['create',args[1]]);return {already:false,verificationRequired:true};},
   });
   e.restore=()=>{for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];};return e;
@@ -71,6 +75,24 @@ test('Administrateur : création explicite, confirmation et modifications person
     assert.deepEqual(e.calls.find(x=>x[0]==='address').slice(1),['Nouveau-password-2026!','autre@example.test']);assert.match(text(tree.toJSON()),/ancienne adresse reste valable/);
     await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('Déconnexion administrateur')).props.onClick());assert.equal(loggedOut,1);
     assert.deepEqual(busy,[true,false,true,false,true,false,true,false]);
+  } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
+});
+
+test('Administrateur : lien bloqué, vérification puis confirmation explicite dans le panneau',async()=>{
+  const e=setup(),busy=[];let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onBusy:x=>busy.push(x),onLogout(){}}));await tick();});
+    assert.match(text(tree.toJSON()),/Le lien reçu ne s’ouvre pas/);
+    const details=()=>tree.root.findByProps({className:'admin-email-fallback'});
+    const input=()=>tree.root.findByProps({'aria-label':'Lien de confirmation reçu'});
+    const link='https://fnac-pulse.firebaseapp.com/__/auth/action?mode=verifyAndChangeEmail&oobCode=secret-fictif';
+    await change(input(),link);await submit(details().findByType('form'));
+    assert.equal(e.calls.find(x=>x[0]==='inspect')[1],link);assert.equal(input().props.value,'');
+    assert.match(text(tree.toJSON()),/nouvelle@example\.test/);assert.equal(e.calls.filter(x=>x[0]==='confirm').length,0);
+    await act(async()=>{tree.root.findAllByType('button').find(x=>text(x).includes('Confirmer mon nouvel e-mail')).props.onClick();await tick();await tick();});
+    assert.deepEqual(e.calls.find(x=>x[0]==='confirm')[1],{code:'code-fictif',newEmail:'nouvelle@example.test'});
+    assert.match(text(tree.toJSON()),/Adresse confirmée/);assert.doesNotMatch(text(tree.toJSON()),/code-fictif|secret-fictif/);
+    assert.deepEqual(busy,[true,false,true,false]);
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 

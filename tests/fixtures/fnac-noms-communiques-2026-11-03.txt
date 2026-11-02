@@ -1,0 +1,191 @@
+Aéroport Lyon St-Exupéry T1
+Aéroport Marseille-Provence
+Aéroport Orly 1 ZP
+Aéroport Orly 3
+Aéroport Orly 4
+Aéroport Orly corners
+Aéroport Roissy CDG corners
+Aéroport Roissy CDG T1
+Aéroport Roissy CDG T1 ZP
+Aéroport Roissy CDG T2 liaison BD
+Aéroport Roissy CDG T2E K
+Aéroport Roissy CDG T2E L S3
+Aéroport Roissy CDG T2E M
+Aéroport Roissy CDG T2F
+Aéroport Roissy CDG T3
+Aéroport Toulouse Blagnac Hall C/D ZR
+Aix-en-Provence
+Ajaccio
+Ajaccio Atrium
+Albi
+Alençon 3
+Alès
+Amiens
+Angers
+Annecy
+Annemasse
+Annonay
+Arles
+Aubenas
+Aurillac
+Avignon
+Avignon - Le Pontet
+Bastia
+Bayonne
+Beaune
+Belfort
+Belleville-sur-Saône
+Bergerac
+Besançon
+Biganos
+Bordeaux
+Bordeaux-Lac
+Boulogne
+Boulogne-sur-Mer
+Bourg-en-Bresse
+Bourges
+Brest
+Caen
+Cagnes-sur-Mer
+Cannes
+Capvern
+Carré Sénart
+Cergy
+Chalon-sur-Saône
+Chambéry
+Chambourcy
+Chartres
+Châteauroux
+Cherbourg
+Claye-Souilly
+Clermont-Ferrand
+Colmar
+Compiègne 3
+Crest
+Créteil
+Croix-Blanche
+Dax
+Deauville
+Dijon
+Dinard-Pleurtuit
+Dole
+Douai 3
+Farébersviller 3
+Fenouillet
+Gennevilliers
+Givet
+Grenoble - Grand Place
+Grenoble - Victor Hugo
+Guadeloupe
+Herblay
+Isle d’Abeau
+Issoire
+La Défense-CNIT
+La Gorgue
+La Réunion
+La Rochelle
+La Roche-sur-Yon
+Labège
+Lampertheim
+Lannion
+Laval
+Le Cendre
+Le Havre
+Le Mans
+Libourne
+Lille
+Lille - Gare Lille-Flandres
+Limoges
+Limoges Boisseuil
+Lisieux
+Lorient
+Lyon - Gare Part-Dieu
+Lyon Bellecour
+Lyon Part-Dieu
+Mâcon
+Marseille - La Valentine
+Marseille Centre Bourse
+Maulette
+Melun
+Metz
+Metz - Gare Metz-Ville
+Monaco
+Montceau-les-Mines
+Montélimar
+Montluçon
+Montpellier
+Montpon-Ménestérol
+Morlaix
+Morteau
+Mulhouse
+Nancy
+Nantes
+Nemours
+Nevers
+Nice
+Nîmes
+Nogent-le-Rotrou
+Noisy-le-Grand
+Orléans
+Pamiers
+Parinor
+Paris - Beaugrenelle
+Paris - Bercy Village
+Paris - Forum des Halles
+Paris - Gare Auber
+Paris - Gare Châtelet
+Paris - Gare de l’Est
+Paris - Gare de Lyon
+Paris - Gare du Nord
+Paris - Gare Montparnasse
+Paris - Gare Saint Lazare
+Paris - Montparnasse
+Paris - Saint-Lazare
+Paris - Ternes
+Parly 2
+Pau
+Perpignan
+Plouzané
+Poitiers
+Pontarlier
+Pont-Audemer
+Pontault-Combault
+Pontivy
+Quimper
+Redon
+Reims
+Reims Thillois
+Rennes
+Roanne
+Rochefort
+Rosny 2
+Rouen
+Saint-Brieuc
+Sainte-Marie-Des-Champs
+Saint-Étienne
+Saint-Genis-Laval
+Saint-Marcel
+Saint-Maximin
+Saint-Nazaire
+Saint-Yrieix
+Sallanches
+Salon-de-Provence
+Saumur
+Somain
+St-Lô
+Strasbourg
+Thiais
+Thonon-les-Bains
+Toulon
+Toulouse - Jeanne-d’Arc (Micro)
+Toulouse Les Variétés
+Tours
+Troyes
+Val d’Europe
+Valence
+Valenciennes
+Vannes
+Vélizy
+Verneuil-sur-Avre
+Vichy
+Villebon

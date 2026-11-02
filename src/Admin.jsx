@@ -15,6 +15,7 @@ import { SellerDeletePanel } from './SellerDelete';
 import { ServiceDeletePanel } from './ServiceDelete';
 import { AdminTabs } from './AdminTabs';
 import { normalizeWorkdays } from './goals.js';
+import { displayStoreName } from './store-directory.js';
 
 function directoryDate(value) {
   const day=String(value||'').slice(0,10),parts=day.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -24,10 +25,11 @@ function directoryStatus(sync) {
   if(!sync)return 'État de l’annuaire indisponible.';
   const checked=`Dernière vérification officielle le ${directoryDate(sync.verifiedAt)}.`;
   const manual=sync.lastManualImport?` Copie importée par un administrateur le ${directoryDate(sync.lastManualImport)} : son origine et sa fraîcheur ne sont pas vérifiées automatiquement.${sync.manualReviewCount?` ${sync.manualReviewCount} correspondance(s) de la copie demandent une vérification.`:''}`:'';
-  if(sync.lastResult==='blocked')return `${checked} Le ${directoryDate(sync.lastAttempt)}, le site Fnac a refusé l’accès automatique du serveur (HTTP 403 ou restriction équivalente) : aucune mise à jour automatique n’a eu lieu. Nouvelle tentative chaque mois.${manual}`;
-  if(['invalid','incomplete','ambiguous','unavailable'].includes(sync.lastResult))return `${checked} La dernière tentative n’a pas pu vérifier une liste complète. La liste est conservée ; nouvelle tentative chaque mois.${manual}`;
-  if(sync.lastResult==='review')return `${checked} Actualisation effectuée ; ${sync.reviewCount||0} correspondance(s) demandent une vérification.${manual}`;
-  return `${checked} Vérification automatique prévue le 1er de chaque mois.${manual}`;
+  const regional=sync.regionalReviewCount?` ${sync.regionalReviewCount} mention(s) régionale(s) demandent une vérification : un nom ou un identifiant existe déjà.`:'';
+  if(sync.lastResult==='blocked')return `${checked} Le ${directoryDate(sync.lastAttempt)}, le site Fnac a refusé l’accès automatique du serveur (HTTP 403 ou restriction équivalente) : aucune mise à jour automatique n’a eu lieu. Nouvelle tentative chaque mois.${manual}${regional}`;
+  if(['invalid','incomplete','ambiguous','unavailable'].includes(sync.lastResult))return `${checked} La dernière tentative n’a pas pu vérifier une liste complète. La liste est conservée ; nouvelle tentative chaque mois.${manual}${regional}`;
+  if(sync.lastResult==='review')return `${checked} Actualisation effectuée ; ${sync.reviewCount||0} correspondance(s) demandent une vérification.${manual}${regional}`;
+  return `${checked} Vérification automatique prévue le 1er de chaque mois.${manual}${regional}`;
 }
 
 function Modal({title,subtitle,onClose,children,wide=false}) {
@@ -274,8 +276,9 @@ export default function Admin({onClose,data,session,onChanged}) {
       </>}
       {tab==='stores'&&<>
         <div className="admin-store-scope">
-          <label><span className="form-label">MAGASIN À GÉRER</span><select aria-label="Magasin à gérer" className="text-input" disabled={busy} value={adminStore} onChange={e=>changeStore(e.target.value)}><option value="">Choisir un magasin</option>{[...data.stores].sort((a,b)=>a.name.localeCompare(b.name,'fr',{sensitivity:'base',numeric:true})).map(s=><option value={s.id} key={s.id}>{s.name}{s.directoryStatus==='historical'?' · non confirmé dans l’annuaire':s.directoryStatus==='manual'?' · copie non vérifiée':''}</option>)}</select></label>
+          <label><span className="form-label">MAGASIN À GÉRER</span><select aria-label="Magasin à gérer" className="text-input" disabled={busy} value={adminStore} onChange={e=>changeStore(e.target.value)}><option value="">Choisir un magasin</option>{[...data.stores].sort((a,b)=>displayStoreName(a).localeCompare(displayStoreName(b),'fr',{sensitivity:'base',numeric:true})).map(s=><option value={s.id} key={s.id}>{displayStoreName(s)}{s.directoryStatus==='historical'?' · non confirmé dans l’annuaire':s.directoryStatus==='manual'?' · copie non vérifiée':s.directoryStatus==='regional-choice'?' · mention régionale':''}</option>)}</select></label>
           <p>Ce choix s’applique aux ventes, objectifs, vendeurs, services et codes PIN de l’administration.</p>
+          {data.stores.find(s=>s.id===adminStore)?.directoryStatus==='regional-choice'&&<p className="regional-choice-notice">Mention régionale sans magasin précis : les bilans sont communs et les notifications partagées entre vendeurs d’un même département. Ajoutez des magasins distincts si nécessaire.</p>}
         </div>
         <div className="admin-section-heading"><div><h3>Ajouter un magasin</h3><p>Un magasin absent de la liste ? Ajoutez-le à votre espace.</p></div></div>
         <form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{await api('/api/admin/stores',{method:'POST',token,body:newStore});setNewStore({name:'',lat:'',lon:''});},'Magasin ajouté.')}}>

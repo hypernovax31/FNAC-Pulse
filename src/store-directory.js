@@ -1,11 +1,27 @@
 // L'identifiant interne d'un magasin est une clé de profils et d'historique.
 // Il ne doit jamais être remplacé par l'identifiant de l'annuaire Fnac.
 export const DIRECTORY_VERSION = 'fnac-directory-2026-10-29-v1';
+// Migration séparée : elle n'applique pas à nouveau un ancien instantané aux
+// magasins qui auraient été modifiés depuis la première installation.
+export const REGIONAL_CHOICES_VERSION = 'fnac-regional-choices-2026-11-03-v1';
 
 function normalizedName(value) {
   return String(value||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
     .toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ');
 }
+// Typographie de la liste communiquée par l'utilisateur. La dénomination
+// officielle reste en base ; si Fnac renomme vraiment une fiche, ne jamais
+// masquer ce nouveau nom derrière une ancienne variante d'affichage.
+const DISPLAY_NAMES={
+  cl629:'Fnac Carré Sénart',cl695:'Fnac Isle d’Abeau',cl500:'Fnac Montceau-les-Mines',
+  cl378:'Fnac Montpon-Ménestérol',cl231:'Fnac Paris - Gare de l’Est',cl62:'Fnac Saint-Étienne',
+  cl56:'Fnac Toulouse - Jeanne-d’Arc (Micro)',cl52:'Fnac Val d’Europe',
+};
+export function displayStoreName(store) {
+  const name=store?.name||'',preferred=DISPLAY_NAMES[store?.fnacId];
+  return preferred&&normalizedName(preferred)===normalizedName(name)?preferred:name;
+}
+
 // Recherche tolérante aux accents, à la casse et aux espaces : les identifiants
 // internes restent inchangés, y compris pour deux magasins de même nom.
 export function searchStores(stores,query) {
@@ -84,8 +100,31 @@ export function mergeStoreDirectory(current,entries,{legacyIds=[],retireMissing=
     if(s.fnacId&&retireMissing&&!seen.has(s.fnacId))s.directoryStatus='historical';
     else if(!s.fnacId&&legacySet.has(s.id))s.directoryStatus='historical';
   }
-  // Les mentions régionales sans fiche restent des métadonnées, jamais des
-  // magasins : elles ne doivent pas mélanger les équipes de plusieurs lieux.
+  // Les mentions régionales ne font pas partie des fiches officielles ; leurs
+  // espaces génériques sont traités séparément par mergeRegionalChoices.
+  return {stores,review};
+}
+
+// Les deux entrées régionales figurent dans la liste Fnac sans fiche de magasin
+// individuel. On leur donne des espaces distincts et clairement signalés,
+// sans jamais les fusionner avec un éventuel magasin personnalisé homonyme.
+export function mergeRegionalChoices(current,regions,{maxStores=500}={}) {
+  if(!Array.isArray(current)||!Array.isArray(regions))throw Error('Mentions régionales invalides');
+  const stores=current.map(s=>({...s})),review=[];
+  const comparable=name=>normalizedName(name).replace(/^fnac\s+/, '');
+  for(const region of regions) {
+    if(!/^fnac-region-[a-z0-9-]+$/.test(region?.id||'')||typeof region.name!=='string'||!region.name.trim())throw Error('Mention régionale invalide');
+    const sameId=stores.find(s=>s.id===region.id);
+    if(sameId) {
+      if(sameId.directoryStatus!=='regional-choice'||comparable(sameId.name)!==comparable(region.name))review.push({id:region.id,name:region.name,reason:'identifiant'});
+      continue;
+    }
+    if(stores.some(s=>[s.name,...(Array.isArray(s.previousNames)?s.previousNames:[])].some(name=>comparable(name)===comparable(region.name)))) {
+      review.push({id:region.id,name:region.name,reason:'homonyme'});continue;
+    }
+    if(stores.length>=maxStores){review.push({id:region.id,name:region.name,reason:'limite'});continue;}
+    stores.push({id:region.id,name:region.name,city:'',address:'',lat:null,lon:null,active:true,directoryStatus:'regional-choice'});
+  }
   return {stores,review};
 }
 
@@ -102,9 +141,9 @@ export function storeSelectionGroups(stores,sellers,{selectedId=''}={}) {
   for(const store of stores||[]) {
     if(store.directoryStatus==='region')continue;
     if(store.directoryStatus==='historical'&&!linked.has(store.id)&&store.id!==selectedId)continue;
-    (store.directoryStatus==='official'?official:other).push(store);
+    (store.directoryStatus==='official'||store.directoryStatus==='regional-choice'?official:other).push(store);
   }
-  const compare=(a,b)=>String(a.name||'').localeCompare(String(b.name||''),'fr',{sensitivity:'base',numeric:true});
+  const compare=(a,b)=>displayStoreName(a).localeCompare(displayStoreName(b),'fr',{sensitivity:'base',numeric:true});
   official.sort(compare);other.sort(compare);
   return {official,other,all:[...official,...other]};
 }

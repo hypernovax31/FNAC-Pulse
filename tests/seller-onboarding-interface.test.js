@@ -10,7 +10,7 @@ const output=await build({entryPoints:['src/App.jsx'],bundle:true,platform:'node
   b.onResolve({filter:/^\.\/api$/},()=>({path:'api',namespace:'mock'}));
   b.onResolve({filter:/^\.\/cloud$/},()=>({path:'cloud',namespace:'mock'}));
   b.onLoad({filter:/^api$/,namespace:'mock'},()=>({contents:`export const api=(...x)=>globalThis.__onboardingApi(...x); export const uid=()=>"test-uid";export const dateLabel=()=>"";export const timeLabel=()=>"";export const kmBetween=()=>0;`,loader:'js'}));
-  b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`export const CLOUD=true; export const adminLogin=()=>{};export const adminLogout=()=>{};export const changeAdminPassword=()=>{}; export const adminAccountEmail=async()=>"admin@example.test"; export const createAdministrator=()=>{}; export const requestAdminEmailChange=()=>{}; export const resendAdminVerification=()=>{}; export const observeVendor=()=>{}; export const sellerLogin=()=>{};export const sellerChoosePin=()=>{};export const sellerMigratePin=()=>{};export const sellerRegister=()=>{};export const sellerLogout=()=>{};export const listenStore=()=>{};export const prepareFcm=()=>{};export const subscribeFcm=()=>{};export const unsubscribeFcm=()=>{};export const notificationsWanted=()=>false;`,loader:'js'}));
+  b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`export const CLOUD=true; export const adminLogin=()=>{};export const adminLogout=()=>{};export const changeAdminPassword=()=>{}; export const adminAccountEmail=async()=>"admin@example.test"; export const createAdministrator=()=>{}; export const requestAdminEmailChange=()=>{};export const inspectAdminEmailChange=()=>{};export const confirmAdminEmailChange=()=>{}; export const resendAdminVerification=()=>{}; export const observeVendor=()=>{}; export const sellerLogin=()=>{};export const sellerChoosePin=()=>{};export const sellerMigratePin=()=>{};export const sellerRegister=()=>{};export const sellerLogout=()=>{};export const listenStore=()=>{};export const prepareFcm=()=>{};export const subscribeFcm=()=>{};export const unsubscribeFcm=()=>{};export const notificationsWanted=()=>false;`,loader:'js'}));
 }}]});
 const module={exports:{}};new Function('module','exports','require',output.outputFiles[0].text)(module,module.exports,require);
 const {SessionForm}=module.exports;
@@ -26,6 +26,35 @@ async function chooseScope(tree){
   await act(async()=>{tree.root.findByProps({role:'option'}).props.onClick();await tick();});
   await change(tree,'Votre département','tech');
 }
+
+test('Mention régionale : avertissement et accord explicite avant création seulement',async()=>{
+  const submissions=[],restore=apiMock(async()=>({needsPin:true}));let tree;
+  const regional={...data,stores:[...data.stores,{id:'fnac-region-guadeloupe',name:'Fnac Guadeloupe',directoryStatus:'regional-choice',active:true}],departmentsByStore:{...data.departmentsByStore,'fnac-region-guadeloupe':[{id:'tech',name:'Technique',active:true}]}};
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(SessionForm,{data:regional,onSubmit:async(...args)=>submissions.push(args)}));});
+    await change(tree,'Votre magasin Fnac','guadeloupe');
+    assert.match(text(tree.toJSON()),/Mention régionale · espace commun/);
+    await act(async()=>{tree.root.findByProps({role:'option'}).props.onClick();await tick();});
+    assert.equal(field(tree,'Votre magasin Fnac').props.value,'Fnac Guadeloupe');
+    assert.match(text(tree.toJSON()),/ne désigne pas un magasin précis/);
+    assert.match(text(tree.toJSON()),/bilans sont communs.*notifications partagées/);
+    assert.match(text(tree.toJSON()),/ajouter leurs noms précis/);
+    await change(tree,'Votre département','tech');await change(tree,'Votre prénom','Alice');
+    await change(tree,'Votre nouveau code PIN','4829');await change(tree,'Confirmer votre code PIN','4829');
+    assert.equal(click(tree,'Créer mon profil').props.disabled,true);
+    await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();});
+    assert.equal(submissions.length,0);assert.match(text(tree.toJSON()),/Confirmez avoir compris/);
+    await act(async()=>{tree.root.findByProps({type:'checkbox'}).props.onChange({target:{checked:true}});await tick();});
+    assert.equal(click(tree,'Créer mon profil').props.disabled,false);
+    await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();});
+    assert.equal(submissions.length,1);assert.equal(submissions[0][0].storeId,'fnac-region-guadeloupe');assert.equal(submissions[0][2].regionalConsent,true);
+    // Un profil déjà enregistré ne doit pas être bloqué par une nouvelle case.
+    await act(async()=>tree.unmount());
+    const existing={...regional,sellers:[...regional.sellers,{id:3,name:'Charlie',storeId:'fnac-region-guadeloupe',departmentId:'tech',active:true}]};
+    await act(async()=>{tree=TestRenderer.create(React.createElement(SessionForm,{data:existing,initialProfile:{storeId:'fnac-region-guadeloupe',sellerId:3},onSubmit:async()=>{}}));await tick();});
+    assert.equal(tree.root.findAllByProps({type:'checkbox'}).length,0);assert.match(text(tree.toJSON()),/Profil sur cet appareil/i);
+  } finally {if(tree)await act(async()=>tree.unmount());restore();}
+});
 
 test('Inscription : prénom libre puis deux PIN à 4 chiffres avant création',async()=>{
   const requests=[],submissions=[],restore=apiMock(async(...args)=>{requests.push(args);return {needsPin:true};});let tree;

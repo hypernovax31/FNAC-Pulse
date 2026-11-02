@@ -685,6 +685,41 @@ test('Annuaire cloud : migration atomique, données historiques et modification 
   const saved=backup.updateTime;await call();assert.equal((await db.get('pulseBackups/catalog-before-fnac-directory-v1')).updateTime,saved);
 });
 
+test('Mentions régionales cloud : ajout atomique sans réappliquer un ancien annuaire',async()=>{
+  const db=new MemoryDb(),worker=createWorker({createDb:()=>db}),env={FIREBASE_PROJECT_ID:'demo-fnac'},ctx={waitUntil(){}};
+  const call=()=>worker.fetch(new Request('https://worker.test/api/bootstrap'),env,ctx);
+  assert.equal((await call()).status,200);
+  const prior=(await db.get('pulse/catalog')).data;
+  prior.stores=prior.stores.filter(s=>s.directoryStatus!=='regional-choice');
+  delete prior.storeRegionalChoicesVersion;delete prior.directorySync.regionalReview;delete prior.directorySync.regionalReviewCount;
+  const changed=prior.stores.find(s=>s.fnacId==='cl629');changed.name='Fnac Nom plus récent';changed.directoryStatus='manual';changed.previousNames=['Fnac Carre Senart'];
+  const oldPin={storeId:LEGACY_STORE_ID,sellerId:1,version:'session-conservée',pinMac:'hash-conservé'};
+  const oldGoal={storeId:LEGACY_STORE_ID,sellerId:1,goals:{s1:{month:17}}};
+  const oldSale={id:'historique',storeId:LEGACY_STORE_ID,sellerId:1,serviceId:1};
+  await db.commit([db.write('pulse/catalog',prior),db.write('pulseAccess/pre-existing',oldPin),db.write('pulseGoals/pre-existing',oldGoal),db.write(`pulseStores/${LEGACY_STORE_ID}/sales/historique`,oldSale)]);
+  const commit=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path==='pulseBackups/catalog-before-fnac-regional-choices-v1')) {
+      raced=true;const concurrent=(await db.get('pulse/catalog')).data;
+      concurrent.stores.push({id:'custom-concurrent',name:'Ajout simultané',active:true});
+      await commit([db.write('pulse/catalog',concurrent)]);
+    }
+    return commit(writes);
+  };
+  assert.equal((await call()).status,200);assert(raced);
+  const now=(await db.get('pulse/catalog')).data,backup=await db.get('pulseBackups/catalog-before-fnac-regional-choices-v1');
+  assert(backup.data.catalog.stores.some(s=>s.id==='custom-concurrent'));
+  assert.deepEqual(now.stores.find(s=>s.fnacId==='cl629'),changed,'aucun retour au nom de l’ancien instantané');
+  for(const store of prior.stores)assert.deepEqual(now.stores.find(s=>s.id===store.id),store);
+  assert(now.stores.some(s=>s.id==='custom-concurrent'));
+  assert.deepEqual(now.stores.filter(s=>s.directoryStatus==='regional-choice').map(s=>s.name),['Fnac Guadeloupe','Fnac La Réunion']);
+  assert.equal(now.directorySync.regionalReviewCount,0);assert.equal(now.directorySync.verifiedAt,prior.directorySync.verifiedAt);
+  assert.deepEqual(now.sellers,prior.sellers);assert.deepEqual(now.services,prior.services);
+  assert.deepEqual((await db.get('pulseAccess/pre-existing')).data,oldPin);assert.deepEqual((await db.get('pulseGoals/pre-existing')).data,oldGoal);
+  assert.deepEqual((await db.get(`pulseStores/${LEGACY_STORE_ID}/sales/historique`)).data,oldSale);
+  const updated=(await db.get('pulse/catalog')).updateTime;await Promise.all([call(),call()]);assert.equal((await db.get('pulse/catalog')).updateTime,updated);
+});
+
 function simulatedFnacPage(entries,declared=entries.length+2) {
   const list=entries.map(s=>`<a href="https://www.fnac.com/ville/fiche/${s.fnacId}/w-4">${s.name.replace(/^Fnac /,'').replaceAll('&','&amp;')}</a>`).join('');
   return `<!doctype html><html><body><h1>Trouver un magasin Fnac</h1><span>${declared}</span><span>Magasins</span>${list}</body></html>`;
@@ -1044,6 +1079,23 @@ test('Inscription vendeur cloud : prénom, département, PIN à quatre chiffres 
   const otherProof=await pinProof('demo-fnac',other,null,'3491','second-profile-salt-12345');
   assert.equal((await req('/api/auth/register','POST',{...body,storeId:other,pinSalt:'second-profile-salt-12345',registrationId:'registration-test-0005',newProof:otherProof})).status,200);
   assert(limits.some(x=>x.startsWith('register-store:')));assert(limits.some(x=>x.startsWith('register-ip:')));
+});
+
+test('Inscription régionale : ancien client bloqué sans accord, profil et rejeu préservés',async()=>{
+  const db=new MemoryDb(),worker=createWorker({createDb:()=>db,makeCustomToken:async(_env,sub)=>`token-${sub}`});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',PIN_PEPPER:Buffer.alloc(32,11).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true};}}},ctx={waitUntil(){}};
+  async function req(path,body){const r=await worker.fetch(new Request(`https://worker.test${path}`,{method:body?'POST':'GET',headers:body?{'content-type':'application/json'}:{},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};}
+  const bootstrap=(await req('/api/bootstrap')).body,region=bootstrap.stores.find(s=>s.name==='Fnac Guadeloupe');
+  const pinSalt='salt-region-123456789012',newProof=await pinProof('demo-fnac',region.id,null,'4829',pinSalt);
+  const body={storeId:region.id,departmentId:'tech',name:'Alice',pinSalt,newProof,registrationId:'regional-request-00001'};
+  const blocked=await req('/api/auth/register',body);assert.equal(blocked.status,400);assert.match(blocked.body.error,/Mettez l’application à jour/);
+  assert.equal((await req('/api/auth/register',{...body,regionalConsent:'true'})).status,400);
+  assert.equal((await db.get('pulse/catalog')).data.sellers.length,12);
+  const created=await req('/api/auth/register',{...body,regionalConsent:true});assert.equal(created.status,200);
+  const replay=await req('/api/auth/register',body);assert.equal(replay.status,200);assert.equal(replay.body.sellerId,created.body.sellerId);
+  const status=await req('/api/auth/status',{storeId:region.id,departmentId:'tech',sellerId:created.body.sellerId});assert.equal(status.status,200);
+  const proof=await pinProof('demo-fnac',region.id,created.body.sellerId,'4829',pinSalt);
+  assert.equal((await req('/api/auth/login',{storeId:region.id,departmentId:'tech',sellerId:created.body.sellerId,proof,pinFlowVersion:2,openPinFlow:true})).status,200);
 });
 
 test('PIN cloud : transition 8 vers 4 après déconnexion, anciennes sessions et données conservées',async()=>{

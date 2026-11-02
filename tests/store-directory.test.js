@@ -1,8 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import locations from '../server/locations.json' with {type:'json'};
 import snapshot from '../server/fnac-directory.json' with {type:'json'};
-import {mergeStoreDirectory,storeSelectionGroups,searchStores} from '../src/store-directory.js';
+import {mergeStoreDirectory,mergeRegionalChoices,storeSelectionGroups,searchStores,displayStoreName} from '../src/store-directory.js';
 import {parseFnacDirectory,fetchFnacDirectory,assertDirectoryCoverage} from '../worker/fnac-source.js';
 
 const options={legacyIds:locations.map(s=>s.id)};
@@ -47,6 +48,38 @@ test('Fusion initiale : clés et coordonnées conservées, historique non suppri
   assert.equal(first.stores.find(s=>s.fnacId==='cl389').lat,null);
   assert(first.stores.some(s=>s.directoryStatus==='historical'));
   assert.deepEqual(mergeStoreDirectory(first.stores,snapshot.stores,options).stores,first.stores);
+});
+
+test('Liste communiquée : les 191 noms sont sélectionnables sans changer les clés des fiches',()=>{
+  const requested=readFileSync(new URL('./fixtures/fnac-noms-communiques-2026-11-03.txt',import.meta.url),'utf8').trim().split('\n').map(name=>`Fnac ${name}`);
+  assert.equal(requested.length,191);assert.equal(new Set(requested).size,191);
+  const official=mergeStoreDirectory(seed(),snapshot.stores,options).stores;
+  const regional=mergeRegionalChoices(official,snapshot.unlinkedRegions);
+  assert.deepEqual(regional.review,[]);
+  assert.deepEqual(regional.stores.slice(0,official.length),official,'aucune fiche existante n’est modifiée');
+  const selection=storeSelectionGroups(regional.stores,[]).all;
+  assert.deepEqual(new Set(selection.map(displayStoreName)),new Set(requested));
+  for(const region of snapshot.unlinkedRegions) {
+    const selected=selection.find(s=>s.id===region.id);
+    assert.equal(selected.name,region.name);assert.equal(selected.directoryStatus,'regional-choice');
+    assert.equal(selected.lat,null);assert.equal(selected.lon,null);assert.equal(selected.fnacId,undefined);
+  }
+  assert.equal(displayStoreName({fnacId:'cl629',name:'Fnac Carre Senart'}),'Fnac Carré Sénart');
+  assert.equal(displayStoreName({fnacId:'cl629',name:'Fnac Nouveau lieu'}),'Fnac Nouveau lieu','un vrai renommage reste visible');
+});
+
+test('Mentions régionales : idempotence, état conservé et homonymes jamais fusionnés',()=>{
+  const base=[{id:'ancien',name:'Équipe conservée',active:false,lat:1,lon:2,custom:'inchangé'}];
+  const first=mergeRegionalChoices(base,snapshot.unlinkedRegions);
+  assert.deepEqual(base,[{id:'ancien',name:'Équipe conservée',active:false,lat:1,lon:2,custom:'inchangé'}]);
+  first.stores.find(s=>s.id==='fnac-region-reunion').active=false;
+  assert.deepEqual(mergeRegionalChoices(first.stores,snapshot.unlinkedRegions).stores,first.stores);
+  const conflict=mergeRegionalChoices([...base,{id:'perso',name:'Guadeloupe',active:true},
+    {id:'fnac-region-reunion',name:'Une autre équipe',active:true}],snapshot.unlinkedRegions);
+  assert.equal(conflict.stores.length,3);assert.deepEqual(conflict.review.map(r=>r.reason),['homonyme','identifiant']);
+  const aliases=mergeRegionalChoices([...base,{id:'custom',name:'Autre',previousNames:['Fnac Guadeloupe']}],[snapshot.unlinkedRegions[0]]);
+  assert.equal(aliases.review[0].reason,'homonyme');assert(!aliases.stores.some(s=>s.id===snapshot.unlinkedRegions[0].id));
+  const limit=mergeRegionalChoices(base,snapshot.unlinkedRegions,{maxStores:1});assert.equal(limit.review.length,2);
 });
 
 test('Fusion mensuelle : pas de suppression, pas de réactivation, homonyme et clé ambiguë à vérifier',()=>{

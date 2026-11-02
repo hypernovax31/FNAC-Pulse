@@ -1,6 +1,6 @@
 import locations from '../server/locations.json' with {type:'json'};
 import directorySnapshot from '../server/fnac-directory.json' with {type:'json'};
-import { DIRECTORY_VERSION, mergeStoreDirectory, initialDirectorySync } from '../src/store-directory.js';
+import { DIRECTORY_VERSION, REGIONAL_CHOICES_VERSION, mergeStoreDirectory, mergeRegionalChoices, initialDirectorySync } from '../src/store-directory.js';
 import { fetchFnacDirectory, assertDirectoryCoverage, validateFnacDirectoryCopy, DirectorySourceError } from './fnac-source.js';
 import { FirestoreRest, FirebaseError, googleAccessToken, verifyIdToken, makeCustomToken, digestBase64, pinMac, verifyPin } from './firebase.js';
 import { LEGACY_STORE_ID, comparePeople, sellerStoreId, serviceRemovedForStore, servicesForStore } from '../src/catalog.js';
@@ -91,9 +91,11 @@ function freshCatalog() {
   const sellers=SELLERS.map((name,i)=>({id:i+1,name,active:true,storeId:LEGACY_STORE_ID}));
   const services=SERVICES.map(([name,icon],i)=>({id:i+1,name,icon,active:true}));
   const merged=initialStores(locations.map(s=>({...s,active:true})));
-  return scopedCatalog({sellers,services,stores:merged.stores,nextSellerId:sellers.length+1,nextServiceId:services.length+1,
+  const regional=mergeRegionalChoices(merged.stores,directorySnapshot.unlinkedRegions);
+  return scopedCatalog({sellers,services,stores:regional.stores,nextSellerId:sellers.length+1,nextServiceId:services.length+1,
     directoryRegions:directorySnapshot.unlinkedRegions.map(({name})=>name),
-    storeDirectoryVersion:DIRECTORY_VERSION,directorySync:{...initialDirectorySync(directorySnapshot),reviewCount:merged.review.length}});
+    storeDirectoryVersion:DIRECTORY_VERSION,storeRegionalChoicesVersion:REGIONAL_CHOICES_VERSION,
+    directorySync:{...initialDirectorySync(directorySnapshot),reviewCount:merged.review.length,regionalReviewCount:regional.review.length,regionalReview:regional.review}});
 }
 const publicCatalog=(data,storeId)=>({
   sellers:data.sellers.filter(s=>s.active).sort(comparePeople).map(s=>({id:s.id,name:s.name,storeId:sellerStoreId(s),departmentId:sellerDepartmentId(s)})),
@@ -132,7 +134,8 @@ async function catalog(db) {
       } else {
         const scopeNeeded=c.data.catalogVersion!==2||!c.data.serviceOrders||c.data.sellers.some(s=>!s.storeId||c.data.sellerStores?.[`s${s.id}`]!==sellerStoreId(s));
         const directoryNeeded=c.data.storeDirectoryVersion!==DIRECTORY_VERSION;
-        if(!scopeNeeded&&!directoryNeeded)return c;
+        const regionalNeeded=c.data.storeRegionalChoicesVersion!==REGIONAL_CHOICES_VERSION;
+        if(!scopeNeeded&&!directoryNeeded&&!regionalNeeded)return c;
         // La fusion clone les magasins qu’elle modifie ; ne pas recopier toutes
         // les autres données du catalogue, surtout sur le plan Workers gratuit.
         let next=scopeNeeded?scopedCatalog(c.data):{...c.data};
@@ -142,10 +145,16 @@ async function catalog(db) {
             directoryRegions:directorySnapshot.unlinkedRegions.map(({name})=>name),
             directorySync:next.directorySync||{...initialDirectorySync(directorySnapshot),reviewCount:merged.review.length}});
         }
+        if(regionalNeeded) {
+          const regional=mergeRegionalChoices(next.stores,directorySnapshot.unlinkedRegions);
+          next=withFlags({...next,stores:regional.stores,storeRegionalChoicesVersion:REGIONAL_CHOICES_VERSION,
+            directorySync:{...(next.directorySync||initialDirectorySync(directorySnapshot)),regionalReviewCount:regional.review.length,regionalReview:regional.review}});
+        }
         const writes=[];
         for(const backupPath of [
           ...(scopeNeeded?['pulseBackups/catalog-before-store-scoping-v1']:[]),
           ...(directoryNeeded?['pulseBackups/catalog-before-fnac-directory-v1']:[]),
+          ...(regionalNeeded?['pulseBackups/catalog-before-fnac-regional-choices-v1']:[]),
         ]) {
           if(!await db.get(backupPath))writes.push(db.write(backupPath,{catalog:backupCatalog(c.data),savedAt:new Date().toISOString()},{exists:false}));
         }
@@ -430,6 +439,10 @@ export function createWorker(deps={}) {
         return {...await signedIn(env,r.uid,access.data),sellerId:r.sellerId};
       }
       if(!validStore(c.data,storeId)||!departmentsForStore(c.data,storeId).some(d=>d.id===departmentId))fail(400,'Choisissez un magasin et un département actifs.');
+      // Empêcher les anciennes PWA de créer sans avertissement dans un espace
+      // régional commun. Les connexions et les reprises restent inchangées.
+      if(c.data.stores.find(s=>s.id===storeId)?.directoryStatus==='regional-choice'&&body.regionalConsent!==true)
+        fail(400,'Cet espace régional partage les bilans et notifications. Mettez l’application à jour puis confirmez cet avertissement avant de créer votre profil.');
       // Un profil archivé doit être restauré par l'administrateur, et non dupliqué.
       if(c.data.sellers.some(s=>sellerStoreId(s)===storeId&&sameSellerName(s.name,name)))
         fail(409,'Ce prénom existe déjà dans ce magasin. Choisissez le profil existant ou contactez votre responsable.');

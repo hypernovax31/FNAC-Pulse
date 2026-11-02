@@ -1,21 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
-import { searchStores } from './store-directory.js';
+import { displayStoreName, searchStores } from './store-directory.js';
 
 // Combobox contrôlé : la saisie n'est pas une sélection tant qu'un résultat
 // (et donc son identifiant immuable) n'a pas été choisi.
 export function StoreSearch({stores,value,onChange,onUnselectedChange,onEdit,disabled=false,id='store-search'}) {
   const selected=stores.find(item=>item.id===value);
-  const [query,setQuery]=useState(selected?.name||'');
+  const [query,setQuery]=useState(selected?displayStoreName(selected):'');
   const [open,setOpen]=useState(false),[active,setActive]=useState(-1);
   const input=useRef(null),listId=`${id}-list`,messageId=`${id}-message`;
   const results=searchStores(stores,query),shown=results.slice(0,30);
-  useEffect(()=>{if(value&&selected)setQuery(selected.name);},[value,selected?.name]);
+  useEffect(()=>{if(value&&selected)setQuery(displayStoreName(selected));},[value,selected?.name,selected?.fnacId]);
   useEffect(()=>{onUnselectedChange?.(!!query&&!value);},[query,value,onUnselectedChange]);
   useEffect(()=>{
     if(open&&active>=0)document.getElementById(`${id}-option-${active}`)?.scrollIntoView?.({block:'nearest'});
   },[open,active,id]);
-  const choose=item=>{setQuery(item.name);setOpen(false);setActive(-1);onChange(item.id);};
+  const choose=item=>{setQuery(displayStoreName(item));setOpen(false);setActive(-1);onChange(item.id);};
   const change=event=>{
     onEdit?.();setQuery(event.target.value);setActive(-1);setOpen(true);
     if(value)onChange('');
@@ -36,7 +36,7 @@ export function StoreSearch({stores,value,onChange,onUnselectedChange,onEdit,dis
       {!!query&&!disabled&&<button type="button" className="store-search-clear" aria-label="Effacer la recherche de magasin" onMouseDown={event=>event.preventDefault()} onClick={clear}><X size={15}/></button>}
     </div>
     {open&&<div className="store-search-dropdown"><div className="store-search-list" id={listId} role="listbox" aria-label="Magasins trouvés">
-      {shown.map((item,index)=><button key={item.id} type="button" id={`${id}-option-${index}`} role="option" aria-selected={item.id===value} tabIndex={-1} className={`store-search-option ${index===active?'is-active':''}`} onMouseDown={event=>event.preventDefault()} onMouseMove={()=>setActive(index)} onClick={()=>choose(item)}><span>{item.name}</span>{item.directoryStatus==='historical'&&<small>Profil existant · magasin non confirmé</small>}{item.directoryStatus==='manual'&&<small>Copie non vérifiée</small>}</button>)}
+      {shown.map((item,index)=><button key={item.id} type="button" id={`${id}-option-${index}`} role="option" aria-selected={item.id===value} tabIndex={-1} className={`store-search-option ${index===active?'is-active':''}`} onMouseDown={event=>event.preventDefault()} onMouseMove={()=>setActive(index)} onClick={()=>choose(item)}><span>{displayStoreName(item)}</span>{item.directoryStatus==='historical'&&<small>Profil existant · magasin non confirmé</small>}{item.directoryStatus==='manual'&&<small>Copie non vérifiée</small>}{item.directoryStatus==='regional-choice'&&<small>Mention régionale · espace commun</small>}</button>)}
     </div><p className="store-search-message" id={messageId} role="status">{!results.length?'Aucun magasin trouvé. Essayez un autre nom.':results.length>shown.length?`${shown.length} résultats affichés : précisez votre recherche.`:`${results.length} magasin${results.length>1?'s':''} trouvé${results.length>1?'s':''}.`}</p></div>}
   </div>;
 }

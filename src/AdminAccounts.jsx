@@ -1,13 +1,14 @@
 import React, {useEffect,useRef,useState} from 'react';
 import {ArrowRight, Check, Info, LogOut, Plus, ShieldCheck} from 'lucide-react';
 import {api} from './api';
-import {adminAccountEmail, changeAdminPassword, createAdministrator, requestAdminEmailChange} from './cloud';
+import {adminAccountEmail, changeAdminPassword, createAdministrator, requestAdminEmailChange, inspectAdminEmailChange, confirmAdminEmailChange} from './cloud';
 
 export function AdminAccounts({onLogout,onBusy}) {
   const [email,setEmail]=useState('');
   const [add,setAdd]=useState({email:'',password:'',confirm:'',current:'',existing:false});
   const [password,setPassword]=useState({current:'',next:'',confirm:''});
   const [address,setAddress]=useState({current:'',next:''});
+  const [emailLink,setEmailLink]=useState(''),[linkProof,setLinkProof]=useState(null),[linkError,setLinkError]=useState(''),[linkNotice,setLinkNotice]=useState(''),[linkWorking,setLinkWorking]=useState(false);
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const running=useRef(false);
   useEffect(()=>{
@@ -18,12 +19,12 @@ export function AdminAccounts({onLogout,onBusy}) {
     document.addEventListener('visibilitychange',visible);
     return ()=>{cancelled=true;document.removeEventListener('visibilitychange',visible);};
   },[]);
-  async function run(work) {
+  async function run(work,{emailConfirmation=false}={}) {
     if(running.current)return;
-    running.current=true;setBusy(true);onBusy?.(true);setError('');setNotice('');
-    try {const message=await work();setNotice(message);}
-    catch(e){setError(e.message||'Opération impossible. Réessayez.');}
-    finally{running.current=false;setBusy(false);onBusy?.(false);}
+    running.current=true;setBusy(true);if(emailConfirmation)setLinkWorking(true);onBusy?.(true);setError('');setNotice('');setLinkError('');setLinkNotice('');
+    try {const message=await work();if(emailConfirmation)setLinkNotice(message||'');else setNotice(message);}
+    catch(e){if(emailConfirmation)setLinkError(e.message||'Opération impossible. Réessayez.');else setError(e.message||'Opération impossible. Réessayez.');}
+    finally{running.current=false;setBusy(false);if(emailConfirmation)setLinkWorking(false);onBusy?.(false);}
   }
   return <div className="admin-accounts">
     <div className="admin-account-current"><ShieldCheck size={18}/><div><strong>Votre compte administrateur</strong><p>{email||'Chargement de votre adresse…'}</p></div></div>
@@ -69,6 +70,24 @@ export function AdminAccounts({onLogout,onBusy}) {
         <label><span className="form-label">Mot de passe actuel</span><input className="text-input" type="password" autoComplete="current-password" required value={address.current} onChange={e=>setAddress(v=>({...v,current:e.target.value}))}/></label>
         <button className="primary-button" disabled={busy}>Envoyer le lien de confirmation <ArrowRight size={16}/></button>
       </form>
+      <details className="admin-email-fallback" onToggle={e=>{if(!e.currentTarget.open){setEmailLink('');setLinkProof(null);setLinkError('');setLinkNotice('');}}}>
+        <summary>Le lien reçu ne s’ouvre pas ?</summary>
+        <p>Dans votre messagerie, appuyez longuement sur le lien reçu et choisissez « Copier le lien ». Collez-le ici pour confirmer sans ouvrir sa page. Ne partagez ce lien avec personne.</p>
+        <form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{
+          const proof=await inspectAdminEmailChange(emailLink);setLinkProof(proof);setEmailLink('');
+          return 'Lien vérifié. Vérifiez l’adresse ci-dessous avant de confirmer.';
+        },{emailConfirmation:true});}}>
+          <label><span className="form-label">Lien de confirmation reçu</span><input className="text-input" aria-label="Lien de confirmation reçu" type="text" inputMode="url" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={8192} value={emailLink} onChange={e=>{setEmailLink(e.target.value);setLinkProof(null);setLinkError('');setLinkNotice('');}} disabled={busy} required/></label>
+          <button className="outline-button" disabled={busy||!emailLink.trim()}>Vérifier le lien</button>
+        </form>
+        {linkWorking&&<p className="admin-email-working" role="status">Échange avec Firebase en cours…</p>}
+        {linkError&&<div className="admin-alert error" role="alert">{linkError}</div>}
+        {linkNotice&&<div className="admin-alert success" role="status"><Check size={15}/>{linkNotice}</div>}
+        {linkProof&&<div className="admin-email-proof"><p>Nouvelle adresse : <strong>{linkProof.newEmail}</strong></p><button type="button" className="primary-button" disabled={busy} onClick={()=>run(async()=>{
+          const proof=linkProof;setLinkProof(null);const result=await confirmAdminEmailChange(proof);setEmail(result.email);
+          return `Adresse confirmée : ${result.email}. Si l’administration vous demande de vous reconnecter, utilisez cette adresse avec votre mot de passe habituel.`;
+        },{emailConfirmation:true})}>Confirmer mon nouvel e-mail <ArrowRight size={16}/></button></div>}
+      </details>
     </section>
     <button type="button" className="logout-button" disabled={busy} onClick={onLogout}><LogOut size={15}/> Déconnexion administrateur</button>
   </div>;

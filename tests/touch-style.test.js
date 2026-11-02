@@ -14,7 +14,9 @@ test('Tactile : deux ou trois colonnes selon le conteneur et retrait de 44 px',(
 });
 
 test('Notifications : texte lisible, actions tactiles et messages longs défilables',()=>{
-  assert.match(css,/\.toast\s*\{[^}]*font-size:14px/);
+  assert.match(css,/\.toast\s*\{[^}]*min-height:78px[^}]*border-left:7px[^}]*font-size:16px/);
+  assert.match(css,/@keyframes\s+toast-appear/);
+  assert.match(css,/@media\s*\(prefers-reduced-motion:reduce\)\s*\{\s*\.toast\s*\{\s*animation:none/);
   assert.match(css,/\.toast-action\s*\{[^}]*min-width:44px;\s*min-height:44px/);
   assert.match(css,/\.toast-close\s*\{[^}]*width:44px;\s*height:44px/);
   assert.match(css,/\.toast-message\s*\{[^}]*max-height:[^;]+;[^}]*overflow-y:auto/);

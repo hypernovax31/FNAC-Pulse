@@ -6,7 +6,7 @@ import {build} from 'esbuild';
 const require=createRequire(import.meta.url);
 const stubs={
   'firebase/app':`export function initializeApp(){return {}};export function deleteApp(){};`,
-  'firebase/auth':`export function getAuth(){return {}};export function onAuthStateChanged(){};export function signInWithCustomToken(){};export function signInWithEmailAndPassword(){};export function signOut(){};export function setPersistence(){};export const browserSessionPersistence={};export const EmailAuthProvider={};export function reauthenticateWithCredential(){};export function updatePassword(){};export function createUserWithEmailAndPassword(){};export const inMemoryPersistence={};export function verifyBeforeUpdateEmail(){};export function sendEmailVerification(){};export function reload(){};`,
+  'firebase/auth':`export function getAuth(){return {}};export function onAuthStateChanged(){};export function signInWithCustomToken(){};export function signInWithEmailAndPassword(){};export function signOut(){};export function setPersistence(){};export const browserSessionPersistence={};export const EmailAuthProvider={};export function reauthenticateWithCredential(){};export function updatePassword(){};export function createUserWithEmailAndPassword(){};export const inMemoryPersistence={};export function verifyBeforeUpdateEmail(){};export function sendEmailVerification(){};export function reload(){};export function checkActionCode(){};export function applyActionCode(){};`,
   'firebase/firestore':`export function getFirestore(){return {}};export function doc(){};export function collection(){};export function query(){};export function where(){};export function onSnapshot(){}`,
   'firebase/messaging':`export async function isSupported(){return true};export function getMessaging(){return {}};export async function getToken(){globalThis.__testFcmTokens++;return 'token-fictif'};export async function deleteToken(){globalThis.__testFcmDeletes++;return true}`,
 };
@@ -15,7 +15,14 @@ const result=await build({entryPoints:['src/cloud.js'],bundle:true,platform:'nod
   b.onLoad({filter:/.*/,namespace:'firebase-fictif'},args=>({contents:stubs[args.path],loader:'js'}));
 }}]});
 const module={exports:{}};new Function('module','exports','require',result.outputFiles[0].text)(module,module.exports,require);
-const {prepareFcm,subscribeFcm,unsubscribeFcm,notificationsWanted}=module.exports;
+const {prepareFcm,subscribeFcm,unsubscribeFcm,notificationsWanted,sellerRegister}=module.exports;
+
+test('Inscription régionale : le client transmet l’accord sans envoyer le PIN en clair',async()=>{
+  const requests=[],api=async(path,options)=>{requests.push({path,...options});throw Object.assign(new Error('test fictif'),{status:400});};
+  await assert.rejects(sellerRegister(api,{storeId:'fnac-region-guadeloupe',departmentId:'tech'},'Alice','4829',{regionalConsent:true}),/test fictif/);
+  assert.equal(requests.length,1);assert.equal(requests[0].path,'/api/auth/register');assert.equal(requests[0].body.regionalConsent,true);
+  assert.equal('pin' in requests[0].body,false);assert.equal(JSON.stringify(requests[0].body).includes('4829'),false);
+});
 
 test('FCM : ne demande jamais la permission pendant une vérification ou une désactivation',async()=>{
   const names=['navigator','Notification','localStorage','__testFcmTokens','__testFcmDeletes'];

@@ -18,7 +18,7 @@ import { summaryGoals } from '../src/summary-goals.js';
 import { SALES_RESET_CONFIRMATION } from '../src/sales-reset.js';
 import { MAX_SALE_CORRECTION, SALE_CORRECTION_CONFIRMATION, saleHistoryRange, saleCorrectionFingerprintInput } from '../src/sale-history.js';
 import { summarize, earliestDate } from '../src/cloud-stats.js';
-import { DIRECTORY_VERSION, mergeStoreDirectory } from '../src/store-directory.js';
+import { DIRECTORY_VERSION, REGIONAL_CHOICES_VERSION, mergeStoreDirectory, mergeRegionalChoices } from '../src/store-directory.js';
 import directorySnapshot from './fnac-directory.json' with {type:'json'};
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -147,6 +147,19 @@ const migrateStoreDirectory=db.transaction(()=>{
   setSetting('store_directory_version',DIRECTORY_VERSION);
 });
 migrateStoreDirectory();
+
+// Ajouter les mentions régionales sans réappliquer l'ancien annuaire ni
+// modifier un magasin déjà présent. Elles ne disposent pas de coordonnées.
+const migrateRegionalChoices=db.transaction(()=>{
+  if(getSetting('store_regional_choices_version')===REGIONAL_CHOICES_VERSION)return;
+  const current=db.prepare('SELECT id,name,city,address,lat,lon,active,fnac_id AS fnacId,directory_status AS directoryStatus FROM stores').all();
+  const merged=mergeRegionalChoices(current,directorySnapshot.unlinkedRegions);
+  const ids=new Set(current.map(s=>s.id));
+  const insert=db.prepare('INSERT INTO stores (id,name,city,address,lat,lon,active,fnac_id,directory_status) VALUES (@id,@name,@city,@address,@lat,@lon,@active,@fnacId,@directoryStatus)');
+  for(const s of merged.stores)if(!ids.has(s.id))insert.run({...s,fnacId:null,active:s.active?1:0});
+  setSetting('store_regional_choices_version',REGIONAL_CHOICES_VERSION);
+});
+migrateRegionalChoices();
 
 function makePasswordRecord(password) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -277,6 +290,9 @@ app.post('/api/auth/register',(req,res)=>{
   const {storeId,departmentId}=req.body||{},name=cleanSellerName(req.body?.name);
   if(typeof req.body?.name!=='string'||req.body.name.length>80||!validSellerName(name)||!activeStore(storeId)||!localDepartments(storeId).some(d=>d.id===departmentId))
     return failure(res,'Prénom, magasin ou département invalide.');
+  const selected=db.prepare('SELECT directory_status FROM stores WHERE id=?').get(storeId);
+  if(selected?.directory_status==='regional-choice'&&req.body?.regionalConsent!==true)
+    return failure(res,'Cet espace régional partage les bilans et notifications. Mettez l’application à jour puis confirmez cet avertissement avant de créer votre profil.');
   if(db.prepare('SELECT name FROM sellers WHERE store_id=?').all(storeId).some(s=>sameSellerName(s.name,name)))
     return failure(res,'Ce prénom existe déjà dans ce magasin. Choisissez le profil existant ou contactez votre responsable.',409);
   const count=db.prepare('SELECT COUNT(*) AS n FROM sellers').get().n;

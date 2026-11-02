@@ -10,7 +10,7 @@ import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
 import { CLOUD, observeVendor, sellerLogin, sellerChoosePin, sellerMigratePin, sellerRegister, sellerLogout, listenStore, prepareFcm, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
 import { parisToday } from './cloud-stats';
 import { sellerStoreId } from './catalog';
-import { storeSelectionGroups } from './store-directory.js';
+import { displayStoreName, storeSelectionGroups } from './store-directory.js';
 import { StoreSearch } from './StoreSearch';
 import { NameSuggestions } from './NameSuggestions';
 import { departmentsForStore, sellerDepartmentId, sellersForDepartment } from './departments';
@@ -81,7 +81,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
   const [department,setDepartment]=useState(initialPerson?sellerDepartmentId(initialPerson):start?.departmentId||'');
   const [name,setName]=useState(initialPerson?.name||'');
   const [geoText,setGeoText]=useState(''),[geoBusy,setGeoBusy]=useState(false);
-  const [unselectedStore,setUnselectedStore]=useState(false);
+  const [unselectedStore,setUnselectedStore]=useState(false),[regionalConsent,setRegionalConsent]=useState(false);
   const [pinMode,setPinMode]=useState(CLOUD?'idle':'local'),[pinSalt,setPinSalt]=useState(''),[statusError,setStatusError]=useState(''),[statusRetry,setStatusRetry]=useState(0);
   const [pin,setPin]=useState(''),[newPin,setNewPin]=useState(''),[confirmPin,setConfirmPin]=useState('');
   const [formBusy,setFormBusy]=useState(false),[formError,setFormError]=useState('');
@@ -95,6 +95,8 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
   const seller=fixed?String(rememberedPerson.id):matched?String(matched.id):'';
   const registerable=!fixed&&!!store&&!!department&&validSellerName(typed)&&!matches.length;
   const storeGroups=storeSelectionGroups(data.stores,data.sellers,{selectedId:store});
+  const regionalChoice=data.stores.find(s=>s.id===store)?.directoryStatus==='regional-choice';
+  const needsRegionalConsent=regionalChoice&&registerable;
   useEffect(()=>()=>{geoRequest.current++;},[]);
   useEffect(()=>{if(fixed&&rememberedPerson)setDepartment(sellerDepartmentId(rememberedPerson));},[fixed,rememberedPerson?.departmentId]);
   useEffect(()=>{
@@ -116,7 +118,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
   },[store,department,seller,registerable,statusRetry,unavailable]);
   function clearSecrets(){setPin('');setNewPin('');setConfirmPin('');setFormError('');}
   function cancelLocate(){geoTouched.current=true;geoRequest.current++;setGeoBusy(false);setGeoText('');}
-  const changeStore=value=>{if(value!==store){setDepartment('');setName('');clearSecrets();}setStore(value);};
+  const changeStore=value=>{if(value!==store){setDepartment('');setName('');setRegionalConsent(false);clearSecrets();}setStore(value);};
   const changeDepartment=value=>{if(value!==department){setName('');clearSecrets();}setDepartment(value);};
   function suggestNearby(coords) {
     const located=storeGroups.all.filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon)).map(s=>({...s,distance:kmBetween(coords.latitude,coords.longitude,s.lat,s.lon)})).sort((a,b)=>a.distance-b.distance);
@@ -145,6 +147,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
     event.preventDefault();if(!store||!department||(!seller&&!registerable)||formBusy)return;
     cancelLocate();const mode=CLOUD?pinMode:registerable?'register':'local';
     if(!['register','setup','migrate','login','local'].includes(mode))return;
+    if(mode==='register'&&needsRegionalConsent&&!regionalConsent){setFormError('Confirmez avoir compris le partage des bilans et notifications pour cet espace régional.');return;}
     if(['register','setup','migrate'].includes(mode)) {
       if(newPin.length!==4||confirmPin.length!==4){setFormError('Choisissez un PIN de 4 chiffres.');return;}
       if(newPin!==confirmPin){setFormError('Les deux codes PIN ne correspondent pas.');return;}
@@ -154,7 +157,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
     setFormBusy(true);setFormError('');
     const selection={storeId:store,departmentId:department,...(seller?{sellerId:Number(seller)}:{})};
     try {
-      await onSubmit(selection,mode==='login'?pin:newPin,{mode,name:typed,oldPin:mode==='migrate'?pin:'',pinSalt});
+      await onSubmit(selection,mode==='login'?pin:newPin,{mode,name:typed,oldPin:mode==='migrate'?pin:'',pinSalt,regionalConsent:needsRegionalConsent&&regionalConsent});
       clearSecrets();
     } catch(error){
       if(mode==='register') {
@@ -174,7 +177,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
   const mode=CLOUD?pinMode:registerable?'register':'local',setup=['register','setup','migrate'].includes(mode);
   const nameId=`seller-name-${modal?'dialog':'welcome'}`;
   return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={submit}>
-    {fixed&&<div className="remembered-profile"><Avatar name={rememberedPerson.name} id={rememberedPerson.id}/><div><span>VOTRE PROFIL SUR CET APPAREIL</span><strong>{rememberedPerson.name}</strong><small>{rememberedStore.name} · {departments.find(d=>d.id===department)?.name||'Votre département'}</small></div></div>}
+    {fixed&&<div className="remembered-profile"><Avatar name={rememberedPerson.name} id={rememberedPerson.id}/><div><span>VOTRE PROFIL SUR CET APPAREIL</span><strong>{rememberedPerson.name}</strong><small>{displayStoreName(rememberedStore)} · {departments.find(d=>d.id===department)?.name||'Votre département'}</small></div></div>}
     <div className="session-fields">
       {!fixed&&<>
         <div className="session-field store-field"><label htmlFor={`store-search-${modal?'dialog':'welcome'}`}>VOTRE MAGASIN</label><StoreSearch id={`store-search-${modal?'dialog':'welcome'}`} stores={storeGroups.all} value={store} onUnselectedChange={setUnselectedStore} onEdit={cancelLocate} onChange={value=>{cancelLocate();changeStore(value);}} disabled={formBusy}/></div>
@@ -186,6 +189,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
       {(mode==='local'||mode==='login')&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==4)}>{formBusy?'Connexion…':modal&&!startup?'Enregistrer':'Se connecter'} <ArrowRight size={16}/></button>}
     </div>
     {!fixed&&unselectedStore&&<p id={`store-search-${modal?'dialog':'welcome'}-hint`} className="store-search-hint">Choisissez un magasin dans les résultats.</p>}
+    {regionalChoice&&<div className="regional-choice-notice" role="status"><Info size={16} aria-hidden="true"/><span>Cette mention régionale ne désigne pas un magasin précis. Les bilans sont communs à cet espace et les notifications partagées entre vendeurs d’un même département. Pour séparer des points de vente, demandez à un administrateur d’ajouter leurs noms précis.</span></div>}
     {!fixed&&matched&&<p className="pin-status">Profil existant : {matched.name}. Votre historique est conservé.</p>}
     {otherDepartment&&<div className="profile-status-error" role="alert"><span>Ce prénom existe déjà dans un autre département de ce magasin. Vérifiez le département ou contactez votre responsable.</span>{matches.map(person=>{
       const target=departments.find(d=>d.id===sellerDepartmentId(person));
@@ -198,7 +202,8 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
       <div className="pin-setup-intro"><ShieldCheck size={19}/><div><strong>{mode==='migrate'?'Passez à un PIN de 4 chiffres':mode==='register'?'Créez votre profil':'Première connexion : choisissez votre PIN'}</strong><p>{mode==='migrate'?'Saisissez votre ancien PIN à 8 chiffres, puis choisissez votre nouveau code à 4 chiffres. Vos données restent intactes.':mode==='register'?'Votre prénom sera enregistré dans le magasin et le département choisis. Choisissez un PIN personnel de 4 chiffres.':'Choisissez un code personnel de 4 chiffres. Il sera demandé après une déconnexion.'}</p></div></div>
       {mode==='migrate'&&<label className="pin-setup-code"><span className="form-label">ANCIEN PIN À 8 CHIFFRES</span><input className="text-input" aria-label="Ancien code PIN à 8 chiffres" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label>}
       <div className="pin-setup-fields"><label><span className="form-label">VOTRE PIN À 4 CHIFFRES</span><input className="text-input" aria-label="Votre nouveau code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4}" maxLength={4} placeholder="4 chiffres" value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label><label><span className="form-label">CONFIRMER LE PIN</span><input className="text-input" aria-label="Confirmer votre code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4}" maxLength={4} placeholder="4 chiffres" value={confirmPin} onChange={e=>setConfirmPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label></div>
-      <div className="pin-setup-actions"><button className="primary-button" type="submit" disabled={!store||!department||(!seller&&!registerable)||formBusy||newPin.length!==4||confirmPin.length!==4||(mode==='migrate'&&pin.length!==8)}>{formBusy?'Enregistrement…':mode==='register'?'Créer mon profil':'Enregistrer mon PIN'} <ArrowRight size={15}/></button></div>
+      {mode==='register'&&needsRegionalConsent&&<label className="regional-consent"><input type="checkbox" checked={regionalConsent} onChange={e=>setRegionalConsent(e.target.checked)} disabled={formBusy}/><span>Je comprends que les bilans et notifications peuvent être partagés avec d’autres points de cette région.</span></label>}
+      <div className="pin-setup-actions"><button className="primary-button" type="submit" disabled={!store||!department||(!seller&&!registerable)||formBusy||newPin.length!==4||confirmPin.length!==4||(mode==='migrate'&&pin.length!==8)||(mode==='register'&&needsRegionalConsent&&!regionalConsent)}>{formBusy?'Enregistrement…':mode==='register'?'Créer mon profil':'Enregistrer mon PIN'} <ArrowRight size={15}/></button></div>
     </div>}
     {CLOUD&&['login','migrate'].includes(mode)&&<p className="pin-help">PIN oublié ? Demandez à votre responsable de réinitialiser votre accès.</p>}
     {fixed&&<button type="button" className="profile-switch" disabled={formBusy} onClick={()=>{if(window.confirm('Changer de profil sur cet appareil ? Le profil mémorisé sera retiré de cet appareil.'))onForgetProfile?.();}}>Changer de profil sur cet appareil</button>}
@@ -334,7 +339,7 @@ function readNotificationPermission() {return typeof Notification==='undefined'?
 function Toast({notice,onClose,icon}) {
   const Icon=icon||(notice.tone==='warning'?Info:CircleCheck);
   return <div className={`toast toast-${notice.tone||'default'}`} role="status" aria-atomic="true">
-    <span className="toast-icon" aria-hidden="true"><Icon size={21}/></span><span className="toast-message">{notice.message}</span>
+    <span className="toast-icon" aria-hidden="true"><Icon size={22}/></span><span className="toast-message">{notice.message}</span>
     {notice.action&&<button type="button" className="toast-action" onClick={()=>{onClose();notice.action();}}>{notice.actionLabel}</button>}
     <button type="button" className="toast-close" aria-label="Fermer la notification" onClick={onClose}><X size={19} aria-hidden="true"/></button>
   </div>;
@@ -385,6 +390,7 @@ export default function App() {
   const [pending,setPending]=useState({});
   const [toast,setToast]=useState(null);
   const [soundNotice,setSoundNotice]=useState(null);
+  const toastSequence=useRef(0),soundNoticeSequence=useRef(0);
   const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), soundNoticeTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), notificationPrompted=useRef(false), notificationAbort=useRef(null), notificationStartInFlight=useRef(false), locationRequest=useRef(0), locationAttempt=useRef(0), locationInFlight=useRef(false), locationTimer=useRef(null);
   const pushAvailable=typeof window!=='undefined'&&!(platform.os==='ios'&&!installed)&&window.isSecureContext&&'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
   const notificationKey=JSON.stringify([session?.storeId,session?.sellerId,session?.uid,session?.accessVersion,authReady,notificationPermission,pushAvailable,notificationCheck]);
@@ -474,7 +480,7 @@ export default function App() {
     };
   },[]);
 
-  const flash=useCallback((message,options={})=>{clearTimeout(toastTimer.current);setToast({message,...options});toastTimer.current=setTimeout(()=>setToast(null),options.duration||5500);},[]);
+  const flash=useCallback((message,options={})=>{clearTimeout(toastTimer.current);setToast({message,...options,sequence:++toastSequence.current});toastTimer.current=setTimeout(()=>setToast(null),options.duration||7000);},[]);
   useEffect(()=>()=>{clearTimeout(toastTimer.current);clearTimeout(soundNoticeTimer.current);},[]);
   const announceSale=useCallback(sale=>{
     flash(saleMessage(sale.serviceName,sale.sellerName),{tone:'celebrate'});
@@ -652,13 +658,13 @@ export default function App() {
   async function selectSession(next,pin,setup=null){
     let authenticated;
     if(CLOUD) {
-      if(setup?.mode==='register')authenticated=await sellerRegister(api,next,setup.name,pin);
+      if(setup?.mode==='register')authenticated=await sellerRegister(api,next,setup.name,pin,{regionalConsent:setup.regionalConsent});
       else if(setup?.mode==='setup')authenticated=await sellerChoosePin(api,next,pin);
       else if(setup?.mode==='migrate')authenticated=await sellerMigratePin(api,next,setup.oldPin,pin,setup.pinSalt);
       else authenticated=await sellerLogin(api,next,pin,setup?.pinSalt);
       const profile=saveDeviceProfile(authenticated);if(profile)setDeviceProfile(profile);
     } else if(setup?.mode==='register') {
-      const result=await api('/api/auth/register',{method:'POST',body:{storeId:next.storeId,departmentId:next.departmentId,name:setup.name}});
+      const result=await api('/api/auth/register',{method:'POST',body:{storeId:next.storeId,departmentId:next.departmentId,name:setup.name,...(setup.regionalConsent?{regionalConsent:true}:{})}});
       authenticated={...next,sellerId:result.sellerId};
     } else authenticated=next;
     localStorage.setItem(SESSION_KEY,JSON.stringify(authenticated));
@@ -686,8 +692,8 @@ export default function App() {
     if(!startupGateRef.current){
       // Un message séparé ne doit pas effacer l'action « Annuler » d'une vente.
       clearTimeout(soundNoticeTimer.current);
-      setSoundNotice({message:next?'Son Fnac activé sur cet appareil.':'Son Fnac désactivé sur cet appareil.',tone:'sound'});
-      soundNoticeTimer.current=setTimeout(()=>setSoundNotice(null),5500);
+      setSoundNotice({message:next?'Son Fnac activé sur cet appareil.':'Son Fnac désactivé sur cet appareil.',tone:'sound',sequence:++soundNoticeSequence.current});
+      soundNoticeTimer.current=setTimeout(()=>setSoundNotice(null),7000);
     }
     if(startupStatus==='unavailable')setStartupStatus('ready');
   }
@@ -907,8 +913,8 @@ export default function App() {
       </div>
     </Modal>}
     {(toast||soundNotice)&&<div className="toast-stack">
-      {toast&&<Toast notice={toast} onClose={()=>{clearTimeout(toastTimer.current);setToast(null);}}/>}
-      {soundNotice&&<Toast notice={soundNotice} icon={soundEnabled?Volume2:VolumeX} onClose={()=>{clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}}/>}
+      {toast&&<Toast key={`toast-${toast.sequence}`} notice={toast} onClose={()=>{clearTimeout(toastTimer.current);setToast(null);}}/>}
+      {soundNotice&&<Toast key={`sound-${soundNotice.sequence}`} notice={soundNotice} icon={soundEnabled?Volume2:VolumeX} onClose={()=>{clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}}/>}
     </div>}
   </div>{installationDialog}</>;
 }

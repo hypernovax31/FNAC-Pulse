@@ -1,8 +1,9 @@
 import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, setPersistence, browserSessionPersistence, inMemoryPersistence, EmailAuthProvider, reauthenticateWithCredential, updatePassword, verifyBeforeUpdateEmail, sendEmailVerification, reload } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, setPersistence, browserSessionPersistence, inMemoryPersistence, EmailAuthProvider, reauthenticateWithCredential, updatePassword, verifyBeforeUpdateEmail, sendEmailVerification, checkActionCode, applyActionCode, reload } from 'firebase/auth';
 import { getFirestore, doc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { getMessaging, getToken, deleteToken, isSupported } from 'firebase/messaging';
 import { firebaseConfig } from './firebase-config';
+import { extractAdminEmailChangeCode } from './admin-email-link.js';
 import { createPinSalt, pinProof } from './pin';
 import { earliestDate, parisToday, summarize } from './cloud-stats';
 import { comparePeople, orderServices, sellerStoreId, serviceRemovedForStore, servicesForStore } from './catalog';
@@ -70,10 +71,10 @@ export async function sellerMigratePin(api,session,oldPin,newPin,pinSalt='') {
   }
   return completeSellerLogin(result,session,true);
 }
-export async function sellerRegister(api,selection,name,pin) {
+export async function sellerRegister(api,selection,name,pin,{regionalConsent=false}={}) {
   const pinSalt=createPinSalt(),registrationId=createPinSalt();
   const newProof=await pinProof(firebaseConfig.projectId,selection.storeId,null,pin,pinSalt);
-  const body={storeId:selection.storeId,departmentId:selection.departmentId,name,pinSalt,registrationId,newProof};let result;
+  const body={storeId:selection.storeId,departmentId:selection.departmentId,name,pinSalt,registrationId,newProof,...(regionalConsent===true?{regionalConsent:true}:{})};let result;
   try {result=await api('/api/auth/register',{method:'POST',body});}
   catch(error){
     if(error.status&&error.status<500)throw error;
@@ -125,6 +126,44 @@ export async function requestAdminEmailChange(currentPassword,newEmail) {
     if(e?.code==='auth/too-many-requests')throw new Error('Trop de demandes. Réessayez plus tard.');
     throw new Error('Envoi du lien de confirmation impossible. Vérifiez votre connexion et réessayez.');
   }
+}
+// Fallback pour un lien Firebase dont la page externe reste bloquée. Le code
+// est vérifié et appliqué directement auprès de Firebase, jamais au Worker.
+function firebaseDeadline(promise,ms=15000) {
+  let timer;
+  const deadline=new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(new Error('Délai dépassé'),{code:'pulse/timeout'})),ms);});
+  return Promise.race([promise,deadline]).finally(()=>clearTimeout(timer));
+}
+function emailChangeFailure(error,{applying=false}={}) {
+  if(['auth/expired-action-code','auth/invalid-action-code'].includes(error?.code))return new Error('Lien expiré ou déjà utilisé. Vérifiez l’adresse de votre compte ou demandez un nouveau lien.');
+  if(error?.code==='auth/email-already-in-use')return new Error('Cette nouvelle adresse est déjà utilisée. Demandez un autre changement.');
+  if(applying)return new Error('La confirmation n’est pas certaine. Vérifiez l’adresse de votre compte et reconnectez-vous avant de demander un nouveau lien.');
+  if(['auth/user-token-expired','auth/user-disabled','auth/user-not-found'].includes(error?.code))return new Error('Session administrateur expirée. Reconnectez-vous avant de vérifier le lien.');
+  return new Error('Impossible de vérifier le lien auprès de Firebase. Vérifiez votre connexion et réessayez.');
+}
+async function checkedEmailChange(user,code,expectedEmail) {
+  let info;
+  try {info=await firebaseDeadline(checkActionCode(adminAuth,code));}catch(error){throw emailChangeFailure(error);}
+  if(adminAuth.currentUser?.uid!==user.uid)throw new Error('Votre session administrateur a changé. Reconnectez-vous avant de continuer.');
+  if(info?.operation!=='VERIFY_AND_CHANGE_EMAIL'||typeof info.data?.email!=='string'||!info.data.email||typeof info.data?.previousEmail!=='string'||!info.data.previousEmail)throw new Error('Ce lien ne correspond pas à une demande de changement d’e-mail.');
+  if(info.data.previousEmail.toLowerCase()!==user.email.toLowerCase())throw new Error('Ce lien ne correspond pas au compte administrateur connecté.');
+  if(expectedEmail&&info.data.email.toLowerCase()!==expectedEmail.toLowerCase())throw new Error('La nouvelle adresse ne correspond plus au lien vérifié. Recommencez.');
+  return info.data.email;
+}
+export async function inspectAdminEmailChange(link) {
+  const code=extractAdminEmailChangeCode(link,firebaseConfig),user=await adminUser();
+  const newEmail=await checkedEmailChange(user,code);
+  return {code,newEmail};
+}
+export async function confirmAdminEmailChange({code,newEmail}={}) {
+  if(typeof code!=='string'||!/^[^\s\u0000-\u001f\u007f]{6,2048}$/.test(code)||typeof newEmail!=='string'||!newEmail)throw new Error('Vérifiez à nouveau le lien de confirmation.');
+  const user=await adminUser(),verifiedEmail=await checkedEmailChange(user,code,newEmail);
+  try {await firebaseDeadline(applyActionCode(adminAuth,code));}
+  catch(error){throw emailChangeFailure(error,{applying:true});}
+  // La confirmation a réussi même si la session doit ensuite être renouvelée.
+  let refreshed=false;
+  try {await firebaseDeadline(reload(user),8000);refreshed=user.email?.toLowerCase()===verifiedEmail.toLowerCase();}catch{}
+  return {email:verifiedEmail,refreshed};
 }
 function provisioningMessage(error,existing) {
   switch(error?.code) {
