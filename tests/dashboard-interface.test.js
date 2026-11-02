@@ -9,7 +9,7 @@ import {build} from 'esbuild';
 const require=createRequire(import.meta.url);
 const bundled=await build({entryPoints:['src/App.jsx'],bundle:true,platform:'node',format:'cjs',external:['react','lucide-react'],write:false,logLevel:'silent',define:{'import.meta.env':JSON.stringify({BASE_URL:'/',VITE_BACKEND:'local'})}});
 const module={exports:{}};new Function('module','exports','require',bundled.outputFiles[0].text)(module,module.exports,require);
-const {Header,DateChip,ActivityCard,Summary,MobileNav,TodayOverview,TodayDetails,default:App}=module.exports;
+const {Header,DateChip,ActivityCard,Summary,MobileNav,TodayOverview,TodayDetails,ServiceCard,default:App}=module.exports;
 const render=(component,props={})=>renderToStaticMarkup(React.createElement(component,props));
 
 test('En-tête : son séparé, cloche barrée et aucun point vert de direct',()=>{
@@ -38,6 +38,27 @@ test('Premier lancement PWA : l’accueil tactile masque le tableau de bord avan
     if(oldWindow===undefined)delete globalThis.window;else globalThis.window=oldWindow;
     if(oldStorage===undefined)delete globalThis.localStorage;else globalThis.localStorage=oldStorage;
   }
+});
+
+test('Services : la grande zone ajoute, le retrait est distinct et les états restent accessibles',async()=>{
+  const service={id:1,name:'DMax avec un nom très long'},calls=[],{act}=TestRenderer;let tree;
+  const props={service,index:0,count:2,session:{sellerId:1},pending:false,onAdd:value=>calls.push(['add',value]),onRemove:value=>calls.push(['remove',value])};
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(ServiceCard,props));});
+    const add=tree.root.findByProps({'aria-label':`Ajouter une vente ${service.name}`});
+    const remove=tree.root.findByProps({'aria-label':`Retirer une vente ${service.name}`});
+    assert.equal(add.type,'button');assert.equal(remove.type,'button');assert.deepEqual(add.findAllByType('button'),[add]); // aucun bouton imbriqué
+    assert.equal(add.props['aria-describedby'],'service-count-1');assert.equal(add.props['aria-busy'],false);
+    assert.equal(tree.root.findByProps({id:'service-count-1'}).children.join(''),'2 aujourd’hui');
+    await act(async()=>remove.props.onClick());assert.deepEqual(calls,[['remove',service]]);
+    await act(async()=>add.props.onClick());assert.deepEqual(calls,[['remove',service],['add',service]]);
+    await act(async()=>tree.update(React.createElement(ServiceCard,{...props,pending:true})));
+    assert(tree.root.findAllByType('button').every(button=>button.props.disabled));
+    assert.equal(tree.root.findByProps({'aria-label':`Ajouter une vente ${service.name}`}).props['aria-busy'],true);
+    assert.match(render(ServiceCard,{...props,pending:true}),/Un instant…/);
+    await act(async()=>tree.update(React.createElement(ServiceCard,{...props,session:null,count:0})));
+    assert.equal(tree.root.findAllByType('button').length,1);assert.match(render(ServiceCard,{...props,session:null,count:0}),/Profil à choisir/);
+  } finally {if(tree)await act(async()=>tree.unmount());}
 });
 
 test('Navigation mobile : Aujourd’hui, Objectifs, Services, Classement et Bilan, sans Profil',()=>{

@@ -49,11 +49,13 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
   const registration={pushManager:{getSubscription:async()=>null}};
   const nav={standalone:true,userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)',platform:'iPhone',maxTouchPoints:5,geolocation:geo,serviceWorker:{register:async()=>registration,ready:Promise.resolve(registration)},permissions:{query:async({name})=>({state:name==='geolocation'?geoPermission:permission.permission,addEventListener(){},removeEventListener(){}})}};
   const media=query=>({matches:query==='(display-mode: standalone)',addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}});
-  const win={navigator:nav,isSecureContext:true,PushManager:function(){},Notification:permission,matchMedia:media,addEventListener(){},removeEventListener(){},scrollTo(){}};
+  const windowEvents=new Map();
+  const win={navigator:nav,isSecureContext:true,PushManager:function(){},Notification:permission,matchMedia:media,addEventListener(name,fn){if(!windowEvents.has(name))windowEvents.set(name,new Set());windowEvents.get(name).add(fn);},removeEventListener(name,fn){windowEvents.get(name)?.delete(fn);},scrollTo(){}};
+  e.dispatchWindow=(name,event)=>{for(const fn of windowEvents.get(name)||[])fn(event);};
   const doc={visibilityState:'visible',body:{style:{}},documentElement:{dataset:{},style:{}},activeElement:null,addEventListener(){},removeEventListener(){},getElementById(){return null;},querySelector(){return null;}};
   const mock={
     observe(fn){e.auth=fn;if(auth!=='manual')queueMicrotask(()=>fn(auth));return ()=>{if(e.auth===fn)e.auth=null;};},
-    listen(_session,_day,_client,onChange,onSale){e.listenCalls++;e.onSale=onSale;return ()=>{if(e.onSale===onSale)e.onSale=null;};},
+    listen(_session,_day,_client,onChange,onSale,onError){e.listenCalls++;e.onSale=onSale;e.onChange=onChange;e.onError=onError;return ()=>{if(e.onSale===onSale){e.onSale=null;e.onChange=null;e.onError=null;}};},
     async api(path,options={}){e.requests.push({path,method:options.method||'GET',body:options.body});if(path.startsWith('/api/bootstrap'))return e.addedSeller?{...data,sellers:[...data.sellers,e.addedSeller]}:data;if(path==='/api/auth/status')return {needsPin:false,pinLength:4,pinSalt:'sel-fictif'};if(path==='/api/goals')return {goals:{}};if(path.startsWith('/api/summary-goals'))return {};return {};},
     async sellerLogin(_api,selection,pin,pinSalt){e.sellerCalls.push({mode:'login',selection,pin,pinSalt});return {...selection,uid:'fictif',accessVersion:'v1'};},
     async sellerRegister(_api,selection,name,pin){e.sellerCalls.push({mode:'register',selection,name,pin});e.addedSeller={id:2,name,storeId:selection.storeId,departmentId:selection.departmentId,active:true};return {...selection,sellerId:2,uid:'fictif-nouveau',accessVersion:'v1'};},
@@ -67,7 +69,7 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
   };
   const put=(name,value)=>Object.defineProperty(globalThis,name,{configurable:true,writable:true,value});
   class AudioMock {constructor(){e.audioInstances++;this.paused=true;}load(){e.audioLoads++;}play(){e.sounds.push({gesture:e.gesture});if(e.audioReject)return Promise.reject(Error('lecture refusée'));this.paused=false;return Promise.resolve();}pause(){this.paused=true;}}
-  e.doc=doc;e.permission=permission;
+  e.doc=doc;e.permission=permission;e.mock=mock;
   put('window',win);put('navigator',nav);put('document',doc);put('Notification',permission);put('localStorage',storage);put('Audio',AudioMock);put('__startupTest',mock);
   e.restore=()=>{for(const [name,descriptor] of old)if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];};
   e.authAs=async value=>{assert(e.auth);await act(async()=>{e.auth(value);await tick();await tick();});};
@@ -327,10 +329,16 @@ test('Son des alertes cloud : état courant, premier plan, refus et aucun réabo
     assert(tree.root.findByProps({'aria-label':'Notifications activées'}));assert.equal(e.sounds.length,0);assert(e.onSale);
     const listens=e.listenCalls,subscriptions=e.subscriptions;
     await announce(sale());assert.equal(e.sounds.length,1);assert.match(text(tree.toJSON()),/1 DMax fait par Camille/);
-    await e.press(tree.root.findByProps({'aria-label':'Désactiver le son Fnac'}));await announce(sale('Alex'));
-    assert.equal(e.sounds.length,1);assert.match(text(tree.toJSON()),/1 DMax fait par Alex/);
-    await e.press(tree.root.findByProps({'aria-label':'Activer le son Fnac'}));await announce(sale('Sam'));
-    assert.equal(e.sounds.length,2);assert.equal(e.audioInstances,1);assert.equal(e.listenCalls,listens);assert.equal(e.subscriptions,subscriptions);
+    const rapidToggle=tree.root.findByProps({'aria-label':'Désactiver le son Fnac'}).props.onClick;
+    await act(async()=>{rapidToggle();rapidToggle();await tick();});
+    assert.equal(e.values.get('fnac-pulse-sale-sound-v1'),'on');assert.match(text(tree.toJSON()),/Son Fnac activé sur cet appareil\./);assert.equal(e.sounds.length,1);
+    await e.press(tree.root.findByProps({'aria-label':'Désactiver le son Fnac'}));
+    assert.equal(e.values.get('fnac-pulse-sale-sound-v1'),'off');assert.match(text(tree.toJSON()),/Son Fnac désactivé sur cet appareil\./);assert.equal(e.sounds.length,1);
+    await announce(sale('Alex'));assert.equal(e.sounds.length,1);assert.match(text(tree.toJSON()),/1 DMax fait par Alex/);
+    assert.match(text(tree.toJSON()),/Son Fnac désactivé sur cet appareil\./); // deux messages indépendants
+    await e.press(tree.root.findByProps({'aria-label':'Activer le son Fnac'}));
+    assert.equal(e.values.get('fnac-pulse-sale-sound-v1'),'on');assert.match(text(tree.toJSON()),/Son Fnac activé sur cet appareil\./);assert.equal(e.sounds.length,1);
+    await announce(sale('Sam'));assert.equal(e.sounds.length,2);assert.equal(e.audioInstances,1);assert.equal(e.listenCalls,listens);assert.equal(e.subscriptions,subscriptions);
     e.doc.visibilityState='hidden';await announce(sale('Lou'));assert.equal(e.sounds.length,2);
     e.doc.visibilityState='visible';e.permission.permission='denied';await announce(sale('Noa'));assert.equal(e.sounds.length,2);
     e.permission.permission='granted';e.values.delete('fnac-pulse-fcm-enabled');await announce(sale('Léa'));assert.equal(e.sounds.length,2);
@@ -341,6 +349,65 @@ test('Son des alertes cloud : état courant, premier plan, refus et aucun réabo
     await announce(sale('Robin'));assert.equal(e.sounds.length,3);assert.match(text(tree.toJSON()),/1 DMax fait par Robin/);
     assert.equal(e.listenCalls,listens); // le flux de ventes ne redémarre pas lors d'un changement de préférence
   } finally {await finish(tree,e);}
+});
+
+test('Son : une modification depuis une autre fenêtre ne laisse pas de message périmé',async()=>{
+  const e=environment({geoPermission:'granted',notificationPermission:'granted',wanted:true,auth:session});let tree;
+  try {
+    tree=await mount();await e.press(tree.root.findByProps({'aria-label':'Désactiver le son Fnac'}));
+    assert.match(text(tree.toJSON()),/Son Fnac désactivé sur cet appareil\./);
+    e.values.set('fnac-pulse-sale-sound-v1','on');
+    await act(async()=>{e.dispatchWindow('storage',{key:'fnac-pulse-sale-sound-v1',newValue:'on'});await tick();});
+    assert(tree.root.findByProps({'aria-label':'Désactiver le son Fnac'}));
+    assert.doesNotMatch(text(tree.toJSON()),/Son Fnac désactivé sur cet appareil\./);assert.equal(e.sounds.length,0);
+  } finally {await finish(tree,e);}
+});
+
+test('Cartes tactiles : doubles gestes, retrait distinct, annulation préservée et garde hors ligne',async()=>{
+  const previousServices=data.services,service={id:1,name:'DMax',active:true};data.services=[service];
+  const e=environment({geoPermission:'granted',notificationPermission:'granted',wanted:true,auth:session});let tree,finishSale;
+  const api=e.mock.api;
+  e.mock.api=(path,options={})=>{
+    if(path==='/api/sales'&&options.method==='POST'){
+      e.requests.push({path,method:'POST',body:options.body});
+      return new Promise(resolve=>{finishSale=resolve;});
+    }
+    return api(path,options);
+  };
+  const period={total:1,byService:[{id:1,name:'DMax',count:1}],bySeller:[],mineByService:[{serviceId:1,count:1}],start:data.today,end:data.today};
+  const live={...data,stats:{day:period,week:period,month:period,mine:[{serviceId:1,count:1}],mineTotal:1,leaderboard:[],activity:[]}};
+  try {
+    tree=await mount();await act(async()=>{assert(e.onChange);e.onChange(live,true);await tick();});
+    const add=()=>tree.root.findByProps({'aria-label':'Ajouter une vente DMax'}),remove=()=>tree.root.findByProps({'aria-label':'Retirer une vente DMax'});
+    const addClick=add().props.onClick,removeClick=remove().props.onClick;
+    await act(async()=>{addClick();addClick();removeClick();await tick();});
+    assert.equal(e.requests.filter(x=>x.path==='/api/sales'&&x.method==='POST').length,1);
+    assert.equal(e.requests.filter(x=>x.path==='/api/sales/remove').length,0);
+    assert(add().props.disabled);assert(remove().props.disabled);
+    await act(async()=>{finishSale({id:'vente-fictive'});await tick();await tick();});
+    assert(!add().props.disabled);assert(!remove().props.disabled);assert.match(text(tree.toJSON()),/Vente enregistrée\./);assert(button(tree,'Annuler'));
+    await e.press(tree.root.findByProps({'aria-label':'Désactiver le son Fnac'}));
+    assert.match(text(tree.toJSON()),/Son Fnac désactivé sur cet appareil\./);assert(button(tree,'Annuler'));
+    await e.press(button(tree,'Annuler'));
+    assert(e.requests.some(x=>x.path==='/api/sales/vente-fictive'&&x.method==='DELETE'));assert.match(text(tree.toJSON()),/Vente annulée\./);
+    assert.match(text(tree.toJSON()),/Son Fnac désactivé sur cet appareil\./);
+    await e.press(remove());assert(e.requests.some(x=>x.path==='/api/sales/remove'&&x.method==='POST'));
+    await act(async()=>{e.onError({code:'unavailable'});await tick();});
+    const before=e.requests.filter(x=>x.path==='/api/sales'&&x.method==='POST').length;
+    await e.press(add());assert.equal(e.requests.filter(x=>x.path==='/api/sales'&&x.method==='POST').length,before);
+    assert.match(text(tree.toJSON()),/Connexion interrompue : la vente n’a pas été enregistrée/);
+  } finally {data.services=previousServices;await finish(tree,e);}
+});
+
+test('Cartes tactiles : sans profil, l’appui invite à se connecter sans écrire de vente',async()=>{
+  const previousServices=data.services;data.services=[{id:1,name:'DMax',active:true}];
+  const e=environment({auth:null});let tree;
+  try {
+    tree=await mount();await e.press(button(tree,'Plus tard'));
+    await e.press(tree.root.findByProps({'aria-label':'Ajouter une vente DMax'}));
+    assert.match(text(tree.toJSON()),/Choisissez d’abord votre magasin et votre profil/);
+    assert(!e.requests.some(x=>x.path==='/api/sales'&&x.method==='POST'));
+  } finally {data.services=previousServices;await finish(tree,e);}
 });
 
 test('Bien démarrer : connexion du profil dans la modale puis association des notifications',async()=>{

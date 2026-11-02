@@ -271,8 +271,14 @@ function TodayDetails({scope,stats,services,date,department,offline,onClose}) {
   </Modal>;
 }
 function ServiceCard({service,index,count,session,pending,onAdd,onRemove}) {
-  const iconKey=serviceIconKey(service), Icon=icons[iconKey]||MoreHorizontal;
-  return <div className="service-card"><div className={`service-icon ${iconColors[index%iconColors.length]}`} data-service-icon={iconKey} aria-hidden="true"><Icon size={19} strokeWidth={1.8}/></div><div className="service-copy"><strong title={service.name}>{service.name}</strong><span>{session?`${count} aujourd’hui`:'À déclarer'}</span></div><div className="service-controls">{session&&count>0&&<button className="minus-button" onClick={()=>onRemove(service)} disabled={pending} title={`Retirer une vente ${service.name}`} aria-label={`Retirer une vente ${service.name}`}><Minus size={15}/></button>}<button className="plus-button" onClick={()=>onAdd(service)} disabled={pending} title={`Ajouter une vente ${service.name}`} aria-label={`Ajouter une vente ${service.name}`}><Plus size={19} strokeWidth={2}/></button></div></div>;
+  const iconKey=serviceIconKey(service),Icon=icons[iconKey]||MoreHorizontal,countId=`service-count-${service.id}`;
+  return <article className={`service-card${pending?' is-pending':''}`}>
+    <button type="button" className="service-add" onClick={()=>onAdd(service)} disabled={pending} aria-busy={!!pending} aria-label={`Ajouter une vente ${service.name}`} aria-describedby={countId}>
+      <span className="service-card-top"><span className={`service-icon ${iconColors[index%iconColors.length]}`} data-service-icon={iconKey} aria-hidden="true"><Icon size={20} strokeWidth={1.8}/></span><span className="service-add-symbol" aria-hidden="true"><Plus size={19} strokeWidth={2.4}/></span></span>
+      <strong className="service-card-name">{service.name}</strong><span className="service-add-label">{pending?'Un instant…':'Ajouter une vente'}</span>
+    </button>
+    <div className="service-card-footer"><span id={countId}>{session?`${count} aujourd’hui`:'Profil à choisir'}</span>{session&&count>0&&<button type="button" className="minus-button" onClick={()=>onRemove(service)} disabled={pending} title={`Retirer une vente ${service.name}`} aria-label={`Retirer une vente ${service.name}`}><Minus size={18} aria-hidden="true"/></button>}</div>
+  </article>;
 }
 function Ranking({leaders,hasSession}) {
   return <section className="panel ranking-panel" id="ranking"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> LES PERFORMANCES</div><h2>Top de l’équipe</h2><p>Les vendeurs à l’honneur aujourd’hui.</p></div><span className="panel-icon gold"><Trophy size={18}/></span></div>
@@ -325,7 +331,16 @@ function MobileNav({onNavigate,active}) {
 function urlBase64ToUint8Array(base64) {const padding='='.repeat((4-base64.length%4)%4);const raw=atob((base64+padding).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
 function readNotificationPermission() {return typeof Notification==='undefined'?'unsupported':Notification.permission;}
 
-export { Header, DateChip, ActivityCard, Summary, MobileNav, TodayOverview, TodayDetails };
+function Toast({notice,onClose,icon}) {
+  const Icon=icon||(notice.tone==='warning'?Info:CircleCheck);
+  return <div className={`toast toast-${notice.tone||'default'}`} role="status" aria-atomic="true">
+    <span className="toast-icon" aria-hidden="true"><Icon size={21}/></span><span className="toast-message">{notice.message}</span>
+    {notice.action&&<button type="button" className="toast-action" onClick={()=>{onClose();notice.action();}}>{notice.actionLabel}</button>}
+    <button type="button" className="toast-close" aria-label="Fermer la notification" onClick={onClose}><X size={19} aria-hidden="true"/></button>
+  </div>;
+}
+
+export { Header, DateChip, ActivityCard, Summary, MobileNav, TodayOverview, TodayDetails, ServiceCard };
 export default function App() {
   const [session,setSession]=useState(()=>CLOUD?null:getSession());
   const [deviceProfile,setDeviceProfile]=useState(()=>CLOUD?readDeviceProfile(undefined,getSession()):null);
@@ -369,15 +384,16 @@ export default function App() {
   const [notificationBusy,setNotificationBusy]=useState(false);
   const [pending,setPending]=useState({});
   const [toast,setToast]=useState(null);
-  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), notificationPrompted=useRef(false), notificationAbort=useRef(null), notificationStartInFlight=useRef(false), locationRequest=useRef(0), locationAttempt=useRef(0), locationInFlight=useRef(false), locationTimer=useRef(null);
+  const [soundNotice,setSoundNotice]=useState(null);
+  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), soundNoticeTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), notificationPrompted=useRef(false), notificationAbort=useRef(null), notificationStartInFlight=useRef(false), locationRequest=useRef(0), locationAttempt=useRef(0), locationInFlight=useRef(false), locationTimer=useRef(null);
   const pushAvailable=typeof window!=='undefined'&&!(platform.os==='ios'&&!installed)&&window.isSecureContext&&'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
   const notificationKey=JSON.stringify([session?.storeId,session?.sellerId,session?.uid,session?.accessVersion,authReady,notificationPermission,pushAvailable,notificationCheck]);
   const checkingCurrent=notificationCheckedKey!==notificationKey;
   const displayedEnabled=checkingCurrent?(notificationPermission==='granted'?null:false):notificationsEnabled,displayedError=checkingCurrent?'':notificationError,displayedUnconfirmed=!checkingCurrent&&notificationUnconfirmed;
   const notificationPendingProfile=!session&&startupNotificationPending&&notificationPermission==='granted'&&pushAvailable;
   const notificationNotice=notificationBanner({permission:notificationPermission,enabled:displayedEnabled,hasSession:!!session,platform,installed,error:displayedError,unconfirmed:displayedUnconfirmed,pushAvailable,pendingProfile:notificationPendingProfile,pendingError:!!startupNotificationError});
-  const startupGateRef=useRef(startupGate),alertSoundReady=useRef(false);
-  startupGateRef.current=startupGate;
+  const startupGateRef=useRef(startupGate),soundEnabledRef=useRef(soundEnabled),alertSoundReady=useRef(false);
+  startupGateRef.current=startupGate;soundEnabledRef.current=soundEnabled;
   alertSoundReady.current=displayedEnabled===true&&!notificationBusy&&notificationPermission==='granted'&&!startupGate&&!startupPermissionsOpen;
   const startupNotificationReady=pushAvailable&&notificationPermission==='granted'&&!notificationError&&!startupNotificationError&&(notificationsEnabled===true||(CLOUD&&notificationsWanted())||(!session&&startupNotificationPending));
   const store=data?.stores?.find(s=>s.id===session?.storeId), seller=data?.sellers?.find(s=>s.id===session?.sellerId&&sellerStoreId(s)===session?.storeId);
@@ -402,7 +418,7 @@ export default function App() {
     const player=sound.current||createStartupSound({base:APP_BASE});sound.current=player;setStartupReady(true);
     // Aucun son automatique : seul le bouton de bienvenue appelle play().
     const sync=e=>{
-      if(e.key===SOUND_KEY){const enabled=readSoundEnabled();setSoundEnabled(enabled);player.setEnabled(enabled);}
+      if(e.key===SOUND_KEY){const enabled=readSoundEnabled();soundEnabledRef.current=enabled;setSoundEnabled(enabled);player.setEnabled(enabled);clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}
       if(e.key===STARTUP_SOUND_KEY&&e.newValue==='done') {
         // Une autre fenêtre peut terminer le premier lancement, mais celle-ci
         // doit quand même attendre son propre appui avant d'afficher la page.
@@ -459,6 +475,7 @@ export default function App() {
   },[]);
 
   const flash=useCallback((message,options={})=>{clearTimeout(toastTimer.current);setToast({message,...options});toastTimer.current=setTimeout(()=>setToast(null),options.duration||5500);},[]);
+  useEffect(()=>()=>{clearTimeout(toastTimer.current);clearTimeout(soundNoticeTimer.current);},[]);
   const announceSale=useCallback(sale=>{
     flash(saleMessage(sale.serviceName,sale.sellerName),{tone:'celebrate'});
     // Les notifications système gardent leur son propre en arrière-plan. Le
@@ -631,7 +648,6 @@ export default function App() {
     if(platform.os==='ios'&&!installed)return;
     notificationPrompted.current=true;setNotificationsModal(true);
   },[data,session,authReady,installModal,startupGate,startupPermissionsOpen,sessionModal,adminModal,themeModal,goalModal,notificationsModal,notificationBusy,notificationsEnabled,notificationCheckedKey,notificationKey,platform,installed,pushAvailable]);
-  useEffect(()=>()=>clearTimeout(toastTimer.current),[]);
 
   async function selectSession(next,pin,setup=null){
     let authenticated;
@@ -665,8 +681,14 @@ export default function App() {
   function changeSession(){if(session)setSessionModal(true);else {document.getElementById('selection')?.scrollIntoView({behavior:'smooth',block:'center'});document.querySelector('[aria-label="Votre magasin Fnac"]')?.focus();}}
   function navigate(id){setActiveNav(id);if(id==='objectifs'&&!session){changeSession();return;}document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});}
   function toggleSound(){
-    const next=!soundEnabled;saveSound(next);setSoundEnabled(next);sound.current?.setEnabled(next);
+    const next=!soundEnabledRef.current;soundEnabledRef.current=next;saveSound(next);setSoundEnabled(next);sound.current?.setEnabled(next);
     if(next&&!startupGateRef.current)sound.current?.prepareFromGesture();
+    if(!startupGateRef.current){
+      // Un message séparé ne doit pas effacer l'action « Annuler » d'une vente.
+      clearTimeout(soundNoticeTimer.current);
+      setSoundNotice({message:next?'Son Fnac activé sur cet appareil.':'Son Fnac désactivé sur cet appareil.',tone:'sound'});
+      soundNoticeTimer.current=setTimeout(()=>setSoundNotice(null),5500);
+    }
     if(startupStatus==='unavailable')setStartupStatus('ready');
   }
   function requestStartupLocation(interactive=false){
@@ -884,6 +906,9 @@ export default function App() {
         </label>)}
       </div>
     </Modal>}
-    {toast&&<div className={`toast toast-${toast.tone||'default'}`} role="status"><span className="toast-icon">{toast.tone==='warning'?<Info size={17}/>:<CircleCheck size={17}/>}</span><span>{toast.message}</span>{toast.action&&<button onClick={()=>{const action=toast.action;setToast(null);action();}}>{toast.actionLabel}</button>}<button className="toast-close" aria-label="Fermer" onClick={()=>setToast(null)}><X size={16}/></button></div>}
+    {(toast||soundNotice)&&<div className="toast-stack">
+      {toast&&<Toast notice={toast} onClose={()=>{clearTimeout(toastTimer.current);setToast(null);}}/>}
+      {soundNotice&&<Toast notice={soundNotice} icon={soundEnabled?Volume2:VolumeX} onClose={()=>{clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}}/>}
+    </div>}
   </div>{installationDialog}</>;
 }
