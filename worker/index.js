@@ -1,7 +1,7 @@
 import locations from '../server/locations.json' with {type:'json'};
 import directorySnapshot from '../server/fnac-directory.json' with {type:'json'};
 import { DIRECTORY_VERSION, mergeStoreDirectory, initialDirectorySync } from '../src/store-directory.js';
-import { fetchFnacDirectory, assertDirectoryCoverage, DirectorySourceError } from './fnac-source.js';
+import { fetchFnacDirectory, assertDirectoryCoverage, validateFnacDirectoryCopy, DirectorySourceError } from './fnac-source.js';
 import { FirestoreRest, FirebaseError, googleAccessToken, verifyIdToken, makeCustomToken, digestBase64, pinMac, verifyPin } from './firebase.js';
 import { LEGACY_STORE_ID, comparePeople, sellerStoreId, serviceRemovedForStore, servicesForStore } from '../src/catalog.js';
 import { validGoalValues, GOAL_PERIODS, validWorkdays, normalizeWorkdays } from '../src/goals.js';
@@ -25,6 +25,10 @@ const OPEN_PIN_RESET='open-pin-reset-2026-10-29';
 const SAFE_ID=/^[A-Za-z0-9_-]{8,80}$/;
 const SALE_DOC_ID=/^[A-Za-z0-9_-]{1,128}$/;
 const STORE_ID=/^[A-Za-z0-9_-]{1,80}$/;
+// Les UID enregistrés comme administrateurs sont uniquement ceux de Firebase
+// Auth, jamais un e-mail ni une identité fournie sans jeton signé.
+const ADMIN_ID=/^[A-Za-z0-9_-]{1,128}$/;
+const ADMIN_RECENT_SECONDS=5*60;
 // Diagnostics anonymes : aucun jeton, identifiant ou texte utilisateur dans les journaux.
 const SAFE_FCM_CODES=new Set(['UNREGISTERED','INVALID_ARGUMENT','SENDER_ID_MISMATCH','QUOTA_EXCEEDED','UNAVAILABLE','INTERNAL','THIRD_PARTY_AUTH_ERROR','PERMISSION_DENIED','UNAUTHENTICATED','NOT_FOUND']);
 function logPushError(stage,error) {
@@ -103,8 +107,8 @@ function serviceBy(data,id,storeId) {return isId(id)&&!serviceRemovedForStore(da
 function precondition(doc) {return doc?{updateTime:doc.updateTime}:{exists:false};}
 function conflict(error) {return error?.status===409 || error?.code==='ABORTED' || error?.code==='FAILED_PRECONDITION' || error?.code==='ALREADY_EXISTS';}
 function response(json,status=200) {return new Response(JSON.stringify(json),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});}
-async function readBody(req) {
-  const max=16384, length=Number(req.headers.get('Content-Length')||0);
+async function readBody(req,max=16384) {
+  const length=Number(req.headers.get('Content-Length')||0);
   if(length>max)fail(413,'Requête trop volumineuse.');
   const reader=req.body?.getReader(), chunks=[];let size=0;
   if(reader)while(true){
@@ -249,10 +253,71 @@ export function createWorker(deps={}) {
     }
     throw new Error('Actualisation des magasins impossible après modifications simultanées');
   }
-  async function admin(req,env) {
+  // Repli explicite : l'administrateur fournit une copie de la page complète.
+  // Sa provenance et sa date ne peuvent pas être attestées par le serveur :
+  // aucun magasin absent n'est rétrogradé ou supprimé et verifiedAt ne bouge pas.
+  async function importDirectoryCopy(db,body) {
+    let source;try {source=validateFnacDirectoryCopy(body?.declared,body?.entries);}
+    catch(e) {fail(400,e?.code==='incomplete'?'Copie incomplète : aucun magasin n’a été modifié.':'Copie de l’annuaire invalide : aucun magasin n’a été modifié.');}
+    const started=Date.now(),when=new Date(started).toISOString();
+    for(let attempt=0;attempt<8;attempt++) {
+      const c=await catalog(db),old=c.data.directorySync||initialDirectorySync(directorySnapshot);
+      if(Date.parse(old.lastManualImport||0)>started)fail(409,'Un import plus récent a déjà été effectué.');
+      if(Date.parse(old.lastSuccessfulSync||0)>started)fail(409,'Une vérification officielle plus récente a abouti. Rechargez l’annuaire avant d’importer.');
+      let merged;
+      try {
+        assertDirectoryCoverage(source.entries,c.data.stores);
+        merged=mergeStoreDirectory(c.data.stores,source.entries,{retireMissing:false,manual:true});
+      } catch(e) {fail(409,e?.code==='incomplete'?'Copie trop incomplète par rapport à la liste conservée : aucun magasin n’a été modifié.':e?.message==='Trop de noms historiques pour ce magasin'?'Un magasin possède trop de noms précédents à conserver : vérification nécessaire. Aucun magasin n’a été modifié.':'Correspondances ambiguës : aucun magasin n’a été modifié.');}
+      const status={...old,lastManualImport:when,manualDeclared:source.declared,manualCount:source.entries.length,
+        manualReviewCount:merged.review.length,manualReview:merged.review.slice(0,50)};
+      const next=withFlags({...c.data,stores:merged.stores,directorySync:status}),writes=[];
+      const backupPath=`pulseBackups/catalog-before-fnac-manual-${when.slice(0,7)}`;
+      if(!await db.get(backupPath))writes.push(db.write(backupPath,{catalog:backupCatalog(c.data),savedAt:when},{exists:false}));
+      writes.push(db.write('pulse/catalog',next,{updateTime:c.updateTime}));
+      try {await db.commit(writes);return {ok:true,imported:source.entries.length-merged.review.length,reviewCount:merged.review.length};}
+      catch(e){if(!conflict(e))throw e;}
+    }
+    throw new Error('Import de l’annuaire impossible après modifications simultanées');
+  }
+  async function admin(req,env,db) {
     if(!env.ADMIN_UID)fail(503,'Administration non configurée.');
     let payload;try{payload=await verify(env,authHeader(req));}catch{fail(401,'Session administrateur expirée. Reconnectez-vous.');}
-    if(payload.sub!==env.ADMIN_UID)fail(403,'Accès administrateur refusé.');return payload;
+    // L'UID historique conserve exactement son accès, même si son ancien
+    // compte n'avait pas exigé la vérification de son adresse e-mail.
+    if(payload.sub===env.ADMIN_UID)return payload;
+    if(!ADMIN_ID.test(payload.sub||'')||payload.role==='seller'||payload.firebase?.sign_in_provider!=='password')fail(403,'Accès administrateur refusé.');
+    const grant=await db.get(`pulseAdmins/${payload.sub}`);
+    if(!grant?.data?.active)fail(403,'Accès administrateur refusé.');
+    if(payload.email_verified!==true)fail(403,'Confirmez votre adresse e-mail avec le lien reçu avant de vous connecter.');
+    return payload;
+  }
+  function recentAdminAuthentication(payload) {
+    const now=Math.floor(Date.now()/1000);
+    return Number.isFinite(payload?.auth_time)&&payload.auth_time>=now-ADMIN_RECENT_SECONDS&&payload.auth_time<=now+10;
+  }
+  async function grantAdministrator(env,db,actor,body) {
+    if(!recentAdminAuthentication(actor))fail(401,'Confirmez à nouveau votre mot de passe administrateur.');
+    if(typeof body?.userToken!=='string'||body.userToken.length<20||body.userToken.length>8192)fail(400,'Compte à ajouter invalide.');
+    let target;try{target=await verify(env,body.userToken);}catch{fail(400,'Compte à ajouter invalide.');}
+    if(!ADMIN_ID.test(target.sub||'')||target.role==='seller'||target.firebase?.sign_in_provider!=='password'||
+       typeof target.email!=='string'||!target.email||!recentAdminAuthentication(target))fail(400,'Connectez le compte à ajouter avec son e-mail et son mot de passe.');
+    if(target.sub===env.ADMIN_UID||target.sub===actor.sub)fail(409,'Ce compte est déjà administrateur.');
+    // Un compte vendeur ne devient jamais administrateur par confusion d'UID.
+    const [access,existing]=await Promise.all([db.get(`pulseAccess/${target.sub}`),db.get(`pulseAdmins/${target.sub}`)]);
+    if(access)fail(409,'Utilisez un compte distinct du profil vendeur.');
+    if(existing?.data?.active)return {ok:true,already:true};
+    if(existing)fail(409,'Ce compte administrateur est désactivé.');
+    const grant={active:true,createdBy:actor.sub,createdAt:new Date().toISOString(),requiresVerifiedEmail:true};
+    try {await db.commit([db.write(`pulseAdmins/${target.sub}`,grant,{exists:false})]);}
+    catch(error) {
+      // Réponse perdue ou deux demandes simultanées : ne pas modifier un droit
+      // existant, mais reconnaître une attribution déjà effectuée.
+      if(!conflict(error))throw error;
+      if((await db.get(`pulseAdmins/${target.sub}`))?.data?.active)return {ok:true,already:true};
+      throw error;
+    }
+    return {ok:true,already:false};
   }
   async function seller(req,env,db) {
     let p;try{p=await verify(env,authHeader(req));}catch{fail(401,'Session expirée. Reconnectez-vous.');}
@@ -1350,9 +1415,11 @@ export function createWorker(deps={}) {
     if(method==='DELETE'&&sale)return deleteSale(req,env,db,sale[1]);
     if((method==='POST'||method==='DELETE')&&path==='/api/push/subscribe')return tokenSubscribe(req,env,db,await readBody(req),method);
     if(path.startsWith('/api/admin/')) {
-      await admin(req,env);
+      const administrator=await admin(req,env,db);
+      if(method==='POST'&&path==='/api/admin/administrators')return grantAdministrator(env,db,administrator,await readBody(req));
       if(method==='GET'&&path==='/api/admin/all'){const d=(await catalog(db)).data;return {sellers:d.sellers,services:d.services,serviceOrders:d.serviceOrders||{},serviceRemovalsByStore:d.serviceRemovalsByStore||{},departmentsByStore:d.departmentsByStore||{},directorySync:d.directorySync||null};}
       if(method==='POST'&&path==='/api/admin/stores/sync')return refreshDirectory(db);
+      if(method==='POST'&&path==='/api/admin/stores/import')return importDirectoryCopy(db,await readBody(req,131072));
       const department=path.match(/^\/api\/admin\/departments(?:\/([A-Za-z0-9_-]+))?$/);
       if(department&&((method==='POST'&&!department[1])||(method==='PATCH'&&department[1])))return mutateDepartment(db,department[1],await readBody(req),method);
       if(method==='POST'&&path==='/api/admin/pin-reset')return resetPin(db,await readBody(req));

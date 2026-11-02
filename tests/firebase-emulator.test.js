@@ -1,7 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signInWithCustomToken } from 'firebase/auth';
+import { initializeApp, deleteApp, getApp, getApps } from 'firebase/app';
+import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signInWithCustomToken, signInWithEmailAndPassword, applyActionCode, reload } from 'firebase/auth';
+import { build } from 'esbuild';
+import { mkdir, unlink } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocFromServer, collection, getDocs, query, where, setDoc, onSnapshot } from 'firebase/firestore';
 import { FirestoreRest, digestBase64, pinMac } from '../worker/firebase.js';
 import { createWorker } from '../worker/index.js';
@@ -499,4 +502,126 @@ test('Émulateur Firestore : historique paginé et correction atomique des vente
   assert((await db.get(`${collection}/a-firebase-selected`)).data.deletedAt);assert.equal((await db.get(`${collection}/a-firebase-retained`)).data.deletedAt,null);
   assert.deepEqual((await db.get('pulseOutbox/a-firebase-selected')).data,{status:'reset'});
   assert.equal((await call('/api/admin/sales/correct','POST',body)).json.duplicate,true);
+});
+
+test('Émulateurs Firebase : création multi-admin, vérifications, reprise et sessions isolées', {skip:!enabled}, async()=>{
+  // The production helper creates temporary Firebase apps itself. Bundle it with
+  // a test-only Auth adapter that *always* connects every app to the emulator,
+  // and replace the real project config before importing any Firebase app.
+  const generated=`${process.cwd()}/node_modules/.fnac-pulse-tests/admin-${process.pid}-${Date.now()}.mjs`;
+  await mkdir(`${process.cwd()}/node_modules/.fnac-pulse-tests`,{recursive:true});
+  const project='demo-fnac', port=9099;
+  await build({entryPoints:['src/cloud.js'],outfile:generated,bundle:true,platform:'node',format:'esm',external:['firebase/*'],
+    define:{'import.meta.env':JSON.stringify({VITE_CLOUD:'true',MODE:'test'})},plugins:[{name:'emulators-only',setup(b){
+      b.onResolve({filter:/^\.\/firebase-config$/},()=>({path:'config',namespace:'test-config'}));
+      b.onLoad({filter:/.*/,namespace:'test-config'},()=>({contents:`export const firebaseConfig=${JSON.stringify({apiKey:'demo-key',projectId:project,authDomain:'demo-fnac.firebaseapp.com',appId:'1:1:web:demo'})};`,loader:'js'}));
+      b.onResolve({filter:/^firebase\/auth$/},args=>args.namespace==='test-auth'?{path:'firebase/auth',external:true}:{path:'auth',namespace:'test-auth'});
+      b.onLoad({filter:/.*/,namespace:'test-auth'},()=>({contents:`import * as auth from 'firebase/auth'; export * from 'firebase/auth'; const seen=new WeakSet(); export function getAuth(app){const result=auth.getAuth(app);if(!seen.has(result)){auth.connectAuthEmulator(result,'http://127.0.0.1:${port}',{disableWarnings:true});seen.add(result);}return result;}`,loader:'js'}));
+    }}]});
+  const beforeApps=new Set(getApps().map(a=>a.name));
+  const cloud=await import(pathToFileURL(generated).href);
+  const adminAuth=getAuth(getApp('fnac-pulse-admin'));
+  const sellerAuth=getAuth(getApp());
+  const db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'});
+  const now=Date.now(),rootEmail=`root-${now}@example.test`,newEmail=`admin-${now}@example.test`,changedEmail=`changed-${now}@example.test`;
+  const rootPassword='Root-password-2026!',initialPassword='Initial-password-2026!',changedPassword='Changed-password-2026!';
+  const root=(await createUserWithEmailAndPassword(adminAuth,rootEmail,rootPassword)).user;
+  const sellerUid=`seller-${now}`;
+  await signInWithCustomToken(sellerAuth,fakeCustomToken({},sellerUid,{role:'seller',storeId:'store-test',sellerId:1,sellerKey:'s1',accessVersion:'unchanged'}));
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>JSON.parse(Buffer.from(t.split('.')[1],'base64url').toString()),makeCustomToken:fakeCustomToken,sendFcm:async()=>{}});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:root.uid,PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),ALLOWED_ORIGIN:'http://example.test'};
+  const ctx={waitUntil(){}};
+  const call=async(path,method='GET',body,token)=>{
+    const req=new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});
+    const res=await worker.fetch(req,env,ctx);return {status:res.status,json:await res.json()};
+  };
+  const api=async(path,options={})=>{
+    assert.equal(options.token,cloud.ADMIN_SESSION);
+    const result=await call(path,options.method||'GET',options.body,await adminAuth.currentUser.getIdToken());
+    if(result.status>=400){const e=new Error(result.json.error||'Erreur');e.status=result.status;throw e;}
+    return result.json;
+  };
+  const oob=async()=>{
+    const response=await fetch(`http://127.0.0.1:${port}/emulator/v1/projects/${project}/oobCodes`);
+    assert.equal(response.status,200);return (await response.json()).oobCodes||[];
+  };
+  let clientApp;
+  try {
+    assert.match(adminAuth.config.emulator.url,/127\.0\.0\.1:9099/);
+    assert.match(sellerAuth.config.emulator.url,/127\.0\.0\.1:9099/);
+    const result=await cloud.createAdministrator(api,{email:newEmail,password:initialPassword,currentPassword:rootPassword});
+    assert.deepEqual(result,{already:false,verificationRequired:true});
+    assert.equal(adminAuth.currentUser.uid,root.uid,'le créateur reste connecté');
+    assert.equal(sellerAuth.currentUser.uid,sellerUid,'la session vendeur reste ouverte');
+    assert(!getApps().some(a=>a.name.startsWith('fnac-pulse-new-admin-')),'application temporaire supprimée');
+    const verification=(await oob()).find(x=>x.email===newEmail&&x.requestType==='VERIFY_EMAIL');
+    assert(verification?.oobCode,'le lien de vérification est créé');
+    clientApp=initializeApp({apiKey:'demo-key',projectId:project,appId:'1:1:web:demo'},`admin-check-${now}`);
+    const targetAuth=getAuth(clientApp);connectAuthEmulator(targetAuth,`http://127.0.0.1:${port}`,{disableWarnings:true});
+    const target=(await signInWithEmailAndPassword(targetAuth,newEmail,initialPassword)).user;
+    assert.equal(target.emailVerified,false);
+    const pending=await db.get(`pulseAdmins/${target.uid}`);assert.equal(pending.data.active,true);assert.equal(pending.data.createdBy,root.uid);
+    assert.equal((await call('/api/admin/stores/sync','POST',{},await target.getIdToken())).status,403,'aucun accès avant vérification');
+    await applyActionCode(targetAuth,verification.oobCode);await reload(target);
+    assert.equal(target.emailVerified,true);assert((await target.getIdTokenResult(true)).claims.email_verified);
+    // The new administrator has exactly the same access; avoid writing to the
+    // catalog by requesting an endpoint that validates its body after auth.
+    assert.equal((await call('/api/admin/administrators','POST',{},await target.getIdToken())).status,400);
+    assert.equal((await call('/api/admin/administrators','POST',{},await root.getIdToken())).status,400);
+    // Direct Firestore access must never allow an admin to grant privileges.
+    const targetDb=getFirestore(clientApp);connectFirestoreEmulator(targetDb,'127.0.0.1',8085);
+    await assert.rejects(setDoc(doc(targetDb,'pulseAdmins','self-promoted'),{active:true}));
+    await assert.rejects(cloud.createAdministrator(api,{email:newEmail,password:initialPassword,currentPassword:rootPassword}),/possède déjà un compte/);
+    const retry=await cloud.createAdministrator(api,{email:newEmail,password:initialPassword,currentPassword:rootPassword,existing:true});
+    assert.deepEqual(retry,{already:true,verificationRequired:false});
+    assert.equal(adminAuth.currentUser.uid,root.uid);assert.equal(sellerAuth.currentUser.uid,sellerUid);
+    // Firebase Auth and Firestore are separate systems. If the server commits
+    // but its response is lost, retry the same grant rather than create twice.
+    const lostEmail=`lost-${now}@example.test`;let drop=true;
+    const lost=await cloud.createAdministrator(async(...args)=>{
+      const out=await api(...args);if(drop){drop=false;throw new TypeError('réponse perdue');}return out;
+    },{email:lostEmail,password:'Lost-password-2026!',currentPassword:rootPassword});
+    assert.deepEqual(lost,{already:true,verificationRequired:true});
+    await signInWithEmailAndPassword(targetAuth,lostEmail,'Lost-password-2026!');
+    assert.equal((await db.get(`pulseAdmins/${targetAuth.currentUser.uid}`)).data.createdBy,root.uid);
+    // If attribution never reaches the server, the new Firebase account is
+    // harmless until the explicit existing-account recovery succeeds.
+    const orphanEmail=`orphan-${now}@example.test`;
+    await assert.rejects(cloud.createAdministrator(async()=>{throw new TypeError('réseau indisponible');},
+      {email:orphanEmail,password:'Orphan-password-2026!',currentPassword:rootPassword}),/compte a été créé.*Compte existant/);
+    await signInWithEmailAndPassword(targetAuth,orphanEmail,'Orphan-password-2026!');
+    assert.equal(await db.get(`pulseAdmins/${targetAuth.currentUser.uid}`),null);
+    assert.equal((await call('/api/admin/administrators','POST',{},await targetAuth.currentUser.getIdToken())).status,403);
+    const recovered=await cloud.createAdministrator(api,{email:orphanEmail,password:'Orphan-password-2026!',currentPassword:rootPassword,existing:true});
+    assert.deepEqual(recovered,{already:false,verificationRequired:true});
+    assert.equal((await db.get(`pulseAdmins/${targetAuth.currentUser.uid}`)).data.createdBy,root.uid);
+    assert.equal(sellerAuth.currentUser.uid,sellerUid);
+    // A verified second admin can in turn create a third with global rights.
+    await signInWithEmailAndPassword(adminAuth,newEmail,initialPassword);
+    const thirdEmail=`third-${now}@example.test`;
+    const third=await cloud.createAdministrator(api,{email:thirdEmail,password:'Third-password-2026!',currentPassword:initialPassword});
+    assert.equal(third.verificationRequired,true);assert.equal(third.already,false);
+    const thirdVerify=(await oob()).find(x=>x.email===thirdEmail&&x.requestType==='VERIFY_EMAIL');assert(thirdVerify?.oobCode);
+    await signInWithEmailAndPassword(targetAuth,thirdEmail,'Third-password-2026!');
+    const thirdUid=targetAuth.currentUser.uid;assert.equal((await db.get(`pulseAdmins/${thirdUid}`)).data.createdBy,target.uid);
+    await applyActionCode(targetAuth,thirdVerify.oobCode);await reload(targetAuth.currentUser);
+    assert.equal((await call('/api/admin/administrators','POST',{},await targetAuth.currentUser.getIdToken(true))).status,400);
+    // Change only this administrator's password and request an email change.
+    await cloud.changeAdminPassword(initialPassword,changedPassword);
+    assert.equal(sellerAuth.currentUser.uid,sellerUid);
+    await cloud.requestAdminEmailChange(changedPassword,changedEmail);
+    assert.equal(await cloud.adminAccountEmail(),newEmail,'l’ancien e-mail reste en vigueur avant confirmation');
+    const change=(await oob()).find(x=>x.newEmail===changedEmail&&x.requestType==='VERIFY_AND_CHANGE_EMAIL');
+    assert(change?.oobCode,'le lien de changement d’e-mail est créé');
+    await applyActionCode(targetAuth,change.oobCode);
+    await signInWithEmailAndPassword(targetAuth,changedEmail,changedPassword);
+    assert.equal(targetAuth.currentUser.uid,target.uid,'le changement conserve le même compte et les droits');
+    assert.equal((await call('/api/admin/administrators','POST',{},await targetAuth.currentUser.getIdToken(true))).status,400);
+    await assert.rejects(signInWithEmailAndPassword(targetAuth,newEmail,changedPassword));
+    assert.equal(sellerAuth.currentUser.uid,sellerUid,'aucune révocation de la session vendeur');
+  } finally {
+    if(clientApp)await deleteApp(clientApp);
+    for(const app of getApps())if(!beforeApps.has(app.name))await deleteApp(app);
+    await unlink(generated).catch(()=>{});
+  }
 });

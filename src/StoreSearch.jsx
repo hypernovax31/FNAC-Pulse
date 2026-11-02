@@ -36,7 +36,7 @@ export function StoreSearch({stores,value,onChange,onUnselectedChange,onEdit,dis
       {!!query&&!disabled&&<button type="button" className="store-search-clear" aria-label="Effacer la recherche de magasin" onMouseDown={event=>event.preventDefault()} onClick={clear}><X size={15}/></button>}
     </div>
     {open&&<div className="store-search-dropdown"><div className="store-search-list" id={listId} role="listbox" aria-label="Magasins trouvés">
-      {shown.map((item,index)=><button key={item.id} type="button" id={`${id}-option-${index}`} role="option" aria-selected={item.id===value} tabIndex={-1} className={`store-search-option ${index===active?'is-active':''}`} onMouseDown={event=>event.preventDefault()} onMouseMove={()=>setActive(index)} onClick={()=>choose(item)}><span>{item.name}</span>{item.directoryStatus==='historical'&&<small>Ancien catalogue</small>}</button>)}
+      {shown.map((item,index)=><button key={item.id} type="button" id={`${id}-option-${index}`} role="option" aria-selected={item.id===value} tabIndex={-1} className={`store-search-option ${index===active?'is-active':''}`} onMouseDown={event=>event.preventDefault()} onMouseMove={()=>setActive(index)} onClick={()=>choose(item)}><span>{item.name}</span>{item.directoryStatus==='historical'&&<small>Profil existant · magasin non confirmé</small>}{item.directoryStatus==='manual'&&<small>Copie non vérifiée</small>}</button>)}
     </div><p className="store-search-message" id={messageId} role="status">{!results.length?'Aucun magasin trouvé. Essayez un autre nom.':results.length>shown.length?`${shown.length} résultats affichés : précisez votre recherche.`:`${results.length} magasin${results.length>1?'s':''} trouvé${results.length>1?'s':''}.`}</p></div>}
   </div>;
 }

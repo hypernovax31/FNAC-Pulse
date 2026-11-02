@@ -1,10 +1,10 @@
 import React from 'react';
-import { BellRing, MapPin, Check, ArrowRight, Info } from 'lucide-react';
+import { BellRing, MapPin, Check, ArrowRight, Info, UserRound } from 'lucide-react';
 import { Modal } from './Admin';
 
 // Chaque dialogue système suit un appui direct. L'enregistrement réseau du
 // push ne doit pas empêcher de demander la géolocalisation.
-export function StartupPermissionsDialog({platform,permission,pushAvailable,notificationReady,notificationsEnabled,notificationBusy,notificationError,hasSession,locationStatus,locationFeedback,onNotification,onLocation,onClose}) {
+export function StartupPermissionsDialog({platform,permission,pushAvailable,notificationReady,notificationsEnabled,notificationBusy,notificationError,hasSession,authReady,profileName,profileContent,locationStatus,locationFeedback,onNotification,onLocation,onClose}) {
   const unavailable=permission==='unsupported'||!pushAvailable,blocked=permission==='denied';
   let notificationText;
   if(blocked)notificationText='Bloquées : autorisez-les dans les réglages de l’appareil ou du navigateur.';
@@ -54,7 +54,12 @@ export function StartupPermissionsDialog({platform,permission,pushAvailable,noti
         </details>}
       </section>
     </div>
+    <section className="startup-profile" aria-label="Votre profil pour les notifications">
+      <div className="startup-profile-heading"><span className="startup-profile-icon"><UserRound size={19}/></span><div><strong>Votre profil</strong><p>{hasSession?'Votre profil est déjà connecté sur cet appareil.':'Choisissez ou créez votre profil pour recevoir les ventes de votre équipe.'}</p></div></div>
+      {!authReady?<p className="startup-profile-status" role="status">Vérification de votre session…</p>:hasSession?<p className="startup-profile-connected"><Check size={15}/> {profileName||'Profil connecté'}</p>:profileContent}
+    </section>
     <p className="startup-permissions-privacy"><Info size={14}/><span>Votre position reste sur cet appareil et sert uniquement à proposer un magasin. Vous pouvez aussi le choisir vous-même.</span></p>
-    <button type="button" className="primary-button full-button" onClick={onClose}>Continuer <ArrowRight size={16}/></button>
+    {!hasSession&&<p className="startup-profile-later">Vous pourrez choisir votre profil plus tard depuis l’accueil.</p>}
+    <button type="button" className="primary-button full-button" onClick={onClose}>{hasSession?'Continuer':'Plus tard'} <ArrowRight size={16}/></button>
   </Modal>;
 }

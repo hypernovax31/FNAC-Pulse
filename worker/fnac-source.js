@@ -55,8 +55,22 @@ export function parseFnacDirectory(html) {
   return {declared,entries};
 }
 
+// Validation indépendante côté serveur pour une copie fournie par un
+// administrateur. La copie n'est pas une preuve de fraîcheur ou d'origine.
+export function validateFnacDirectoryCopy(declared,entries) {
+  if(!Number.isInteger(declared)||declared<50||declared>500||!Array.isArray(entries))bad('invalid');
+  if(entries.length>declared||entries.length<declared-2)bad('incomplete');
+  const seen=new Set(),cleaned=[];
+  for(const entry of entries) {
+    if(!entry||typeof entry.fnacId!=='string'||!/^cl\d{1,9}$/.test(entry.fnacId)||seen.has(entry.fnacId))bad('invalid');
+    if(typeof entry.name!=='string'||!entry.name.startsWith('Fnac ')||entry.name!==clean(entry.name)||entry.name.length<7||entry.name.length>120||/[<>\u0000-\u001f]/.test(entry.name)||generic.test(entry.name.slice(5)))bad('invalid');
+    seen.add(entry.fnacId);cleaned.push({fnacId:entry.fnacId,name:entry.name});
+  }
+  return {declared,entries:cleaned};
+}
+
 export function assertDirectoryCoverage(entries,existingStores) {
-  const old=new Set((existingStores||[]).filter(s=>s.fnacId&&s.directoryStatus==='official').map(s=>s.fnacId));
+  const old=new Set((existingStores||[]).filter(s=>s.fnacId&&(s.directoryStatus==='official'||(s.directoryStatus==='manual'&&s.directoryPreviouslyVerified===true))).map(s=>s.fnacId));
   const incoming=new Set(entries.map(s=>s.fnacId));
   if(old.size>=50&&[...old].filter(id=>incoming.has(id)).length<Math.ceil(old.size*.9))bad('incomplete');
 }

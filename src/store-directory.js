@@ -13,7 +13,7 @@ export function searchStores(stores,query) {
     .replace(/[^\p{L}\p{N}]+/gu,' ').trim();
   const terms=fold(query).split(/\s+/).filter(Boolean);
   return (stores||[]).filter(store=>{
-    const haystack=fold([store.name,store.city,store.address].filter(Boolean).join(' '));
+    const haystack=fold([store.name,...(Array.isArray(store.previousNames)?store.previousNames:[]),store.city,store.address].filter(Boolean).join(' '));
     return terms.every(term=>haystack.includes(term));
   });
 }
@@ -24,7 +24,7 @@ function newStore(id,name,fnacId,status) {
 // Fusion conservative : ne supprime ni ne désactive jamais un magasin. Les
 // coordonnées, les états et tous les autres champs des magasins existants sont
 // conservés. Un homonyme non relié attend une vérification humaine.
-export function mergeStoreDirectory(current,entries,{legacyIds=[],retireMissing=false,maxStores=500}={}) {
+export function mergeStoreDirectory(current,entries,{legacyIds=[],retireMissing=false,maxStores=500,manual=false}={}) {
   if(!Array.isArray(current)||!Array.isArray(entries))throw Error('Annuaire invalide');
   const stores=current.map(s=>({...s})), byId=new Map(),byFnacId=new Map(),names=new Map();
   const addName=name=>{const key=normalizedName(name);names.set(key,(names.get(key)||0)+1);};
@@ -46,6 +46,8 @@ export function mergeStoreDirectory(current,entries,{legacyIds=[],retireMissing=
       target=byId.get(entry.legacyId);
       if(target.fnacId&&target.fnacId!==entry.fnacId)throw Error('Correspondance Fnac historique contradictoire');
     }
+    const verifiedSame=!!target&&target.fnacId===entry.fnacId&&target.directoryStatus==='official'&&target.name===entry.name;
+    const previouslyVerified=target?.directoryStatus==='official'||target?.directoryPreviouslyVerified===true;
     if(!target) {
       const id=`fnac-${entry.fnacId}`;
       if(byId.has(id))throw Error('Identifiant Fnac déjà utilisé sans correspondance vérifiée');
@@ -55,11 +57,26 @@ export function mergeStoreDirectory(current,entries,{legacyIds=[],retireMissing=
         review.push({fnacId:entry.fnacId,name:entry.name,reason:'homonyme'});continue;
       }
       if(stores.length>=maxStores){review.push({fnacId:entry.fnacId,name:entry.name,reason:'limite'});continue;}
-      target=newStore(id,entry.name,entry.fnacId,'official');
+      target=newStore(id,entry.name,entry.fnacId,manual?'manual':'official');
       stores.push(target);byId.set(id,target);addName(target.name);
     }
-    if(target.name!==entry.name){removeName(target.name);target.name=entry.name;addName(target.name);}
-    target.fnacId=entry.fnacId;target.directoryStatus='official';
+    if(target.name!==entry.name){
+      const previous=Array.isArray(target.previousNames)?target.previousNames.filter(x=>typeof x==='string'&&x):[];
+      // Ne pas effacer un nom historique, y compris lors d'une copie manuelle.
+      // Une limite explicite évite de grossir le document Firestore sans borne.
+      if(target.name&&!previous.includes(target.name)) {
+        if(previous.length>=12)throw Error('Trop de noms historiques pour ce magasin');
+        target.previousNames=[...previous,target.name];
+      }
+      removeName(target.name);target.name=entry.name;addName(target.name);
+    }
+    target.fnacId=entry.fnacId;
+    if(manual&&!verifiedSame) {
+      target.directoryStatus='manual';
+      if(previouslyVerified)target.directoryPreviouslyVerified=true;
+    } else if(!manual) {
+      target.directoryStatus='official';delete target.directoryPreviouslyVerified;
+    }
     byFnacId.set(entry.fnacId,target);
   }
   const legacySet=new Set(legacyIds);

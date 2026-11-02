@@ -1,5 +1,5 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, signOut, setPersistence, browserSessionPersistence, EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
+import { initializeApp, deleteApp } from 'firebase/app';
+import { getAuth, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, setPersistence, browserSessionPersistence, inMemoryPersistence, EmailAuthProvider, reauthenticateWithCredential, updatePassword, verifyBeforeUpdateEmail, sendEmailVerification, reload } from 'firebase/auth';
 import { getFirestore, doc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { getMessaging, getToken, deleteToken, isSupported } from 'firebase/messaging';
 import { firebaseConfig } from './firebase-config';
@@ -90,12 +90,103 @@ export async function adminLogin(email,password) {
   return ADMIN_SESSION;
 }
 export async function adminLogout() {await signOut(adminAuth);}
-export async function changeAdminPassword(currentPassword,newPassword) {
+async function adminUser() {
   await adminAuth.authStateReady();const user=adminAuth.currentUser;
   if(!user?.email)throw new Error('Session administrateur expirée.');
-  if(newPassword.length<12)throw new Error('Le mot de passe doit comporter au moins 12 caractères.');
-  try {await reauthenticateWithCredential(user,EmailAuthProvider.credential(user.email,currentPassword));await updatePassword(user,newPassword);}
-  catch {throw new Error('Mot de passe actuel incorrect ou modification impossible.');}
+  return user;
+}
+async function reauthenticateAdmin(currentPassword) {
+  const user=await adminUser();
+  try {
+    await reauthenticateWithCredential(user,EmailAuthProvider.credential(user.email,currentPassword));
+    // Le serveur exige auth_time récent pour attribuer des droits.
+    await user.getIdToken(true);
+  } catch {throw new Error('Mot de passe administrateur actuel incorrect ou connexion impossible.');}
+  return user;
+}
+export async function adminAccountEmail({refresh=false}={}) {
+  const user=await adminUser();if(refresh)await reload(user);
+  return user.email||'';
+}
+export async function changeAdminPassword(currentPassword,newPassword) {
+  if(newPassword.length<12||newPassword.length>128)throw new Error('Le mot de passe doit comporter de 12 à 128 caractères.');
+  const user=await reauthenticateAdmin(currentPassword);
+  try {await updatePassword(user,newPassword);}
+  catch {throw new Error('Modification du mot de passe impossible. Réessayez.');}
+}
+export async function requestAdminEmailChange(currentPassword,newEmail) {
+  const email=String(newEmail||'').trim();
+  if(!email||email.length>254)throw new Error('Indiquez une nouvelle adresse e-mail valide.');
+  const user=await reauthenticateAdmin(currentPassword);
+  if(user.email.toLowerCase()===email.toLowerCase())throw new Error('Cette adresse est déjà utilisée pour votre compte.');
+  try {await verifyBeforeUpdateEmail(user,email);}
+  catch(e) {
+    if(e?.code==='auth/invalid-email')throw new Error('Indiquez une nouvelle adresse e-mail valide.');
+    if(e?.code==='auth/too-many-requests')throw new Error('Trop de demandes. Réessayez plus tard.');
+    throw new Error('Envoi du lien de confirmation impossible. Vérifiez votre connexion et réessayez.');
+  }
+}
+function provisioningMessage(error,existing) {
+  switch(error?.code) {
+    case 'auth/email-already-in-use':return 'Cette adresse possède déjà un compte. Si vous avez son accord et son mot de passe, choisissez « Compte existant ». Aucun droit n’a été ajouté.';
+    case 'auth/invalid-email':return 'Indiquez une adresse e-mail valide.';
+    case 'auth/weak-password':return 'Choisissez un mot de passe plus robuste, de 12 caractères minimum.';
+    case 'auth/invalid-credential':case 'auth/wrong-password':case 'auth/user-not-found':return existing?'E-mail ou mot de passe du compte à ajouter incorrect.':'Création du compte impossible.';
+    case 'auth/too-many-requests':return 'Trop de demandes. Réessayez plus tard.';
+    case 'auth/operation-not-allowed':return 'La création de comptes par e-mail n’est pas autorisée dans Firebase.';
+    default:return 'Création ou connexion du compte impossible. Vérifiez votre connexion et réessayez.';
+  }
+}
+// Un deuxième FirebaseApp en mémoire évite de déconnecter le vendeur ou
+// l’administrateur courant. Le mot de passe va directement à Firebase Auth ;
+// le Worker reçoit seulement le jeton signé du compte à autoriser.
+export async function createAdministrator(api,{email,password,currentPassword,existing=false}) {
+  const address=String(email||'').trim();
+  if(!address||address.length>254)throw new Error('Indiquez une adresse e-mail valide.');
+  if(typeof password!=='string'||password.length<12||password.length>128)throw new Error('Le mot de passe doit comporter de 12 à 128 caractères.');
+  await reauthenticateAdmin(currentPassword);
+  const suffix=globalThis.crypto?.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const provisioningApp=initializeApp(firebaseConfig,`fnac-pulse-new-admin-${suffix}`),provisioningAuth=getAuth(provisioningApp);
+  let accountCreated=false,accountAuthenticated=false;
+  try {
+    await setPersistence(provisioningAuth,inMemoryPersistence);
+    let user;
+    try {
+      user=(existing?await signInWithEmailAndPassword(provisioningAuth,address,password):await createUserWithEmailAndPassword(provisioningAuth,address,password)).user;
+      accountCreated=!existing;accountAuthenticated=true;
+    } catch(error) {throw new Error(provisioningMessage(error,existing));}
+    // Le droit reste inutilisable jusqu'à confirmation de l'adresse. Une
+    // erreur d'envoi ne donne jamais un accès non vérifié.
+    if(!user.emailVerified)try {await sendEmailVerification(user);}
+    catch(error) {
+      const text=error?.code==='auth/too-many-requests'?'Quota d’e-mails atteint. Réessayez plus tard.':'Envoi de l’e-mail de confirmation impossible. Vérifiez votre connexion.';
+      throw new Error(`${accountCreated?'Le compte a été créé, mais aucun droit n’a encore été attribué. ':'Les droits de ce compte n’ont pas été vérifiés par cette tentative. '}${text} Pour reprendre, utilisez « Compte existant ».`);
+    }
+    const userToken=await user.getIdToken(true);let result;
+    try {result=await api('/api/admin/administrators',{method:'POST',token:ADMIN_SESSION,body:{userToken}});}
+    catch(error) {
+      if(!error?.status||error.status>=500)try {result=await api('/api/admin/administrators',{method:'POST',token:ADMIN_SESSION,body:{userToken}});}catch{}
+      if(!result?.ok)throw new Error(`${accountCreated?'Le compte a été créé, mais ses droits ne sont pas confirmés. ':'L’attribution des droits n’est pas confirmée. '}Réessayez avec « Compte existant ».`);
+    }
+    return {already:!!result.already,verificationRequired:!user.emailVerified};
+  } catch(error) {
+    if(accountAuthenticated&&accountCreated&&error?.code)throw new Error('Le compte a été créé, mais ses droits ne sont pas confirmés. Réessayez avec « Compte existant ».');
+    throw error;
+  } finally {
+    await signOut(provisioningAuth).catch(()=>{});
+    await deleteApp(provisioningApp).catch(()=>{});
+  }
+}
+export async function resendAdminVerification(email,password) {
+  const suffix=globalThis.crypto?.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const temp=initializeApp(firebaseConfig,`fnac-pulse-admin-verify-${suffix}`),tempAuth=getAuth(temp);
+  try {
+    await setPersistence(tempAuth,inMemoryPersistence);
+    const {user}=await signInWithEmailAndPassword(tempAuth,String(email||'').trim(),password);
+    if(user.emailVerified)return {verified:true};
+    await sendEmailVerification(user);return {verified:false};
+  } catch(error) {throw new Error(provisioningMessage(error,true));}
+  finally {await signOut(tempAuth).catch(()=>{});await deleteApp(temp).catch(()=>{});}
 }
 function presentation(catalog,storeId) {
   return {

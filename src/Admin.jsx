@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, LockKeyhole, ArrowRight, Plus, Check, Pencil, Archive, RotateCcw, LogOut, ShieldCheck, Store, Info, ArrowUp, ArrowDown, Trash2 } from 'lucide-react';
 import { api } from './api';
-import { CLOUD, adminLogin, adminLogout, changeAdminPassword } from './cloud';
+import { CLOUD, adminLogin, adminLogout, resendAdminVerification } from './cloud';
+import { AdminAccounts } from './AdminAccounts';
+import { DirectoryImport } from './DirectoryImport';
 import { sellersForStore, orderServices, serviceRemovedForStore } from './catalog';
 import { departmentsForStore, sellerDepartmentId } from './departments';
 import { GoalForm } from './Goals';
@@ -20,11 +22,12 @@ function directoryDate(value) {
 }
 function directoryStatus(sync) {
   if(!sync)return 'État de l’annuaire indisponible.';
-  const checked=`Noms vérifiés le ${directoryDate(sync.verifiedAt)}.`;
-  if(sync.lastResult==='blocked')return `${checked} Fnac a refusé le dernier accès automatique (${directoryDate(sync.lastAttempt)}). La liste reste inchangée ; nouvelle tentative chaque mois.`;
-  if(['invalid','incomplete','ambiguous','unavailable'].includes(sync.lastResult))return `${checked} La dernière tentative n’a pas pu vérifier une liste complète. La liste est conservée ; nouvelle tentative chaque mois.`;
-  if(sync.lastResult==='review')return `${checked} Actualisation effectuée ; ${sync.reviewCount||0} correspondance(s) demandent une vérification.`;
-  return `${checked} Vérification automatique prévue le 1er de chaque mois.`;
+  const checked=`Dernière vérification officielle le ${directoryDate(sync.verifiedAt)}.`;
+  const manual=sync.lastManualImport?` Copie importée par un administrateur le ${directoryDate(sync.lastManualImport)} : son origine et sa fraîcheur ne sont pas vérifiées automatiquement.${sync.manualReviewCount?` ${sync.manualReviewCount} correspondance(s) de la copie demandent une vérification.`:''}`:'';
+  if(sync.lastResult==='blocked')return `${checked} Le ${directoryDate(sync.lastAttempt)}, le site Fnac a refusé l’accès automatique du serveur (HTTP 403 ou restriction équivalente) : aucune mise à jour automatique n’a eu lieu. Nouvelle tentative chaque mois.${manual}`;
+  if(['invalid','incomplete','ambiguous','unavailable'].includes(sync.lastResult))return `${checked} La dernière tentative n’a pas pu vérifier une liste complète. La liste est conservée ; nouvelle tentative chaque mois.${manual}`;
+  if(sync.lastResult==='review')return `${checked} Actualisation effectuée ; ${sync.reviewCount||0} correspondance(s) demandent une vérification.${manual}`;
+  return `${checked} Vérification automatique prévue le 1er de chaque mois.${manual}`;
 }
 
 function Modal({title,subtitle,onClose,children,wide=false}) {
@@ -37,7 +40,7 @@ function Modal({title,subtitle,onClose,children,wide=false}) {
     const onKeyDown=event=>{
       if(event.key==='Escape'){event.preventDefault();close.current();return;}
       if(event.key!=='Tab'||!dialog.current)return;
-      const items=[...dialog.current.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),a[href], [tabindex]:not([tabindex="-1"])')].filter(x=>x.getClientRects().length);
+      const items=[...dialog.current.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,a[href], [tabindex]:not([tabindex="-1"])')].filter(x=>x.getClientRects().length);
       if(!items.length)return;
       if(event.shiftKey&&document.activeElement===items[0]){event.preventDefault();items.at(-1).focus();}
       else if(!event.shiftKey&&document.activeElement===items.at(-1)){event.preventDefault();items[0].focus();}
@@ -185,6 +188,12 @@ export default function Admin({onClose,data,session,onChanged}) {
       <label className="form-label" htmlFor="admin-password">Mot de passe administrateur</label>
       <input id="admin-password" className="text-input" type="password" placeholder="Votre mot de passe" value={password} onChange={e=>setPassword(e.target.value)} required autoFocus={!CLOUD} autoComplete="current-password" />
       {error&&<div className="form-error" role="alert">{error}</div>}
+      {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
+      {CLOUD&&/Confirmez votre adresse e-mail/.test(error)&&<button type="button" className="outline-button full-button" disabled={busy} onClick={async()=>{
+        setBusy(true);setNotice('');
+        try {const result=await resendAdminVerification(email,password);setError('');setNotice(result.verified?'Adresse déjà confirmée. Vous pouvez vous connecter.':'Nouveau lien envoyé. Vérifiez votre boîte e-mail.');}
+        catch(e){setError(e.message);}finally{setBusy(false);}
+      }}>Renvoyer le lien de confirmation</button>}
       <button className="primary-button full-button" type="submit" disabled={busy}>{busy?'Connexion…':'Se connecter'} <ArrowRight size={16}/></button>
       <p className="form-footnote"><ShieldCheck size={14}/> L’accès administrateur est protégé par mot de passe.</p>
     </form>
@@ -265,7 +274,7 @@ export default function Admin({onClose,data,session,onChanged}) {
       </>}
       {tab==='stores'&&<>
         <div className="admin-store-scope">
-          <label><span className="form-label">MAGASIN À GÉRER</span><select aria-label="Magasin à gérer" className="text-input" disabled={busy} value={adminStore} onChange={e=>changeStore(e.target.value)}><option value="">Choisir un magasin</option>{[...data.stores].sort((a,b)=>a.name.localeCompare(b.name,'fr',{sensitivity:'base',numeric:true})).map(s=><option value={s.id} key={s.id}>{s.name}{s.directoryStatus==='historical'?' · ancien catalogue':''}</option>)}</select></label>
+          <label><span className="form-label">MAGASIN À GÉRER</span><select aria-label="Magasin à gérer" className="text-input" disabled={busy} value={adminStore} onChange={e=>changeStore(e.target.value)}><option value="">Choisir un magasin</option>{[...data.stores].sort((a,b)=>a.name.localeCompare(b.name,'fr',{sensitivity:'base',numeric:true})).map(s=><option value={s.id} key={s.id}>{s.name}{s.directoryStatus==='historical'?' · non confirmé dans l’annuaire':s.directoryStatus==='manual'?' · copie non vérifiée':''}</option>)}</select></label>
           <p>Ce choix s’applique aux ventes, objectifs, vendeurs, services et codes PIN de l’administration.</p>
         </div>
         <div className="admin-section-heading"><div><h3>Ajouter un magasin</h3><p>Un magasin absent de la liste ? Ajoutez-le à votre espace.</p></div></div>
@@ -274,11 +283,13 @@ export default function Admin({onClose,data,session,onChanged}) {
           <div className="admin-selects"><label><span className="form-label">Latitude <span className="optional">(facultatif)</span></span><input className="text-input" type="number" step="any" placeholder="44.8399" value={newStore.lat} onChange={e=>setNewStore(v=>({...v,lat:e.target.value}))}/></label><label><span className="form-label">Longitude <span className="optional">(facultatif)</span></span><input className="text-input" type="number" step="any" placeholder="−0.5740" value={newStore.lon} onChange={e=>setNewStore(v=>({...v,lon:e.target.value}))}/></label></div>
           <button className="primary-button" disabled={busy}><Plus size={16}/> Ajouter le magasin</button>
         </form>
-        <div className="admin-note"><Store size={15}/> Noms issus de l’annuaire Fnac ; les coordonnées disponibles sont indicatives. Les magasins historiques et ceux ajoutés par l’administration restent conservés.</div>
-        {CLOUD&&<div className="directory-sync" role="status"><div><strong>Annuaire des magasins</strong><p>{directoryStatus(all.directorySync)}</p></div><button type="button" className="outline-button" disabled={busy||!allLoaded} onClick={()=>run(async()=>{
+        <div className="admin-note"><Store size={15}/> Noms issus de l’annuaire Fnac ou ajoutés par l’administration ; les copies manuelles ne sont pas certifiées. Les coordonnées disponibles sont indicatives. Les magasins restent conservés ; les noms remplacés à partir de cette version restent recherchables.</div>
+        {CLOUD&&<><div className="directory-sync" role="status"><div><strong>Annuaire des magasins</strong><p>{directoryStatus(all.directorySync)}</p></div><button type="button" className="outline-button" disabled={busy||!allLoaded} onClick={()=>run(async()=>{
           const result=await api('/api/admin/stores/sync',{method:'POST',token,body:{}});
-          if(!result.ok){await loadAll();throw Error(result.result==='blocked'?'Fnac refuse actuellement l’accès automatique. La liste précédente est conservée.':'La vérification n’a pas abouti. La liste précédente est conservée.');}
-        },'Annuaire vérifié et actualisé.')}>Vérifier maintenant</button></div>}
+          if(!result.ok){await loadAll();throw Error(result.result==='blocked'?'La demande a bien été envoyée, mais Fnac refuse l’accès automatique au serveur. Aucune liste n’a été actualisée.':'La vérification n’a pas abouti. La liste précédente est conservée.');}
+          if(result.result==='review')throw Error(`Annuaire actualisé, mais ${result.reviewCount||0} correspondance(s) nécessitent une vérification.`);
+        },'Annuaire vérifié et actualisé.')}>Vérifier maintenant</button></div>
+        <DirectoryImport token={token} disabled={busy||!allLoaded} onBusy={setBusy} onImported={async()=>{await loadAll();onChanged();}}/></>}
       </>}
       {CLOUD&&tab==='sellers'&&adminStore&&<div className="seller-access">
         <div className="admin-section-heading"><div><h3>Accès et codes PIN</h3><p>Chaque vendeur choisit son propre PIN lors de sa première connexion. Aucun code préalable n’est nécessaire.</p></div></div>
@@ -295,15 +306,15 @@ export default function Admin({onClose,data,session,onChanged}) {
         <div className="admin-note"><ShieldCheck size={15}/> Tant qu’aucun PIN n’a été créé après une réinitialisation, la première personne à sélectionner ce profil peut le définir. L’administrateur ne voit pas le PIN.</div>
       </div>}
       {tab==='sellers'&&adminStore&&<SellerDeletePanel key={adminStore} storeId={adminStore} storeName={adminStoreName} sellers={storeSellers} departments={storeDepartments} token={token} disabled={busy||!allLoaded} onUpdate={()=>{loadAll();onChanged();}}/>}
-      {tab==='security'&&<>
-        <div className="admin-section-heading"><div><h3>Mot de passe administrateur</h3><p>Choisissez un mot de passe unique d’au moins 12 caractères.</p></div></div>
-        <form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{if(CLOUD)await changeAdminPassword(oldPass,newPass);else await api('/api/admin/password',{method:'POST',token,body:{currentPassword:oldPass,newPassword:newPass}});setOldPass('');setNewPass('');},'Mot de passe mis à jour.')}}>
+      {tab==='security'&&(CLOUD?<AdminAccounts onLogout={logout} onBusy={setBusy}/>:<>
+        <div className="admin-section-heading"><div><h3>Mot de passe administrateur</h3><p>La gestion de plusieurs comptes est disponible dans la version en ligne. Choisissez un mot de passe d’au moins 12 caractères.</p></div></div>
+        <form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{await api('/api/admin/password',{method:'POST',token,body:{currentPassword:oldPass,newPassword:newPass}});setOldPass('');setNewPass('');},'Mot de passe mis à jour.')}}>
           <label><span className="form-label">Mot de passe actuel</span><input className="text-input" type="password" required value={oldPass} onChange={e=>setOldPass(e.target.value)}/></label>
           <label><span className="form-label">Nouveau mot de passe</span><input className="text-input" type="password" minLength={12} required value={newPass} onChange={e=>setNewPass(e.target.value)}/></label>
           <button className="primary-button" disabled={busy}>Mettre à jour <ArrowRight size={16}/></button>
         </form>
         <button className="logout-button" onClick={logout}><LogOut size={15}/> Déconnexion administrateur</button>
-      </>}
+      </>)}
     </div>
   </Modal>;
 }

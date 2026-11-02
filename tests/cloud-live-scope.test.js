@@ -9,8 +9,8 @@ import {parisToday} from '../src/cloud-stats.js';
 // jamais y parvenir.
 const require=createRequire(import.meta.url);
 const sources={
-  'firebase/app':`export const initializeApp=()=>({});`,
-  'firebase/auth':`export const getAuth=()=>({});export const onAuthStateChanged=()=>()=>{};export const signInWithCustomToken=()=>{};export const signInWithEmailAndPassword=()=>{};export const signOut=()=>{};export const setPersistence=()=>{};export const browserSessionPersistence={};export const EmailAuthProvider={};export const reauthenticateWithCredential=()=>{};export const updatePassword=()=>{};`,
+  'firebase/app':`export const initializeApp=()=>({});;export function deleteApp(){};`,
+  'firebase/auth':`export const getAuth=()=>({});export const onAuthStateChanged=()=>()=>{};export const signInWithCustomToken=()=>{};export const signInWithEmailAndPassword=()=>{};export const signOut=()=>{};export const setPersistence=()=>{};export const browserSessionPersistence={};export const EmailAuthProvider={};export const reauthenticateWithCredential=()=>{};export const updatePassword=()=>{};;export function createUserWithEmailAndPassword(){};export const inMemoryPersistence={};export function verifyBeforeUpdateEmail(){};export function sendEmailVerification(){};export function reload(){};`,
   'firebase/firestore':`export const getFirestore=()=>({});export const doc=(_db,...parts)=>({path:parts.join('/')});export const collection=(_db,...parts)=>({path:parts.join('/')});export const query=x=>x;export const where=()=>({});export const onSnapshot=(ref,_options,next)=>globalThis.__liveScope.listen(ref.path,next);`,
   'firebase/messaging':`export const getMessaging=()=>({});export const getToken=()=>{};export const deleteToken=()=>{};export const isSupported=()=>true;`,
 };

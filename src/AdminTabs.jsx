@@ -1,7 +1,7 @@
 import React, {useEffect,useRef,useState} from 'react';
 import {ChevronLeft,ChevronRight} from 'lucide-react';
 
-const TABS=[['stores','Magasins'],['sales','Ventes'],['goals','Objectifs'],['departments','Départements'],['sellers','Vendeurs'],['services','Services'],['security','Sécurité']];
+const TABS=[['stores','Magasins'],['sales','Ventes'],['goals','Objectifs'],['sellers','Vendeurs'],['services','Services'],['departments','Départements'],['security','Administrateur']];
 
 // Les flèches n'apparaissent que lorsqu'il reste des onglets hors écran ; le
 // défilement tactile et le clavier continuent à fonctionner naturellement.

@@ -19,7 +19,7 @@ const bundled=await build({entryPoints:['src/App.jsx'],bundle:true,platform:'nod
     export const subscribeFcm=(api,options)=>globalThis.__startupTest.subscribe(api,options);
     export const unsubscribeFcm=()=>globalThis.__startupTest.unsubscribe();
     export const notificationsWanted=()=>localStorage.getItem('fnac-pulse-fcm-enabled')==='1';
-    export const sellerLogin=()=>{},sellerChoosePin=()=>{},sellerMigratePin=()=>{},sellerRegister=()=>{},sellerLogout=()=>{},adminLogin=()=>{},adminLogout=()=>{},changeAdminPassword=()=>{};
+    export const sellerLogin=(...x)=>globalThis.__startupTest.sellerLogin(...x),sellerChoosePin=()=>{},sellerMigratePin=()=>{},sellerRegister=(...x)=>globalThis.__startupTest.sellerRegister(...x),sellerLogout=()=>{},adminLogin=()=>{},adminLogout=()=>{},changeAdminPassword=()=>{},adminAccountEmail=async()=>"admin@example.test",createAdministrator=()=>{},requestAdminEmailChange=()=>{},resendAdminVerification=()=>{};
   `,loader:'js'}));
 }}]});
 const module={exports:{}};new Function('module','exports','require',bundled.outputFiles[0].text)(module,module.exports,require);
@@ -33,7 +33,7 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
   const names=['window','navigator','document','Notification','localStorage','Audio','__startupTest'],old=new Map(names.map(name=>[name,Object.getOwnPropertyDescriptor(globalThis,name)]));
   const values=new Map();if(existingTouch)values.set('fnac-pulse-touch-welcome-v1','done');if(wanted)values.set('fnac-pulse-fcm-enabled','1');
   const storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)};
-  const e={values,gesture:false,notifications:[],locations:[],sounds:[],audioLoads:0,audioInstances:0,audioReject:false,listenCalls:0,onSale:null,prepares:0,prepareFails:false,subscriptions:0,requests:[],auth:null,geoSuccess:null,geoResult};
+  const e={values,gesture:false,notifications:[],locations:[],sounds:[],audioLoads:0,audioInstances:0,audioReject:false,listenCalls:0,onSale:null,prepares:0,prepareFails:false,subscriptions:0,requests:[],sellerCalls:[],auth:null,geoSuccess:null,geoResult};
   const permission={permission:notificationPermission,requestPermission(){
     e.notifications.push({gesture:e.gesture});
     if(notificationDeferred)return new Promise(resolve=>{e.resolveNotification=value=>{this.permission=value;resolve(value);};});
@@ -54,7 +54,9 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
   const mock={
     observe(fn){e.auth=fn;if(auth!=='manual')queueMicrotask(()=>fn(auth));return ()=>{if(e.auth===fn)e.auth=null;};},
     listen(_session,_day,_client,onChange,onSale){e.listenCalls++;e.onSale=onSale;return ()=>{if(e.onSale===onSale)e.onSale=null;};},
-    async api(path,options={}){e.requests.push({path,method:options.method||'GET',body:options.body});if(path.startsWith('/api/bootstrap'))return data;if(path==='/api/goals')return {goals:{}};if(path.startsWith('/api/summary-goals'))return {};return {};},
+    async api(path,options={}){e.requests.push({path,method:options.method||'GET',body:options.body});if(path.startsWith('/api/bootstrap'))return e.addedSeller?{...data,sellers:[...data.sellers,e.addedSeller]}:data;if(path==='/api/auth/status')return {needsPin:false,pinLength:4,pinSalt:'sel-fictif'};if(path==='/api/goals')return {goals:{}};if(path.startsWith('/api/summary-goals'))return {};return {};},
+    async sellerLogin(_api,selection,pin,pinSalt){e.sellerCalls.push({mode:'login',selection,pin,pinSalt});return {...selection,uid:'fictif',accessVersion:'v1'};},
+    async sellerRegister(_api,selection,name,pin){e.sellerCalls.push({mode:'register',selection,name,pin});e.addedSeller={id:2,name,storeId:selection.storeId,departmentId:selection.departmentId,active:true};return {...selection,sellerId:2,uid:'fictif-nouveau',accessVersion:'v1'};},
     async prepare({signal}={}){
       if(signal?.aborted)throw Error('annulé');e.prepares++;if(e.prepareFails)throw Error('hors ligne');
       if(prepareDeferred)return await new Promise((resolve,reject)=>{e.resolvePrepare=()=>resolve('token-fictif');signal?.addEventListener('abort',()=>reject(Error('annulé')),{once:true});});
@@ -89,6 +91,10 @@ test('PWA : autorisations dès le démarrage, avant données ou profil, puis rat
     await e.authAs(null); // le catalogue peut arriver après l'autorisation
     await e.press(action(tree,'Géolocalisation'));
     assert.equal(e.locations.length,1);assert.equal(e.locations[0].gesture,true);assert.equal(e.locations[0].options.enableHighAccuracy,false);
+    assert.match(text(tree.toJSON()),/Bien démarrer/); // le profil est proposé avant l’accueil
+    assert(tree.root.findByProps({'aria-label':'Votre profil pour les notifications'}));
+    assert.equal(tree.root.findByProps({'aria-label':'Votre magasin Fnac'}).props.value,'Fnac Près');
+    await e.press(button(tree,'Plus tard'));
     assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);
     assert.equal(tree.root.findAllByProps({'aria-label':'Activation des notifications'}).length,0); // accord déjà donné, profil pas encore choisi
     assert(tree.root.findByProps({'aria-label':'Notifications autorisées, activation après le choix du profil'}));
@@ -212,7 +218,7 @@ test('Position tardive : une recherche manuelle commencée ne doit jamais être 
   const e=environment({geoDeferred:true,auth:null});let tree;
   try {
     tree=await mount();await e.press(action(tree,'Géolocalisation'));assert.equal(e.locations[0].gesture,true);
-    await e.press(button(tree,'Continuer'));
+    await e.press(button(tree,'Plus tard'));
     const input=()=>tree.root.findByProps({'aria-label':'Votre magasin Fnac'});
     await act(async()=>{input().props.onChange({target:{value:'Fnac Loin'}});await tick();});
     await act(async()=>{e.geoSuccess({coords:{latitude:43.61,longitude:1.42}});await tick();await tick();});
@@ -227,7 +233,7 @@ test('Refus du dialogue système : aucun abonnement en attente et accès possibl
     tree=await mount();await e.press(action(tree,'Notifications d’équipe'));
     assert.match(text(tree.toJSON()),/Notifications d’équipe/);assert.match(text(tree.toJSON()),/Bloquées/);
     assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),undefined);assert.equal(e.prepares,0);assert.equal(e.subscriptions,0);
-    await e.press(button(tree,'Continuer'));assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);
+    await e.press(button(tree,'Plus tard'));assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);
   } finally {await finish(tree,e);}
 });
 
@@ -250,6 +256,8 @@ test('Échec réseau : activation non présentée comme acquise et réessai poss
     await e.press(action(tree,'Géolocalisation'));assert.match(text(tree.toJSON()),/Bien démarrer/);
     e.prepareFails=false;await e.press(action(tree,'Notifications d’équipe'));
     assert.equal(e.prepares,2);assert.equal(e.notifications.length,1); // permission déjà accordée, pas de deuxième dialogue système
+    assert.match(text(tree.toJSON()),/Bien démarrer/); // le profil reste proposé
+    await e.press(button(tree,'Plus tard'));
     assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);
   } finally {await finish(tree,e);}
 });
@@ -257,7 +265,7 @@ test('Échec réseau : activation non présentée comme acquise et réessai poss
 test('Préparation échouée avant profil : erreur actionnable, puis nouvelle tentative à la connexion',async()=>{
   const e=environment({auth:null});e.prepareFails=true;let tree;
   try {
-    tree=await mount();await e.press(action(tree,'Notifications d’équipe'));await e.press(button(tree,'Continuer'));
+    tree=await mount();await e.press(action(tree,'Notifications d’équipe'));await e.press(button(tree,'Plus tard'));
     const card=section(tree,'Activation des notifications');
     assert.match(text(card),/Activation à finaliser/);assert.match(text(card),/préparation a échoué/);assert.match(text(card),/En savoir plus/);
     assert(tree.root.findByProps({'aria-label':'Activation des notifications à finaliser'}));
@@ -269,7 +277,7 @@ test('Préparation échouée avant profil : erreur actionnable, puis nouvelle te
 test('Préparation en attente : pas de carte redondante et choix du profil accessible',async()=>{
   const e=environment({notificationPermission:'granted',prepareDeferred:true,auth:null});let tree;
   try {
-    tree=await mount();await e.press(action(tree,'Notifications d’équipe'));await e.press(button(tree,'Continuer'));
+    tree=await mount();await e.press(action(tree,'Notifications d’équipe'));await e.press(button(tree,'Plus tard'));
     assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),'1');assert.equal(tree.root.findAllByProps({'aria-label':'Activation des notifications'}).length,0);
     await e.press(tree.root.findByProps({'aria-label':'Notifications autorisées, activation après le choix du profil'}));
     assert.match(text(tree.toJSON()),/Autorisation accordée/);assert.match(text(tree.toJSON()),/Profil à choisir pour terminer l’activation/);
@@ -281,7 +289,7 @@ test('Préparation en attente : pas de carte redondante et choix du profil acces
 test('Position tardive : le profil mémorisé ne change jamais de magasin',async()=>{
   const e=environment({geoDeferred:true,auth:null});e.values.set('fnac-pulse-device-profile-v1',JSON.stringify({storeId:'near',sellerId:1}));let tree;
   try {
-    tree=await mount();await e.press(action(tree,'Géolocalisation'));await e.press(button(tree,'Continuer'));
+    tree=await mount();await e.press(action(tree,'Géolocalisation'));await e.press(button(tree,'Plus tard'));
     await act(async()=>{e.geoSuccess({coords:{latitude:48,longitude:2}});await tick();await tick();});
     assert.match(text(tree.toJSON()),/VOTRE PROFIL SUR CET APPAREIL/);assert.match(text(tree.toJSON()),/Fnac Près/);assert.doesNotMatch(text(tree.toJSON()),/Fnac Loin proposé/);
   } finally {await finish(tree,e);}
@@ -293,7 +301,7 @@ test('Permission en attente : double appui ignoré et rattachement si le profil 
     tree=await mount();const activate=action(tree,'Notifications d’équipe');
     await act(async()=>{e.gesture=true;try{activate.props.onClick();activate.props.onClick();}finally{e.gesture=false;}await tick();});
     assert.equal(e.notifications.length,1);assert.equal(e.notifications[0].gesture,true);
-    await e.press(button(tree,'Continuer'));await e.authAs(session);
+    await e.press(button(tree,'Plus tard'));await e.authAs(session);
     assert.equal(e.subscriptions,0);assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),undefined);
     await act(async()=>{e.resolveNotification('granted');await tick();await tick();await tick();});
     assert.equal(e.prepares,1);assert.equal(e.subscriptions,1);assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),undefined);assert.equal(e.values.get('fnac-pulse-fcm-enabled'),'1');
@@ -332,5 +340,40 @@ test('Son des alertes cloud : état courant, premier plan, refus et aucun réabo
     await e.press(tree.root.findByProps({'aria-label':'Notifications activées'}));await e.press(button(tree,'Désactiver sur cet appareil'));
     await announce(sale('Robin'));assert.equal(e.sounds.length,3);assert.match(text(tree.toJSON()),/1 DMax fait par Robin/);
     assert.equal(e.listenCalls,listens); // le flux de ventes ne redémarre pas lors d'un changement de préférence
+  } finally {await finish(tree,e);}
+});
+
+test('Bien démarrer : connexion du profil dans la modale puis association des notifications',async()=>{
+  const e=environment({auth:null});let tree;
+  try {
+    tree=await mount();await e.press(action(tree,'Notifications d’équipe'));await e.press(action(tree,'Géolocalisation'));
+    const profile=()=>section(tree,'Votre profil pour les notifications');
+    const change=async(label,value)=>act(async()=>{profile().findByProps({'aria-label':label}).props.onChange({target:{value}});await tick();});
+    assert.equal(profile().findByProps({'aria-label':'Votre magasin Fnac'}).props.value,'Fnac Près');
+    await change('Votre département','tech');await change('Votre prénom','Morgan');
+    assert.match(text(profile()),/Profil existant : Morgan/);await change('Code PIN personnel','4829');
+    await act(async()=>{await profile().findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();await tick();});
+    assert.deepEqual(e.sellerCalls,[{mode:'login',selection:{storeId:'near',departmentId:'tech',sellerId:1},pin:'4829',pinSalt:'sel-fictif'}]);
+    assert.equal(e.subscriptions,1);assert.equal(e.values.get('fnac-pulse-fcm-enabled'),'1');
+    assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),undefined);assert.match(e.values.get('fnac-pulse-device-profile-v1'),/"sellerId":1/);
+    assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);assert.match(text(tree.toJSON()),/Morgan/);
+  } finally {await finish(tree,e);}
+});
+
+test('Bien démarrer : création d’un profil et PIN sans quitter la modale ; permissions facultatives',async()=>{
+  const e=environment({auth:null});let tree;
+  try {
+    tree=await mount();const profile=()=>section(tree,'Votre profil pour les notifications');
+    const change=async(label,value)=>act(async()=>{profile().findByProps({'aria-label':label}).props.onChange({target:{value}});await tick();});
+    await change('Votre magasin Fnac','Fnac Près');
+    await act(async()=>{profile().findByProps({role:'option'}).props.onClick();await tick();});
+    await change('Votre département','tech');await change('Votre prénom','Alice');
+    await change('Votre nouveau code PIN','7264');await change('Confirmer votre code PIN','7264');
+    await act(async()=>{await profile().findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
+    assert.deepEqual(e.sellerCalls,[{mode:'register',selection:{storeId:'near',departmentId:'tech'},name:'Alice',pin:'7264'}]);
+    assert.equal(e.notifications.length,0);assert.equal(e.locations.length,0);assert.equal(e.subscriptions,0);
+    assert.match(text(profile()),/Votre profil est déjà connecté/);
+    await e.press(button(tree,'Continuer'));assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);
+    assert.match(e.values.get('fnac-pulse-device-profile-v1'),/"sellerId":2/);
   } finally {await finish(tree,e);}
 });

@@ -53,7 +53,7 @@ export function NotificationsDialog({permission,enabled,checkError,unconfirmed,p
     checking?'Vérification des notifications':enabled===true?'Notifications activées':'À activer sur cet appareil';
   return <Modal title="Notifications d’équipe" onClose={onClose}>
     <div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{headline}</strong></div></div>
-    <div className="notification-details"><div><Check size={16}/> Pas d’alerte pour vos propres ventes</div><div><Check size={16}/> Activation individuelle sur chaque appareil</div><div><Check size={16}/> Son Fnac en premier plan, selon l’appareil</div></div>
+    <div className="notification-details"><div><Check size={16}/> Les ventes peuvent vous être signalées même lorsque l’application est fermée</div><div><Check size={16}/> Uniquement pour votre magasin et votre département</div></div>
     <div className="notification-device-note"><Info size={15}/><span>{note}</span></div>
     <button type="button" className={enabled===true?'outline-button full-button':'primary-button full-button'} disabled={actionBusy||disabled} onClick={button}>{actionBusy?'Un instant…':label} {enabled===true?<BellOff size={16}/>:<Bell size={16}/>}</button>
     {enabled!==true&&<button type="button" className="notification-later" onClick={onClose}>Plus tard</button>}

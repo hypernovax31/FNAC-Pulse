@@ -82,8 +82,11 @@ test('Modale notifications : action utilisateur, état bloqué, profil et erreur
   const base={permission:'default',enabled:false,checkError:'',pushAvailable:true,platform:{os:'android'},installed:true,hasSession:true,busy:false};
   const normal=render(NotificationsDialog,base);
   assert.match(normal,/Activer les notifications/);assert.match(normal,/Un appui est nécessaire/);
-  assert.match(normal,/Pas d’alerte pour vos propres ventes/);assert.match(normal,/Son Fnac en premier plan, selon l’appareil/);
-  assert.doesNotMatch(normal,/Suivez les ventes des autres vendeurs|Les ventes de (service|vos collègues) peuvent vous être signalées|Uniquement pour votre magasin et votre département/);
+  assert.match(normal,/Les ventes peuvent vous être signalées même lorsque l’application est fermée/);
+  assert.match(normal,/Uniquement pour votre magasin et votre département/);
+  const details=normal.match(/<div class="notification-details">(.*?)<div class="notification-device-note">/)[1];
+  assert.equal((details.match(/<div>/g)||[]).length,2);
+  assert.doesNotMatch(details,/Pas d’alerte pour vos propres ventes|Activation individuelle sur chaque appareil|Son Fnac en premier plan/);
   const blocked=render(NotificationsDialog,{...base,permission:'denied'});
   assert.match(blocked,/Notifications bloquées/);assert.match(blocked,/<button[^>]+disabled=""[^>]*>Notifications bloquées/);
   const missingProfile=render(NotificationsDialog,{...base,hasSession:false});assert.match(missingProfile,/Choisir mon profil/);

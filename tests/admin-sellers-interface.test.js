@@ -10,7 +10,7 @@ const bundled=await build({entryPoints:['src/Admin.jsx'],bundle:true,platform:'n
   b.onResolve({filter:/^\.\/api$/},()=>({path:'api',namespace:'mock'}));
   b.onResolve({filter:/^\.\/cloud$/},()=>({path:'cloud',namespace:'mock'}));
   b.onLoad({filter:/^api$/,namespace:'mock'},()=>({contents:`export const api=(...x)=>globalThis.__adminTestApi(...x);export const uid=()=>"admin-test-job-0001";export const dateLabel=x=>x;export const timeLabel=x=>x;`,loader:'js'}));
-  b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`export const CLOUD=true;export const adminLogin=()=>{};export const adminLogout=()=>{};export const changeAdminPassword=()=>{};`,loader:'js'}));
+  b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`export const CLOUD=true;export const adminLogin=()=>{};export const adminLogout=()=>{};export const changeAdminPassword=()=>{}; export const adminAccountEmail=async()=>"admin@example.test"; export const createAdministrator=()=>{}; export const requestAdminEmailChange=()=>{}; export const resendAdminVerification=()=>{};`,loader:'js'}));
 }}]});
 const module={exports:{}};new Function('module','exports','require',bundled.outputFiles[0].text)(module,module.exports,require);
 const Admin=module.exports.default;
@@ -33,7 +33,7 @@ test('Administration : vendeurs, ajout, réinitialisation PIN et suppression dan
   };let tree;
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},session:{storeId:store,sellerId:1},data:{stores:[{id:store,name:'Fnac Test'}],services:[],today:'2026-11-01'}}));await tick();});
-    const tabs=tree.root.findAllByProps({role:'tab'});assert.deepEqual(tabs.map(text),['Magasins','Ventes','Objectifs','Départements','Vendeurs','Services','Sécurité']);assert(!tabs.some(x=>text(x)==='Codes PIN'));
+    const tabs=tree.root.findAllByProps({role:'tab'});assert.deepEqual(tabs.map(text),['Magasins','Ventes','Objectifs','Vendeurs','Services','Départements','Administrateur']);assert(!tabs.some(x=>text(x)==='Codes PIN'));
     await act(async()=>{tabs.find(x=>text(x)==='Vendeurs').props.onClick();await tick();});
     const copy=text(tree.toJSON());assert.match(copy,/Vendeurs et accès/);assert.match(copy,/Accès et codes PIN/);assert.match(copy,/Supprimer définitivement un vendeur/);assert.match(copy,/Benoît/);
     const alice=tree.root.findAllByType('article').find(card=>text(card).includes('Alice'));assert(alice);

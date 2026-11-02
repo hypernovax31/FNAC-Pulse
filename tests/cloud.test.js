@@ -1585,3 +1585,109 @@ test('Notifications : une vente corrigée avant ou pendant la mise en file et la
   assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'push-dispatch-0001'},'seller')).status,200);await Promise.all(waits.splice(0));
   assert.equal(dispatchRace,false);assert(!queued.some(m=>m.saleId==='push-dispatch-0001'));assert.deepEqual((await db.get('pulseOutbox/push-dispatch-0001')).data,{status:'reset'});
 });
+
+test('Administrateurs cloud : identité signée, confirmation e-mail, droits côté serveur et compte racine préservé',async()=>{
+  const db=new MemoryDb(),identities=new Map(),now=Math.floor(Date.now()/1000);
+  const user=(sub,extra={})=>({sub,auth_time:now,email:`${sub}@example.test`,email_verified:true,firebase:{sign_in_provider:'password'},...extra});
+  const root='root-session-token-0000001',oldRoot='root-old-session-token-0001',seller='seller-session-token-000001',ordinary='ordinary-session-token-0001';
+  const newbie='new-admin-session-token-001',newbieVerified='verified-admin-token-000001',second='second-admin-token-0000001',sellerPassword='seller-password-token-00001';
+  identities.set(root,user('root-admin'));identities.set(oldRoot,{sub:'root-admin',auth_time:now-1000});
+  identities.set(seller,user('seller-uid',{role:'seller'}));identities.set(ordinary,user('ordinary-uid'));
+  identities.set(newbie,user('new-admin',{email_verified:false}));identities.set(newbieVerified,user('new-admin'));identities.set(second,user('second-admin'));
+  identities.set(sellerPassword,user('seller-uid'));
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!identities.has(t))throw Error('signature');return identities.get(t);}});
+  const env={ADMIN_UID:'root-admin',FIREBASE_PROJECT_ID:'demo-fnac',ALLOWED_ORIGIN:'https://example.test'},ctx={waitUntil(){}};
+  async function call(path,token,body,origin='https://example.test') {
+    const res=await worker.fetch(new Request(`https://worker.test${path}`,{method:body?'POST':'GET',headers:{origin,...(token?{authorization:`Bearer ${token}`} : {}),...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:res.status,json:await res.json()};
+  }
+  await call('/api/bootstrap');const before=(await db.get('pulse/catalog')).data;
+  await db.commit([db.write('pulseAccess/seller-uid',{active:true,pinMac:'préservé',storeId:LEGACY_STORE_ID,sellerId:1,version:'v1'})]);
+  assert.equal((await call('/api/admin/all',oldRoot)).status,200); // le compte actuel n'est pas migré
+  assert.equal((await call('/api/admin/all',ordinary)).status,403);
+  assert.equal((await call('/api/admin/administrators',ordinary,{userToken:newbie})).status,403);
+  assert.equal((await call('/api/admin/administrators',seller,{userToken:newbie})).status,403);
+  assert.equal((await call('/api/admin/administrators',null,{userToken:newbie})).status,401);
+  assert.equal((await call('/api/admin/administrators',root,{userToken:newbie},'https://evil.test')).status,403);
+  assert.equal((await call('/api/admin/administrators',oldRoot,{userToken:newbie})).status,401); // réauthentification requise
+  assert.equal((await call('/api/admin/administrators',root,{userToken:'faux-jeton-au-moins-vingt-caracteres'})).status,400);
+  assert.equal((await call('/api/admin/administrators',root,{userToken:seller})).status,400);
+  assert.equal((await call('/api/admin/administrators',root,{userToken:sellerPassword})).status,409);
+  identities.set('stale-target-token-00000001',user('stale',{auth_time:now-1000}));
+  assert.equal((await call('/api/admin/administrators',root,{userToken:'stale-target-token-00000001'})).status,400);
+  const grant=await call('/api/admin/administrators',root,{userToken:newbie,sub:'ordinary-uid'});
+  assert.equal(grant.status,200);assert.equal(grant.json.already,false);
+  assert.equal(await db.get('pulseAdmins/ordinary-uid'),null);
+  assert.equal((await db.get('pulseAdmins/new-admin')).data.createdBy,'root-admin');
+  assert.equal((await call('/api/admin/all',newbie)).status,403);
+  assert.match((await call('/api/admin/all',newbie)).json.error,/Confirmez votre adresse e-mail/);
+  assert.equal((await call('/api/admin/all',newbieVerified)).status,200);
+  assert.equal((await call('/api/admin/administrators',newbieVerified,{userToken:second})).status,200);
+  assert.equal((await call('/api/admin/all',second)).status,200); // les droits se propagent
+  assert.equal((await call('/api/admin/administrators',root,{userToken:newbieVerified})).json.already,true);
+  assert.equal((await call('/api/admin/administrators',root,{userToken:root})).status,409);
+  identities.set('wrong-provider-token-0000001',user('new-admin',{firebase:{sign_in_provider:'custom'}}));
+  assert.equal((await call('/api/admin/all','wrong-provider-token-0000001')).status,403);
+  await db.commit([db.write('pulseAdmins/second-admin',{active:false})]);
+  assert.equal((await call('/api/admin/all',second)).status,403);
+  assert.deepEqual((await db.get('pulse/catalog')).data,before);
+  assert.equal((await db.get('pulseAccess/seller-uid')).data.pinMac,'préservé');
+});
+
+test('Import manuel Fnac : authentification, validation, sauvegarde et aucune suppression ou fusion',async()=>{
+  const db=new MemoryDb(),worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(t!=='admin')throw Error();return {sub:'root'};}});
+  const env={ADMIN_UID:'root',FIREBASE_PROJECT_ID:'demo-fnac'},ctx={waitUntil(){}};
+  async function call(path,token,body) {
+    const res=await worker.fetch(new Request(`https://worker.test${path}`,{method:body?'POST':'GET',headers:{...(token?{authorization:`Bearer ${token}`} : {}),...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:res.status,json:await res.json()};
+  }
+  await call('/api/bootstrap');
+  const before=(await db.get('pulse/catalog')).data,checked=before.directorySync.verifiedAt,attempt=before.directorySync.lastAttempt,result=before.directorySync.lastResult;
+  const personal={active:true,storeId:LEGACY_STORE_ID,sellerId:1,pinMac:'unique',version:'v1'},sale={sellerId:1,serviceId:2,storeId:LEGACY_STORE_ID};
+  await db.commit([db.write('pulseAccess/seller',personal),db.write(`pulseStores/${LEGACY_STORE_ID}/sales/preserved`,sale)]);
+  const entries=directorySnapshot.stores.filter(s=>s.fnacId!=='cl124').map(({fnacId,name})=>({fnacId,name:fnacId==='cl57'?'Fnac Labège Test':name}));
+  entries.push({fnacId:'cl9999',name:'Fnac Copie de test'});
+  const body={declared:entries.length+2,entries};
+  assert.equal((await call('/api/admin/stores/import',null,body)).status,401);
+  assert.equal((await call('/api/admin/stores/import','admin',{...body,entries:entries.slice(0,70)})).status,400);
+  assert.equal((await call('/api/admin/stores/import','admin',{...body,entries:entries.map((x,i)=>i===1?{...x,fnacId:entries[0].fnacId}:x)})).status,400);
+  assert.equal((await call('/api/admin/stores/import','admin',{...body,entries:entries.map((x,i)=>i===1?{...x,name:'Fnac <script>'}:x)})).status,400);
+  assert.deepEqual((await db.get('pulse/catalog')).data,before);
+  const imported=await call('/api/admin/stores/import','admin',body);assert.equal(imported.status,200);assert.equal(imported.json.imported,189);
+  const after=(await db.get('pulse/catalog')).data;
+  assert.equal(after.stores.find(x=>x.fnacId==='cl57').id,LEGACY_STORE_ID);
+  assert.equal(after.stores.find(x=>x.fnacId==='cl57').name,'Fnac Labège Test');
+  assert.equal(after.stores.find(x=>x.fnacId==='cl57').directoryStatus,'manual');
+  assert.equal(after.stores.find(x=>x.fnacId==='cl57').directoryPreviouslyVerified,true);
+  assert(after.stores.find(x=>x.fnacId==='cl57').previousNames.includes(before.stores.find(x=>x.fnacId==='cl57').name));
+  assert.equal(after.stores.find(x=>x.fnacId==='cl124').directoryStatus,'official'); // une copie non certifiée ne classe pas les absents
+  assert.equal(after.stores.find(x=>x.fnacId==='cl9999').name,'Fnac Copie de test');
+  assert.equal(after.stores.find(x=>x.fnacId==='cl9999').directoryStatus,'manual');
+  assert.equal(after.directorySync.verifiedAt,checked);assert.equal(after.directorySync.lastAttempt,attempt);assert.equal(after.directorySync.lastResult,result);
+  assert(after.directorySync.lastManualImport);assert.equal(after.directorySync.manualCount,189);
+  assert.deepEqual(after.sellers,before.sellers);assert.deepEqual((await db.get('pulseAccess/seller')).data,personal);
+  assert.deepEqual((await db.get(`pulseStores/${LEGACY_STORE_ID}/sales/preserved`)).data,sale);
+  const month=new Date().toISOString().slice(0,7),backup=await db.get(`pulseBackups/catalog-before-fnac-manual-${month}`);
+  assert(backup);assert.deepEqual(backup.data.catalog.stores,before.stores);
+});
+
+test('Import manuel : une vérification officielle concurrente plus récente ne doit pas être écrasée',async()=>{
+  const db=new MemoryDb(),worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'root'})});
+  const env={ADMIN_UID:'root',FIREBASE_PROJECT_ID:'demo-fnac'},ctx={waitUntil(){}};
+  const call=(path,body)=>worker.fetch(new Request(`https://worker.test${path}`,{method:body?'POST':'GET',headers:{authorization:'Bearer root',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+  assert.equal((await call('/api/bootstrap')).status,200);
+  const before=(await db.get('pulse/catalog')).data,original=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path.startsWith('pulseBackups/catalog-before-fnac-manual-'))) {
+      raced=true;const concurrent=(await db.get('pulse/catalog')).data;
+      concurrent.directorySync.lastSuccessfulSync=new Date(Date.now()+2000).toISOString();
+      await original([db.write('pulse/catalog',concurrent)]);
+    }
+    return original(writes);
+  };
+  const entries=directorySnapshot.stores.map(({fnacId,name})=>({fnacId,name:fnacId==='cl57'?'Fnac Nom Copié':name}));
+  const result=await call('/api/admin/stores/import',{declared:entries.length+2,entries});
+  assert.equal(result.status,409);assert.match((await result.json()).error,/vérification officielle plus récente/);
+  const after=(await db.get('pulse/catalog')).data;assert.equal(after.stores.find(s=>s.fnacId==='cl57').name,before.stores.find(s=>s.fnacId==='cl57').name);
+  assert.equal(after.directorySync.lastManualImport,undefined);assert(raced);
+});

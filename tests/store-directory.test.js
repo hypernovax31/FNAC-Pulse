@@ -114,3 +114,24 @@ test('Recherche magasin : accents, ordre des mots, ville et identifiants distinc
   assert.equal(searchStores([{id:'z',name:'Fnac 東京'}],'東京')[0].id,'z');
   assert.equal(searchStores(rows,'').length,3);
 });
+
+test('Copie non certifiée : statuts distincts et noms remplacés conservés et recherchables',()=>{
+  const current=[{id:'ancien',name:'Fnac Ancienne',fnacId:'cl1',directoryStatus:'official',active:true},
+    {id:'inchangé',name:'Fnac Même',fnacId:'cl2',directoryStatus:'official',active:true}];
+  const incoming=[{fnacId:'cl1',name:'Fnac Nouvelle'},{fnacId:'cl2',name:'Fnac Même'},{fnacId:'cl3',name:'Fnac Ajoutée'}];
+  const manual=mergeStoreDirectory(current,incoming,{manual:true}).stores;
+  assert.equal(manual[0].id,'ancien');assert.equal(manual[0].directoryStatus,'manual');assert.equal(manual[0].directoryPreviouslyVerified,true);
+  assert.deepEqual(manual[0].previousNames,['Fnac Ancienne']);assert.equal(manual[1].directoryStatus,'official');
+  assert.equal(manual[2].directoryStatus,'manual');assert.equal(manual[2].directoryPreviouslyVerified,undefined);
+  assert.equal(searchStores(manual,'ancienne')[0].id,'ancien');assert.equal(storeSelectionGroups(manual,[]).all.length,3);
+  const verified=mergeStoreDirectory(manual,incoming).stores;
+  assert.equal(verified[0].directoryStatus,'official');assert.equal(verified[0].directoryPreviouslyVerified,undefined);
+  assert.deepEqual(verified[0].previousNames,['Fnac Ancienne']);assert.equal(verified[2].directoryStatus,'official');
+  const many=[{...current[0],previousNames:Array.from({length:12},(_,i)=>`Ancien ${i}`)}];
+  assert.throws(()=>mergeStoreDirectory(many,[incoming[0]],{manual:true}),/Trop de noms historiques/);
+});
+
+test('Couverture : une fiche vérifiée avant changement manuel reste dans la base de contrôle',()=>{
+  const verified=Array.from({length:100},(_,i)=>({fnacId:`cl${i+1}`,directoryStatus:i<80?'manual':'official',directoryPreviouslyVerified:i<80}));
+  assert.throws(()=>assertDirectoryCoverage(Array.from({length:50},(_,i)=>({fnacId:`cl${i+1}`})),verified),e=>e.code==='incomplete');
+});

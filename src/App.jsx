@@ -70,7 +70,7 @@ function DateChip({today}) {
   </time>;
 }
 
-export function SessionForm({data,initialSession,initialProfile,startupLocation,onSubmit,onForgetProfile,onRefreshProfile,modal=false}) {
+export function SessionForm({data,initialSession,initialProfile,startupLocation,onSubmit,onForgetProfile,onRefreshProfile,modal=false,startup=false}) {
   const rememberedPerson=initialProfile&&data.sellers.find(s=>Number(s.id)===Number(initialProfile.sellerId)&&sellerStoreId(s)===initialProfile.storeId);
   const rememberedStore=initialProfile&&data.stores.find(s=>s.id===initialProfile.storeId);
   const fixed=!!(CLOUD&&rememberedPerson&&rememberedStore);
@@ -183,7 +183,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
         <NameSuggestions key={`${store}:${department}`} id={nameId} sellers={storeSellers} value={name} onChange={value=>{cancelLocate();setName(value);clearSecrets();}} disabled={formBusy||!department}/>
       </>}
       {CLOUD&&mode==='login'&&<label className="session-field pin-field"><span>CODE PIN PERSONNEL</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{4}" maxLength={4} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} placeholder="4 chiffres" disabled={formBusy} required/></label>}
-      {(mode==='local'||mode==='login')&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==4)}>{formBusy?'Connexion…':modal?'Enregistrer':'Se connecter'} <ArrowRight size={16}/></button>}
+      {(mode==='local'||mode==='login')&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==4)}>{formBusy?'Connexion…':modal&&!startup?'Enregistrer':'Se connecter'} <ArrowRight size={16}/></button>}
     </div>
     {!fixed&&unselectedStore&&<p id={`store-search-${modal?'dialog':'welcome'}-hint`} className="store-search-hint">Choisissez un magasin dans les résultats.</p>}
     {!fixed&&matched&&<p className="pin-status">Profil existant : {matched.name}. Votre historique est conservé.</p>}
@@ -434,10 +434,12 @@ export default function App() {
     return ()=>{cancelled=true;locationRequest.current++;locationInFlight.current=false;clearTimeout(locationTimer.current);};
   },[]);
   useEffect(()=>{
-    if(startupPermissionsOpen&&!startupGate&&locationStatus==='granted'&&startupNotificationReady&&!notificationBusy){
+    // Ne pas fermer avant d'avoir proposé le profil. Avec une session, seule
+    // une souscription confirmée (et non la simple permission) termine l'étape.
+    if(startupPermissionsOpen&&!startupGate&&authReady&&session&&locationStatus==='granted'&&displayedEnabled===true&&!notificationBusy){
       notificationPrompted.current=true;setStartupPermissionsOpen(false);
     }
-  },[startupPermissionsOpen,startupGate,locationStatus,startupNotificationReady,notificationBusy]);
+  },[startupPermissionsOpen,startupGate,authReady,session,locationStatus,displayedEnabled,notificationBusy]);
   useEffect(()=>{
     let timer,permissionStatus,cancelled=false;
     const sync=()=>{
@@ -848,7 +850,7 @@ export default function App() {
   }
   const installationDialog=installModal&&<InstallDialog platform={platform} base={APP_BASE} promptAvailable={!!installPrompt} installError={installError} onInstall={installApp} onClose={()=>setInstallModal(false)}/>;
   if(startupGate)return <StartupGate base={APP_BASE} enabled={soundEnabled} ready={startupReady} status={startupStatus} onStart={enterStartup} onSound={toggleSound} onContinue={continueWithoutStartupSound}/>;
-  if(startupPermissionsOpen)return <><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div><StartupPermissionsDialog platform={platform} permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} locationStatus={locationStatus} locationFeedback={locationFeedback} onNotification={requestStartupNotifications} onLocation={()=>requestStartupLocation(true)} onClose={closeStartupPermissions}/></>;
+  if(startupPermissionsOpen)return <><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div><StartupPermissionsDialog platform={platform} permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} authReady={authReady} profileName={seller?.name} profileContent={data?<SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'startup-new'} data={data} initialProfile={deviceProfile} startupLocation={startupLocation} modal startup onSubmit={selectSession} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>:loadFailed?<div className="startup-profile-status" role="alert">Profil indisponible. Vérifiez votre connexion. <button type="button" className="text-button" onClick={refresh}>Réessayer</button></div>:<p className="startup-profile-status" role="status">Chargement des magasins et des profils…</p>} locationStatus={locationStatus} locationFeedback={locationFeedback} onNotification={requestStartupNotifications} onLocation={()=>requestStartupLocation(true)} onClose={closeStartupPermissions}/></>;
   if(!data)return <><div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>{installationDialog}</>;
   const stats=data.stats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
   return <><div className="app-shell">
