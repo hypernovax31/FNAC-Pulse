@@ -166,7 +166,10 @@ function requireNotificationPermission() {
 function requireActiveCheck(signal) {
   if(signal?.aborted){const error=new Error('Vérification des notifications annulée.');error.name='AbortError';throw error;}
 }
-export async function subscribeFcm(api,{signal}={}) {
+// Peut préparer l'abonnement du navigateur dès le geste d'activation, même si
+// le vendeur n'a pas encore choisi son profil. Aucun jeton n'est transmis au
+// serveur Fnac Pulse et aucune préférence n'est validée avant la connexion.
+export async function prepareFcm({signal}={}) {
   requireActiveCheck(signal);
   const m=await messaging();requireActiveCheck(signal);
   const registration=await navigator.serviceWorker.ready;requireActiveCheck(signal);
@@ -174,6 +177,10 @@ export async function subscribeFcm(api,{signal}={}) {
   const token=await getToken(m,{vapidKey:VAPID,serviceWorkerRegistration:registration});
   requireActiveCheck(signal);
   if(!token)throw new Error('Impossible de créer l’abonnement aux notifications.');
+  return token;
+}
+export async function subscribeFcm(api,{signal}={}) {
+  const token=await prepareFcm({signal});requireActiveCheck(signal);
   await api('/api/push/subscribe',{method:'POST',body:{token},signal});
   requireActiveCheck(signal);
   await rememberPushOrigin(token,undefined,undefined,signal);
@@ -181,6 +188,9 @@ export async function subscribeFcm(api,{signal}={}) {
   localStorage.setItem('fnac-pulse-fcm-enabled','1');
 }
 export async function unsubscribeFcm(api) {
+  // Ne pas réactiver automatiquement une préférence explicitement coupée,
+  // même si la suppression côté serveur échoue (l'interface avertit alors).
+  try {localStorage.removeItem('fnac-pulse-fcm-enabled');} catch {}
   const m=await messaging(),registration=await navigator.serviceWorker.ready;
   requireNotificationPermission();
   const token=await getToken(m,{vapidKey:VAPID,serviceWorkerRegistration:registration});

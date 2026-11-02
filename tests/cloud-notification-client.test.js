@@ -15,7 +15,7 @@ const result=await build({entryPoints:['src/cloud.js'],bundle:true,platform:'nod
   b.onLoad({filter:/.*/,namespace:'firebase-fictif'},args=>({contents:stubs[args.path],loader:'js'}));
 }}]});
 const module={exports:{}};new Function('module','exports','require',result.outputFiles[0].text)(module,module.exports,require);
-const {subscribeFcm,unsubscribeFcm,notificationsWanted}=module.exports;
+const {prepareFcm,subscribeFcm,unsubscribeFcm,notificationsWanted}=module.exports;
 
 test('FCM : ne demande jamais la permission pendant une vérification ou une désactivation',async()=>{
   const names=['navigator','Notification','localStorage','__testFcmTokens','__testFcmDeletes'];
@@ -48,4 +48,19 @@ test('FCM : ne demande jamais la permission pendant une vérification ou une dé
   } finally {
     for(const [name,descriptor] of originals)if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];
   }
+});
+
+test('FCM : préparation après permission et avant profil, sans enregistrer de préférence active',async()=>{
+  const names=['navigator','Notification','localStorage','__testFcmTokens','__testFcmDeletes'];
+  const originals=new Map(names.map(name=>[name,Object.getOwnPropertyDescriptor(globalThis,name)]));
+  const put=(name,value)=>Object.defineProperty(globalThis,name,{configurable:true,writable:true,value});
+  try {
+    const values=new Map();put('localStorage',{getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)});
+    put('navigator',{serviceWorker:{ready:Promise.resolve({})}});put('Notification',{permission:'default'});put('__testFcmTokens',0);put('__testFcmDeletes',0);
+    await assert.rejects(prepareFcm(),/Autorisation de notification non accordée/);assert.equal(globalThis.__testFcmTokens,0);
+    Notification.permission='granted';assert.equal(await prepareFcm(),'token-fictif');assert.equal(globalThis.__testFcmTokens,1);assert.equal(notificationsWanted(),false);
+    localStorage.setItem('fnac-pulse-fcm-enabled','1');Notification.permission='denied';
+    await assert.rejects(unsubscribeFcm(async()=>{}),/Autorisation de notification non accordée/);
+    assert.equal(notificationsWanted(),false); // une désactivation échouée ne doit pas relancer un abonnement silencieux
+  } finally {for(const [name,descriptor] of originals)if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];}
 });

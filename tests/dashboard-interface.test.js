@@ -121,7 +121,7 @@ test('Aujourd’hui : les cartes ouvrent le détail correspondant et restent ina
 test('Détail Aujourd’hui : chiffres personnels et équipe, zéro et données indisponibles',()=>{
   const stats={mineTotal:2,day:{total:3,byService:[{id:1,name:'DMax',count:3},{id:2,name:'Garantie',count:0}],mineByService:[{serviceId:1,count:1},{serviceId:2,count:1}]},summary:{store:{day:{byService:[{id:1,name:'DMax'},{id:2,name:'Garantie'}]}}}};
   const mine=render(TodayDetails,{scope:'mine',stats,services:[],date:'2026-10-29',onClose(){}});
-  assert.match(mine,/Ma journée/);assert.match(mine,/DMax/);assert.match(mine,/Garantie/);assert.match(mine,/avant un changement de département/);
+  assert.match(mine,/Ma journée/);assert.match(mine,/DMax/);assert.match(mine,/Garantie/);assert.match(mine,/Toutes vos ventes personnelles du jour/);assert.doesNotMatch(mine,/avant un changement de département/);
   const team=render(TodayDetails,{scope:'team',stats,services:[],date:'2026-10-29',department:{name:'Technique'},onClose(){}});
   assert.match(team,/Ventes de l’équipe/);assert.match(team,/département Technique/);assert.match(team,/DMax/);assert.doesNotMatch(team,/Garantie/);
   assert.match(render(TodayDetails,{scope:'team',stats:{day:{total:0,byService:[]}},services:[],onClose(){}}),/Aucune vente enregistrée/);

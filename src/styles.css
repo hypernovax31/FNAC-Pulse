@@ -1065,3 +1065,28 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .history-confirm { background:#26221f; border-color:#8b5a50; }
 [data-theme='dark'] .history-confirm > strong,[data-theme='dark'] .history-warning { color:#ffb7a9; }
 [data-theme='dark'] .history-confirm p,[data-theme='dark'] .history-confirm ul { color:#e0c2ba; }
+
+/* Autorisations présentées dès l'ouverture de la PWA, avant le choix du profil. */
+.startup-permissions-intro { margin:-5px 0 16px; color:#777b70; font-size:12px; line-height:1.55; }
+.startup-permissions-list { display:grid; gap:10px; }
+.startup-permission-card { display:grid; grid-template-columns:38px minmax(0,1fr); gap:5px 12px; padding:14px; border:1px solid #eceee8; border-radius:9px; background:#fafbf9; }
+.startup-permission-icon { grid-row:1 / 3; width:38px; height:38px; display:grid; place-items:center; border-radius:9px; background:#fbf0ca; color:#947414; }
+.startup-permission-icon.location { background:#e9f2ec; color:#547660; }
+.startup-permission-copy { min-width:0; }
+.startup-permission-copy strong { color:var(--ink); font-size:12px; }
+.startup-permission-copy p { margin-top:4px; color:#777b70; font-size:11px; line-height:1.5; }
+.startup-permission-action { justify-self:start; min-height:44px; display:inline-flex; align-items:center; gap:7px; padding:0 2px; background:transparent; color:#8d6b00; font-size:11px; font-weight:800; }
+.startup-permission-action:disabled { color:#aaa99e; }
+.startup-permission-done { display:inline-flex; align-items:center; gap:5px; margin-top:5px; color:#547b5c; font-size:11px; font-weight:750; }
+.startup-permissions-privacy { display:flex; gap:8px; margin:16px 0; color:#85897d; font-size:10px; line-height:1.5; }
+.startup-permissions-privacy svg { flex:0 0 auto; margin-top:1px; }
+[data-theme='dark'] .startup-permission-card { background:#292d27; border-color:#41483d; }
+[data-theme='dark'] .startup-permission-copy strong { color:#eeefe7; }
+[data-theme='dark'] .startup-permission-copy p,
+[data-theme='dark'] .startup-permissions-intro,
+[data-theme='dark'] .startup-permissions-privacy { color:#bcc3b4; }
+[data-theme='dark'] .startup-permission-icon { background:#53451c; color:#f2d980; }
+[data-theme='dark'] .startup-permission-icon.location { background:#32463a; color:#b4d5bc; }
+[data-theme='dark'] .startup-permission-action { color:#eed17b; }
+[data-theme='dark'] .startup-permission-action:disabled { color:#858a7f; }
+[data-theme='dark'] .startup-permission-done { color:#aed6b6; }

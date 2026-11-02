@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import Admin, { Modal } from './Admin';
 import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
-import { CLOUD, observeVendor, sellerLogin, sellerChoosePin, sellerMigratePin, sellerRegister, sellerLogout, listenStore, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
+import { CLOUD, observeVendor, sellerLogin, sellerChoosePin, sellerMigratePin, sellerRegister, sellerLogout, listenStore, prepareFcm, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
 import { parisToday } from './cloud-stats';
 import { sellerStoreId } from './catalog';
 import { storeSelectionGroups } from './store-directory.js';
@@ -18,6 +18,8 @@ import { serviceIconKey } from './service-icons';
 import { THEME_KEY, readTheme, applyTheme } from './theme';
 import { createStartupSound, soundEnabled as readSoundEnabled, saveSound, needsStartupTouch, SOUND_KEY, STARTUP_SOUND_KEY } from './startup-sound';
 import { StartupGate } from './StartupGate';
+import { StartupPermissionsDialog } from './StartupPermissions';
+import { readLocationPermission, startupPushPending, setStartupPushPending } from './startup-permissions.js';
 import { isOtherSellerSale } from './live-sales.js';
 import { readPushOrigin } from './push-origin.js';
 import { calendarChip } from './calendar';
@@ -67,7 +69,7 @@ function DateChip({today}) {
   </time>;
 }
 
-export function SessionForm({data,initialSession,initialProfile,onSubmit,onForgetProfile,onRefreshProfile,modal=false}) {
+export function SessionForm({data,initialSession,initialProfile,startupLocation,onSubmit,onForgetProfile,onRefreshProfile,modal=false}) {
   const rememberedPerson=initialProfile&&data.sellers.find(s=>Number(s.id)===Number(initialProfile.sellerId)&&sellerStoreId(s)===initialProfile.storeId);
   const rememberedStore=initialProfile&&data.stores.find(s=>s.id===initialProfile.storeId);
   const fixed=!!(CLOUD&&rememberedPerson&&rememberedStore);
@@ -82,7 +84,7 @@ export function SessionForm({data,initialSession,initialProfile,onSubmit,onForge
   const [pinMode,setPinMode]=useState(CLOUD?'idle':'local'),[pinSalt,setPinSalt]=useState(''),[statusError,setStatusError]=useState(''),[statusRetry,setStatusRetry]=useState(0);
   const [pin,setPin]=useState(''),[newPin,setNewPin]=useState(''),[confirmPin,setConfirmPin]=useState('');
   const [formBusy,setFormBusy]=useState(false),[formError,setFormError]=useState('');
-  const geoRequest=useRef(0);
+  const geoRequest=useRef(0),geoTouched=useRef(false);
   const departments=store?departmentsForStore(data,store):[];
   const storeSellers=department?sellersForDepartment(data.sellers,store,department):[];
   const typed=cleanSellerName(name);
@@ -112,20 +114,29 @@ export function SessionForm({data,initialSession,initialProfile,onSubmit,onForge
     check();return ()=>{cancelled=true;clearTimeout(timer);controller.abort();};
   },[store,department,seller,registerable,statusRetry,unavailable]);
   function clearSecrets(){setPin('');setNewPin('');setConfirmPin('');setFormError('');}
-  function cancelLocate(){geoRequest.current++;setGeoBusy(false);setGeoText('');}
+  function cancelLocate(){geoTouched.current=true;geoRequest.current++;setGeoBusy(false);setGeoText('');}
   const changeStore=value=>{if(value!==store){setDepartment('');setName('');clearSecrets();}setStore(value);};
   const changeDepartment=value=>{if(value!==department){setName('');clearSecrets();}setDepartment(value);};
+  function suggestNearby(coords) {
+    const located=storeGroups.all.filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon)).map(s=>({...s,distance:kmBetween(coords.latitude,coords.longitude,s.lat,s.lon)})).sort((a,b)=>a.distance-b.distance);
+    setGeoBusy(false);
+    if(!located.length){setGeoText('Aucun magasin géolocalisé dans la liste.');return;}
+    const nearest=located[0];changeStore(nearest.id);
+    setGeoText(`${nearest.name} proposé · à environ ${nearest.distance<1?`${Math.round(nearest.distance*1000)} m`:`${nearest.distance.toFixed(1).replace('.',',')} km`}. Certains magasins n’ont pas de coordonnées.`);
+  }
+  useEffect(()=>{
+    // Ne jamais remplacer une sélection, un profil mémorisé ou une recherche
+    // déjà commencée si la position arrive après l'ouverture du formulaire.
+    if(!startupLocation||fixed||unavailable||store||unselectedStore||geoTouched.current)return;
+    geoTouched.current=true;geoRequest.current++;suggestNearby(startupLocation);
+  },[startupLocation,fixed,unavailable,store,unselectedStore,data.stores]);
   const locate=()=>{
+    geoTouched.current=true;
     if(!navigator.geolocation){setGeoText('La géolocalisation n’est pas disponible sur cet appareil.');return;}
     const request=++geoRequest.current;
     setGeoBusy(true);setGeoText('Recherche du magasin le plus proche…');
     navigator.geolocation.getCurrentPosition(({coords})=>{
-      if(request!==geoRequest.current)return;
-      const located=storeGroups.all.filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon)).map(s=>({...s,distance:kmBetween(coords.latitude,coords.longitude,s.lat,s.lon)})).sort((a,b)=>a.distance-b.distance);
-      setGeoBusy(false);
-      if(!located.length){setGeoText('Aucun magasin géolocalisé dans la liste.');return;}
-      const nearest=located[0];changeStore(nearest.id);
-      setGeoText(`${nearest.name} proposé · à environ ${nearest.distance<1?`${Math.round(nearest.distance*1000)} m`:`${nearest.distance.toFixed(1).replace('.',',')} km`}. Certains magasins n’ont pas de coordonnées.`);
+      if(request!==geoRequest.current)return;suggestNearby(coords);
     },err=>{if(request!==geoRequest.current)return;setGeoBusy(false);setGeoText(err.code===1?'Géolocalisation refusée. Vous pouvez choisir votre magasin dans la liste.':'Position indisponible. Choisissez votre magasin dans la liste.');},
     {enableHighAccuracy:false,timeout:12000,maximumAge:300000});
   };
@@ -165,7 +176,7 @@ export function SessionForm({data,initialSession,initialProfile,onSubmit,onForge
     {fixed&&<div className="remembered-profile"><Avatar name={rememberedPerson.name} id={rememberedPerson.id}/><div><span>VOTRE PROFIL SUR CET APPAREIL</span><strong>{rememberedPerson.name}</strong><small>{rememberedStore.name} · {departments.find(d=>d.id===department)?.name||'Votre département'}</small></div></div>}
     <div className="session-fields">
       {!fixed&&<>
-        <div className="session-field store-field"><label htmlFor={`store-search-${modal?'dialog':'welcome'}`}>VOTRE MAGASIN</label><StoreSearch id={`store-search-${modal?'dialog':'welcome'}`} stores={storeGroups.all} value={store} onUnselectedChange={setUnselectedStore} onChange={value=>{cancelLocate();changeStore(value);}} disabled={formBusy}/></div>
+        <div className="session-field store-field"><label htmlFor={`store-search-${modal?'dialog':'welcome'}`}>VOTRE MAGASIN</label><StoreSearch id={`store-search-${modal?'dialog':'welcome'}`} stores={storeGroups.all} value={store} onUnselectedChange={setUnselectedStore} onEdit={cancelLocate} onChange={value=>{cancelLocate();changeStore(value);}} disabled={formBusy}/></div>
         <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver un magasin proche" title="Trouver un magasin proche parmi ceux géolocalisés" disabled={geoBusy||formBusy}><Crosshair size={17}/></button>
         <label className="session-field department-field"><span>VOTRE DÉPARTEMENT</span><div className="select-wrap"><UsersRound size={16}/><select aria-label="Votre département" value={department} onChange={e=>{cancelLocate();changeDepartment(e.target.value);}} disabled={formBusy||!store||!departments.length} required><option value="">Choisir un département</option>{departments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
         <label className="session-field seller-field"><span>VOTRE PRÉNOM</span><div className="select-wrap name-wrap"><UserRound size={16}/><input aria-label="Votre prénom" list={optionsId} type="text" autoComplete="given-name" maxLength={60} placeholder="Saisissez votre prénom" value={name} onChange={e=>{cancelLocate();setName(e.target.value);clearSecrets();}} disabled={formBusy||!department} required/><datalist id={optionsId}>{storeSellers.map(s=><option key={s.id} value={s.name}/>)}</datalist></div></label>
@@ -194,10 +205,10 @@ export function SessionForm({data,initialSession,initialProfile,onSubmit,onForge
     {geoText&&<div className="geo-message" role="status"><MapPin size={13}/>{geoText}</div>}
   </form>;
 }
-function WelcomePanel({data,onSubmit,deviceProfile,onForgetProfile,onRefreshProfile}) {
+function WelcomePanel({data,onSubmit,deviceProfile,startupLocation,onForgetProfile,onRefreshProfile}) {
   return <section className="welcome-panel" id="selection">
     <div className="welcome-copy"><div className="welcome-icon"><Sparkles size={20}/></div><div><div className="micro-label">VOTRE PROFIL</div><h2>On se lance ?</h2><p>{deviceProfile?'Retrouvez votre profil sur cet appareil.':'Choisissez votre magasin, votre département et saisissez votre prénom.'}</p></div></div>
-    <SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'nouvel-appareil'} data={data} initialProfile={deviceProfile} onSubmit={onSubmit} onForgetProfile={onForgetProfile} onRefreshProfile={onRefreshProfile}/>
+    <SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'nouvel-appareil'} data={data} initialProfile={deviceProfile} startupLocation={startupLocation} onSubmit={onSubmit} onForgetProfile={onForgetProfile} onRefreshProfile={onRefreshProfile}/>
   </section>;
 }
 function Sidebar({onNavigate,onAdmin,onSession,onInstall,showInstall,activeNav}) {
@@ -250,7 +261,7 @@ function TodayOverview({stats,hasSession,onShow}) {
 function TodayDetails({scope,stats,services,date,department,offline,onClose}) {
   const mine=scope==='mine',title=mine?'Ma journée':'Ventes de l’équipe',count=mine?stats?.mineTotal:stats?.day?.total;
   const rows=todayBreakdown(stats,services,scope),ready=mine?Array.isArray(stats?.day?.mineByService):Array.isArray(stats?.day?.byService);
-  const subtitle=mine?'Toutes vos ventes du jour, même avant un changement de département.':`Ventes du département ${department?.name||'actuel'} aujourd’hui.`;
+  const subtitle=mine?'Toutes vos ventes personnelles du jour':`Ventes du département ${department?.name||'actuel'} aujourd’hui.`;
   return <Modal title={title} subtitle={subtitle} onClose={onClose}>
     <div className={`today-detail-total ${mine?'personal':'team'}`}><div><span>AUJOURD’HUI{date?` · ${dateLabel(date,{day:'numeric',month:'long'})}`:''}</span><strong>{count??'—'} <small>{count>1?'services':'service'}</small></strong></div><span className="today-detail-total-icon">{mine?<UserRound size={20}/>:<UsersRound size={20}/>}</span></div>
     <div className="today-detail-heading"><strong>Détail par service</strong><span>{rows.length} {rows.length>1?'types':'type'}</span></div>
@@ -341,6 +352,11 @@ export default function App() {
   const [startupGate,setStartupGate]=useState(()=>needsStartupTouch({standalone:isStandalone()}));
   const [startupReady,setStartupReady]=useState(false);
   const [startupStatus,setStartupStatus]=useState('ready');
+  const [startupPermissionsOpen,setStartupPermissionsOpen]=useState(isStandalone);
+  const [locationStatus,setLocationStatus]=useState('checking');
+  const [startupLocation,setStartupLocation]=useState(null);
+  const [startupNotificationPending,setStartupNotificationPending]=useState(startupPushPending);
+  const [startupNotificationError,setStartupNotificationError]=useState('');
   const [installPrompt,setInstallPrompt]=useState(()=>typeof window==='undefined'?null:window.__fnacInstallPrompt||null);
   const [notificationPermission,setNotificationPermission]=useState(readNotificationPermission);
   const [notificationsEnabled,setNotificationsEnabled]=useState(()=>readNotificationPermission()==='granted'?null:false);
@@ -351,12 +367,13 @@ export default function App() {
   const [notificationBusy,setNotificationBusy]=useState(false);
   const [pending,setPending]=useState({});
   const [toast,setToast]=useState(null);
-  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), notificationPrompted=useRef(false), notificationAbort=useRef(null);
+  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), notificationPrompted=useRef(false), notificationAbort=useRef(null), notificationStartInFlight=useRef(false), locationRequest=useRef(0), locationInFlight=useRef(false), locationTimer=useRef(null);
   const pushAvailable=typeof window!=='undefined'&&!(platform.os==='ios'&&!installed)&&window.isSecureContext&&'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
   const notificationKey=JSON.stringify([session?.storeId,session?.sellerId,session?.uid,session?.accessVersion,authReady,notificationPermission,pushAvailable,notificationCheck]);
   const checkingCurrent=notificationCheckedKey!==notificationKey;
   const displayedEnabled=checkingCurrent?(notificationPermission==='granted'?null:false):notificationsEnabled,displayedError=checkingCurrent?'':notificationError,displayedUnconfirmed=!checkingCurrent&&notificationUnconfirmed;
   const notificationNotice=notificationBanner({permission:notificationPermission,enabled:displayedEnabled,hasSession:!!session,platform,installed,error:displayedError,unconfirmed:displayedUnconfirmed,pushAvailable});
+  const startupNotificationReady=pushAvailable&&notificationPermission==='granted'&&!notificationError&&!startupNotificationError&&(notificationsEnabled===true||(CLOUD&&notificationsWanted())||(!session&&startupNotificationPending));
   const store=data?.stores?.find(s=>s.id===session?.storeId), seller=data?.sellers?.find(s=>s.id===session?.sellerId&&sellerStoreId(s)===session?.storeId);
   const activeDepartmentId=seller?sellerDepartmentId(seller):'';
   const departments=session?departmentsForStore(data||{},session.storeId,{activeOnly:false}):[];
@@ -393,6 +410,20 @@ export default function App() {
     window.addEventListener('storage',sync);media?.addEventListener?.('change',displayChanged);
     return ()=>{window.removeEventListener('storage',sync);media?.removeEventListener?.('change',displayChanged);startupAttempt.current++;startupInFlight.current=false;clearTimeout(startupTimer.current);player.dispose();if(sound.current===player)sound.current=null;};
   },[]);
+  useEffect(()=>{
+    if(!isStandalone())return;
+    let cancelled=false;
+    readLocationPermission().then(status=>{
+      if(cancelled)return;
+      if(status==='granted')requestStartupLocation();else setLocationStatus(status);
+    });
+    return ()=>{cancelled=true;locationRequest.current++;locationInFlight.current=false;clearTimeout(locationTimer.current);};
+  },[]);
+  useEffect(()=>{
+    if(startupPermissionsOpen&&!startupGate&&locationStatus==='granted'&&startupNotificationReady&&!notificationBusy){
+      notificationPrompted.current=true;setStartupPermissionsOpen(false);
+    }
+  },[startupPermissionsOpen,startupGate,locationStatus,startupNotificationReady,notificationBusy]);
   useEffect(()=>{
     let timer,permissionStatus,cancelled=false;
     const sync=()=>{
@@ -548,31 +579,36 @@ export default function App() {
   },[]);
   useEffect(()=>{
     if(notificationBusy)return;
+    if(notificationCheckedKey===notificationKey&&notificationsEnabled===true&&!startupNotificationPending)return;
     if(!authReady){setNotificationError('');setNotificationUnconfirmed(false);setNotificationsEnabled(null);setNotificationCheckedKey('');return;}
     if(!session||!pushAvailable||notificationPermission!=='granted'){setNotificationError('');setNotificationUnconfirmed(false);setNotificationsEnabled(false);setNotificationCheckedKey(notificationKey);return;}
     let cancelled=false;const controller=new AbortController();notificationAbort.current=controller;
     setNotificationError('');setNotificationUnconfirmed(false);setNotificationsEnabled(null);setNotificationCheckedKey('');
     const timer=setTimeout(()=>{if(!cancelled){setNotificationError('timeout');setNotificationCheckedKey(notificationKey);}},12000);
-    // Sans préférence d'activation enregistrée, ne pas réabonner silencieusement.
-    // Une souscription navigateur existante seule ne prouve pas qu'elle est reliée
-    // au profil Fnac Pulse : proposer une confirmation plutôt qu'affirmer son état.
-    const check=CLOUD?(notificationsWanted()?subscribeFcm(api,{signal:controller.signal}).then(()=>({active:true})):navigator.serviceWorker.ready.then(reg=>reg.pushManager.getSubscription()).then(sub=>({active:false,unconfirmed:!!sub}))):navigator.serviceWorker.ready.then(reg=>reg.pushManager.getSubscription()).then(async sub=>{
+    // Une demande explicite au démarrage peut précéder le choix du vendeur.
+    // Sans ce consentement ni préférence enregistrée, ne pas réabonner en silence.
+    const check=CLOUD?((notificationsWanted()||startupNotificationPending)?subscribeFcm(api,{signal:controller.signal}).then(()=>({active:true})):navigator.serviceWorker.ready.then(reg=>reg.pushManager.getSubscription()).then(sub=>({active:false,unconfirmed:!!sub}))):navigator.serviceWorker.ready.then(reg=>reg.pushManager.getSubscription().then(async sub=>{
+      if(!sub&&startupNotificationPending&&data?.pushPublicKey&&!controller.signal.aborted)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(data.pushPublicKey)});
       if(!sub||controller.signal.aborted)return {active:false};
       await api('/api/push/subscribe',{method:'POST',body:{storeId:session.storeId,sellerId:session.sellerId,subscription:sub.toJSON()},signal:controller.signal});
       return {active:true};
-    });
-    check.then(({active,unconfirmed})=>{if(!cancelled){setNotificationError('');setNotificationUnconfirmed(!!unconfirmed);setNotificationsEnabled(active);setNotificationCheckedKey(notificationKey);}})
+    }));
+    check.then(({active,unconfirmed})=>{if(!cancelled){
+      if(active)setStartupNotificationError('');
+      setNotificationError('');setNotificationUnconfirmed(!!unconfirmed);setNotificationsEnabled(active);setNotificationCheckedKey(notificationKey);
+      if(active&&startupNotificationPending){setStartupPushPending(false);setStartupNotificationPending(false);}
+    }})
       .catch(()=>{if(!cancelled&&!controller.signal.aborted){const currentPermission=readNotificationPermission();if(currentPermission!==notificationPermission){setNotificationPermission(currentPermission);return;}setNotificationError('unavailable');setNotificationsEnabled(null);setNotificationCheckedKey(notificationKey);}})
       .finally(()=>clearTimeout(timer));
     return ()=>{cancelled=true;controller.abort();if(notificationAbort.current===controller)notificationAbort.current=null;clearTimeout(timer);};
-  },[session,authReady,pushAvailable,notificationPermission,notificationBusy,notificationCheck,notificationKey]);
+  },[session,authReady,pushAvailable,notificationPermission,notificationBusy,notificationCheck,notificationKey,startupNotificationPending,data?.pushPublicKey]);
   useEffect(()=>{
     // Une permission système ne peut pas être demandée sans geste utilisateur.
     // L'installation et l'activation ne doivent jamais ouvrir deux modales ensemble.
-    if(!data||!session||!authReady||installModal||startupGate||sessionModal||adminModal||themeModal||goalModal||notificationsModal||notificationBusy||notificationCheckedKey!==notificationKey||notificationsEnabled!==false||notificationPrompted.current)return;
+    if(!data||!session||!authReady||installModal||startupGate||startupPermissionsOpen||sessionModal||adminModal||themeModal||goalModal||notificationsModal||notificationBusy||notificationCheckedKey!==notificationKey||notificationsEnabled!==false||notificationPrompted.current)return;
     if(platform.os==='ios'&&!installed)return;
     notificationPrompted.current=true;setNotificationsModal(true);
-  },[data,session,authReady,installModal,startupGate,sessionModal,adminModal,themeModal,goalModal,notificationsModal,notificationBusy,notificationsEnabled,notificationCheckedKey,notificationKey,platform,installed,pushAvailable]);
+  },[data,session,authReady,installModal,startupGate,startupPermissionsOpen,sessionModal,adminModal,themeModal,goalModal,notificationsModal,notificationBusy,notificationsEnabled,notificationCheckedKey,notificationKey,platform,installed,pushAvailable]);
   useEffect(()=>()=>clearTimeout(toastTimer.current),[]);
 
   async function selectSession(next,pin,setup=null){
@@ -595,7 +631,7 @@ export default function App() {
   }
   function forgetDeviceProfile(){clearDeviceProfile();setDeviceProfile(null);}
   async function logoutSeller(){
-    notificationAbort.current?.abort();setNotificationBusy(true);
+    notificationAbort.current?.abort();notificationAbort.current=null;setStartupPushPending(false);setStartupNotificationPending(false);setStartupNotificationError('');setNotificationBusy(true);
     try {
       let warning=false;
       if(CLOUD&&notificationsWanted())try{await unsubscribeFcm(api);}catch{warning=true;}
@@ -610,6 +646,30 @@ export default function App() {
     const next=!soundEnabled;saveSound(next);setSoundEnabled(next);sound.current?.setEnabled(next);
     if(startupStatus==='unavailable')setStartupStatus('ready');
   }
+  function requestStartupLocation(){
+    if(locationInFlight.current)return;
+    const geolocation=typeof navigator==='undefined'?null:navigator.geolocation;
+    if(typeof geolocation?.getCurrentPosition!=='function'){setLocationStatus('unsupported');return;}
+    const request=++locationRequest.current;locationInFlight.current=true;setLocationStatus('locating');
+    const fail=error=>{
+      if(request!==locationRequest.current)return;
+      clearTimeout(locationTimer.current);locationInFlight.current=false;setStartupLocation(null);setLocationStatus(error?.code===1?'denied':'unavailable');
+    };
+    // Certains appareils ne rappellent jamais l'API si les services de
+    // localisation sont inaccessibles ; ne pas laisser les boutons bloqués.
+    clearTimeout(locationTimer.current);locationTimer.current=setTimeout(()=>fail(),15000);
+    try {
+      // Appelé directement depuis le bouton si une autorisation est nécessaire.
+      // Au chargement automatique, on ne l'appelle que si elle est déjà accordée.
+      geolocation.getCurrentPosition(({coords})=>{
+        if(request!==locationRequest.current)return;
+        const latitude=coords?.latitude,longitude=coords?.longitude;
+        if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||Math.abs(latitude)>90||Math.abs(longitude)>180){fail();return;}
+        clearTimeout(locationTimer.current);locationInFlight.current=false;setStartupLocation({latitude,longitude});setLocationStatus('granted');
+      },fail,{enableHighAccuracy:false,timeout:12000,maximumAge:300000});
+    } catch {fail();}
+  }
+  function closeStartupPermissions(){notificationPrompted.current=true;setStartupPermissionsOpen(false);}
   function enterStartup(){
     if(!startupReady||startupInFlight.current)return;
     // Un onglet ne doit jamais lancer la signature, même après installation.
@@ -667,6 +727,56 @@ export default function App() {
     try{await api('/api/sales/remove',{method:'POST',body:{...session,serviceId:service.id}});await refresh();flash(`Une vente ${service.name} a été retirée.`);}
     catch(e){flash(e.message,{tone:'warning'});}finally{pendingRef.current.delete(service.id);setPending(p=>({...p,[service.id]:false}));}
   }
+  async function requestStartupNotifications(){
+    if(notificationBusy||notificationStartInFlight.current||!pushAvailable)return;
+    const before=readNotificationPermission();
+    if(before==='denied'){setNotificationPermission(before);return;}
+    notificationStartInFlight.current=true;notificationAbort.current?.abort();
+    const controller=new AbortController();notificationAbort.current=controller;
+    setNotificationBusy(true);setNotificationError('');setStartupNotificationError('');
+    let timer;
+    try {
+      // Cet appel doit rester directement dans le geste du bouton, sans attente
+      // du profil, du réseau ou du service worker avant l'invitation iOS.
+      const permissionRequest=before==='granted'?Promise.resolve('granted'):Notification.requestPermission();
+      const interrupted=new Promise((_,reject)=>controller.signal.addEventListener('abort',()=>reject(new Error('Activation interrompue.')),{once:true}));
+      const permission=await Promise.race([permissionRequest,interrupted,new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error('Délai dépassé.'));},45000);})]);
+      clearTimeout(timer);timer=null;
+      if(controller.signal.aborted)return;
+      setNotificationPermission(permission);
+      if(permission!=='granted'){
+        setStartupPushPending(false);setStartupNotificationPending(false);
+        if(permission!=='denied')setStartupNotificationError('permission');
+        return;
+      }
+      setStartupPushPending(true);setStartupNotificationPending(true);
+      const ensureActive=()=>{if(controller.signal.aborted){const error=new Error('Activation interrompue.');error.name='AbortError';throw error;}};
+      const prepare=async()=>{
+        if(CLOUD) {
+          if(session)await subscribeFcm(api,{signal:controller.signal});
+          else await prepareFcm({signal:controller.signal});
+          ensureActive();return !!session;
+        }
+        if(!data?.pushPublicKey)return false;
+        const registration=await navigator.serviceWorker.ready;ensureActive();
+        let subscription=await registration.pushManager.getSubscription();ensureActive();
+        if(!subscription)subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(data.pushPublicKey)});
+        ensureActive();
+        if(session)await api('/api/push/subscribe',{method:'POST',body:{storeId:session.storeId,sellerId:session.sellerId,subscription:subscription.toJSON()},signal:controller.signal});
+        ensureActive();return !!session;
+      };
+      const registered=await Promise.race([prepare(),interrupted,new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error('Délai dépassé.'));},12000);})]);
+      if(registered){
+        setStartupPushPending(false);setStartupNotificationPending(false);setNotificationsEnabled(true);
+        setNotificationCheckedKey(JSON.stringify([session?.storeId,session?.sellerId,session?.uid,session?.accessVersion,authReady,'granted',pushAvailable,notificationCheck]));
+      }
+    } catch {
+      if(notificationAbort.current===controller)setStartupNotificationError('unavailable');
+    } finally {
+      clearTimeout(timer);notificationStartInFlight.current=false;
+      if(notificationAbort.current===controller){notificationAbort.current=null;setNotificationBusy(false);}
+    }
+  }
   async function enableNotifications(){
     if(!session){setNotificationsModal(false);flash('Choisissez d’abord votre magasin et votre profil.',{tone:'warning'});changeSession();return;}
     if(!window.isSecureContext||!('serviceWorker' in navigator)||!('PushManager' in window)||!('Notification' in window)) {flash('Notifications indisponibles ici : utilisez une connexion HTTPS et un navigateur compatible.',{tone:'warning',duration:8000});return;}
@@ -680,12 +790,12 @@ export default function App() {
         let subscription=await registration.pushManager.getSubscription();
         if(!subscription)subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(data.pushPublicKey)});
         await api('/api/push/subscribe',{method:'POST',body:{storeId:session.storeId,sellerId:session.sellerId,subscription:subscription.toJSON()}});}
-      setNotificationsEnabled(true);setNotificationsModal(false);flash('Notifications activées sur cet appareil.',{tone:'success'});
+      setStartupPushPending(false);setStartupNotificationPending(false);setStartupNotificationError('');setNotificationsEnabled(true);setNotificationsModal(false);flash('Notifications activées sur cet appareil.',{tone:'success'});
     } catch(e){flash(e.message||'Impossible d’activer les notifications sur cet appareil.',{tone:'warning',duration:8000});}
     finally{setNotificationBusy(false);}
   }
   async function disableNotifications(){
-    notificationAbort.current?.abort();setNotificationBusy(true);
+    notificationAbort.current?.abort();notificationAbort.current=null;setStartupPushPending(false);setStartupNotificationPending(false);setStartupNotificationError('');setNotificationBusy(true);
     try {if(CLOUD)await unsubscribeFcm(api);else {const registration=await navigator.serviceWorker.ready;const sub=await registration.pushManager.getSubscription();if(sub){await api('/api/push/subscribe',{method:'DELETE',body:{endpoint:sub.endpoint}});await sub.unsubscribe();}}setNotificationsEnabled(false);setNotificationsModal(false);flash('Notifications désactivées sur cet appareil.');}
     catch(e){flash('Impossible de désactiver les notifications.',{tone:'warning'});}finally{setNotificationBusy(false);}
   }
@@ -705,6 +815,7 @@ export default function App() {
   }
   const installationDialog=installModal&&<InstallDialog platform={platform} base={APP_BASE} promptAvailable={!!installPrompt} installError={installError} onInstall={installApp} onClose={()=>setInstallModal(false)}/>;
   if(startupGate)return <StartupGate base={APP_BASE} enabled={soundEnabled} ready={startupReady} status={startupStatus} onStart={enterStartup} onSound={toggleSound} onContinue={continueWithoutStartupSound}/>;
+  if(startupPermissionsOpen)return <><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div><StartupPermissionsDialog permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} locationStatus={locationStatus} onNotification={requestStartupNotifications} onLocation={requestStartupLocation} onClose={closeStartupPermissions}/></>;
   if(!data)return <><div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>{installationDialog}</>;
   const stats=data.stats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
   return <><div className="app-shell">
@@ -714,7 +825,7 @@ export default function App() {
         {connection==='offline'&&session&&<div className="offline-banner"><WifiOff size={16}/><div><strong>Connexion interrompue.</strong> Les dernières données restent visibles, mais la saisie est suspendue jusqu’au retour de la connexion.</div><button onClick={refresh}>Réessayer</button></div>}
         {notificationNotice&&<section className="notification-card notification-prompt" aria-label="Activation des notifications"><span className="notification-icon"><BellOff size={18}/></span><div><strong>Restez informés</strong><p>{notificationNotice.message}</p></div><button onClick={notificationNotice.action==='install'?openInstall:notificationNotice.action==='retry'?retryNotifications:openNotifications}>{notificationNotice.label} <ArrowRight size={13}/></button></section>}
         <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><DateChip today={cloudDay}/></div>
-        {!session&&<WelcomePanel data={data} onSubmit={selectSession} deviceProfile={deviceProfile} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>}
+        {!session&&<WelcomePanel data={data} onSubmit={selectSession} deviceProfile={deviceProfile} startupLocation={startupLocation} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>}
         <TodayOverview stats={stats} hasSession={!!session} onShow={setTodayDetail}/>
         {session&&<GoalsPanel services={data.services} goals={currentGoals} workdays={goalState.workdays} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
         <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> VENTES QUOTIDIENNES</div><h2>Ajouter un service</h2><p>Une vente de services ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>

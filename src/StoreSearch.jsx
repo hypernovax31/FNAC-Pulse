@@ -4,7 +4,7 @@ import { searchStores } from './store-directory.js';
 
 // Combobox contrôlé : la saisie n'est pas une sélection tant qu'un résultat
 // (et donc son identifiant immuable) n'a pas été choisi.
-export function StoreSearch({stores,value,onChange,onUnselectedChange,disabled=false,id='store-search'}) {
+export function StoreSearch({stores,value,onChange,onUnselectedChange,onEdit,disabled=false,id='store-search'}) {
   const selected=stores.find(item=>item.id===value);
   const [query,setQuery]=useState(selected?.name||'');
   const [open,setOpen]=useState(false),[active,setActive]=useState(-1);
@@ -17,10 +17,10 @@ export function StoreSearch({stores,value,onChange,onUnselectedChange,disabled=f
   },[open,active,id]);
   const choose=item=>{setQuery(item.name);setOpen(false);setActive(-1);onChange(item.id);};
   const change=event=>{
-    setQuery(event.target.value);setActive(-1);setOpen(true);
+    onEdit?.();setQuery(event.target.value);setActive(-1);setOpen(true);
     if(value)onChange('');
   };
-  const clear=()=>{setQuery('');setActive(-1);setOpen(true);if(value)onChange('');input.current?.focus();};
+  const clear=()=>{onEdit?.();setQuery('');setActive(-1);setOpen(true);if(value)onChange('');input.current?.focus();};
   const keyDown=event=>{
     if(event.key==='ArrowDown'||event.key==='ArrowUp') {
       event.preventDefault();setOpen(true);
