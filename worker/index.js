@@ -29,6 +29,9 @@ const STORE_ID=/^[A-Za-z0-9_-]{1,80}$/;
 // Auth, jamais un e-mail ni une identité fournie sans jeton signé.
 const ADMIN_ID=/^[A-Za-z0-9_-]{1,128}$/;
 const ADMIN_RECENT_SECONDS=5*60;
+const ADMIN_INVITATION_MS=7*24*60*60*1000;
+const normalizeAdminEmail=value=>typeof value==='string'?value.trim().toLowerCase():'';
+const validAdminEmail=value=>value.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 // Diagnostics anonymes : aucun jeton, identifiant ou texte utilisateur dans les journaux.
 const SAFE_FCM_CODES=new Set(['UNREGISTERED','INVALID_ARGUMENT','SENDER_ID_MISMATCH','QUOTA_EXCEEDED','UNAVAILABLE','INTERNAL','THIRD_PARTY_AUTH_ERROR','PERMISSION_DENIED','UNAUTHENTICATED','NOT_FOUND']);
 function logPushError(stage,error) {
@@ -327,6 +330,56 @@ export function createWorker(deps={}) {
       throw error;
     }
     return {ok:true,already:false};
+  }
+  // L'invitation ne contient ni mot de passe ni lien secret. Elle est privée,
+  // associée à l'empreinte de l'adresse et ne donne aucun droit à elle seule.
+  async function inviteAdministrator(env,db,actor,body) {
+    if(!recentAdminAuthentication(actor))fail(401,'Confirmez à nouveau votre mot de passe administrateur.');
+    const email=normalizeAdminEmail(body?.email),requestId=body?.requestId;
+    if(!validAdminEmail(email)||!SAFE_ID.test(requestId||'')||body?.password!==undefined)fail(400,'Adresse ou invitation invalide.');
+    if(normalizeAdminEmail(actor.email)===email)fail(409,'Cette adresse correspond à votre propre compte administrateur.');
+    await limitAuthentication(env,`admin-invite:${actor.sub}`);
+    const path=`pulseAdminInvitations/${await digestBase64(`admin-invitation:${email}`)}`;
+    for(let attempt=0;attempt<8;attempt++) {
+      const previous=await db.get(path);
+      if(previous?.data?.requestId===requestId) {
+        if(previous.data.createdBy!==actor.sub)fail(409,'Cette demande appartient à un autre administrateur.');
+        return {ok:true,status:previous.data.status,expiresAt:previous.data.expiresAt};
+      }
+      const now=Date.now(),next={status:'pending',createdBy:actor.sub,requestId,createdAt:now,expiresAt:now+ADMIN_INVITATION_MS};
+      try {await db.commit([db.write(path,next,precondition(previous))]);return {ok:true,status:'pending',expiresAt:next.expiresAt};}
+      catch(error){if(!conflict(error))throw error;}
+    }
+    fail(409,'Invitation modifiée simultanément. Réessayez.');
+  }
+  async function acceptAdministratorInvitation(req,env,db,body) {
+    if(body?.confirmed!==true)fail(400,'Confirmez explicitement l’acceptation de l’invitation.');
+    let user;try{user=await verify(env,authHeader(req));}catch{fail(401,'Session expirée. Reconnectez-vous.');}
+    const email=normalizeAdminEmail(user.email);
+    if(!ADMIN_ID.test(user.sub||'')||user.role==='seller'||user.firebase?.sign_in_provider!=='password'||!validAdminEmail(email))
+      fail(403,'Connectez-vous avec le compte invité et son mot de passe.');
+    if(user.email_verified!==true)fail(403,'Confirmez d’abord l’adresse e-mail du compte invité.');
+    if(!recentAdminAuthentication(user))fail(401,'Reconnectez-vous avant d’accepter l’invitation.');
+    await limitAuthentication(env,`admin-accept:${user.sub}`);
+    const invitePath=`pulseAdminInvitations/${await digestBase64(`admin-invitation:${email}`)}`;
+    const adminPath=`pulseAdmins/${user.sub}`,accessPath=`pulseAccess/${user.sub}`;
+    for(let attempt=0;attempt<8;attempt++) {
+      const [invitation,access,existing]=await Promise.all([db.get(invitePath),db.get(accessPath),db.get(adminPath)]);
+      if(access)fail(409,'Utilisez un compte distinct du profil vendeur.');
+      if(user.sub===env.ADMIN_UID||existing?.data?.active)return {ok:true,already:true};
+      if(existing)fail(409,'Ce compte administrateur est désactivé.');
+      if(!invitation||invitation.data.status!=='pending'||!Number.isFinite(invitation.data.expiresAt)||invitation.data.expiresAt<=Date.now())
+        fail(403,'Aucune invitation valide pour cette adresse. Demandez à un administrateur de vous inviter à nouveau.');
+      const now=Date.now(),grant={active:true,createdBy:invitation.data.createdBy,createdAt:new Date(now).toISOString(),requiresVerifiedEmail:true};
+      const accepted={...invitation.data,status:'accepted',acceptedBy:user.sub,acceptedAt:now};
+      try {
+        // Le contrôle vendeur, l'attribution et la consommation du droit sont
+        // atomiques : une course ou une réponse perdue ne crée pas deux droits.
+        await db.commit([db.verify(accessPath,precondition(access)),db.write(adminPath,grant,{exists:false}),db.write(invitePath,accepted,precondition(invitation))]);
+        return {ok:true,already:false};
+      } catch(error){if(!conflict(error))throw error;}
+    }
+    fail(409,'Invitation modifiée simultanément. Réessayez.');
   }
   async function seller(req,env,db) {
     let p;try{p=await verify(env,authHeader(req));}catch{fail(401,'Session expirée. Reconnectez-vous.');}
@@ -1427,8 +1480,10 @@ export function createWorker(deps={}) {
     const sale=path.match(/^\/api\/sales\/([A-Za-z0-9_-]+)$/);
     if(method==='DELETE'&&sale)return deleteSale(req,env,db,sale[1]);
     if((method==='POST'||method==='DELETE')&&path==='/api/push/subscribe')return tokenSubscribe(req,env,db,await readBody(req),method);
+    if(method==='POST'&&path==='/api/auth/admin-invitations/accept')return acceptAdministratorInvitation(req,env,db,await readBody(req));
     if(path.startsWith('/api/admin/')) {
       const administrator=await admin(req,env,db);
+      if(method==='POST'&&path==='/api/admin/invitations')return inviteAdministrator(env,db,administrator,await readBody(req));
       if(method==='POST'&&path==='/api/admin/administrators')return grantAdministrator(env,db,administrator,await readBody(req));
       if(method==='GET'&&path==='/api/admin/all'){const d=(await catalog(db)).data;return {sellers:d.sellers,services:d.services,serviceOrders:d.serviceOrders||{},serviceRemovalsByStore:d.serviceRemovalsByStore||{},departmentsByStore:d.departmentsByStore||{},directorySync:d.directorySync||null};}
       if(method==='POST'&&path==='/api/admin/stores/sync')return refreshDirectory(db);

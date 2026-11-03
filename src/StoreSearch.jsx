@@ -1,15 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
-import { displayStoreName, searchStores } from './store-directory.js';
+import { displayStoreName, isSelectableStore, searchStores } from './store-directory.js';
 
 // Combobox contrôlé : la saisie n'est pas une sélection tant qu'un résultat
 // (et donc son identifiant immuable) n'a pas été choisi.
-export function StoreSearch({stores,value,onChange,onUnselectedChange,onEdit,disabled=false,id='store-search'}) {
-  const selected=stores.find(item=>item.id===value);
+export function StoreSearch({stores,value,onChange,onUnselectedChange,onEdit,disabled=false,id='store-search',label='Votre magasin Fnac'}) {
+  const eligible=stores.filter(isSelectableStore),selected=eligible.find(item=>item.id===value);
   const [query,setQuery]=useState(selected?displayStoreName(selected):'');
   const [open,setOpen]=useState(false),[active,setActive]=useState(-1);
   const input=useRef(null),listId=`${id}-list`,messageId=`${id}-message`;
-  const results=searchStores(stores,query),shown=results.slice(0,30);
+  const results=searchStores(eligible,query),shown=results.slice(0,30);
   useEffect(()=>{if(value&&selected)setQuery(displayStoreName(selected));},[value,selected?.name,selected?.fnacId]);
   useEffect(()=>{onUnselectedChange?.(!!query&&!value);},[query,value,onUnselectedChange]);
   useEffect(()=>{
@@ -32,11 +32,11 @@ export function StoreSearch({stores,value,onChange,onUnselectedChange,onEdit,dis
     }
   };
   return <div className="store-search" onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget))setOpen(false);}}>
-    <div className="select-wrap store-search-input"><Search size={16} aria-hidden="true"/><input ref={input} id={id} type="search" role="combobox" aria-label="Votre magasin Fnac" aria-autocomplete="list" aria-expanded={open} aria-controls={listId} aria-describedby={[open?messageId:null,onUnselectedChange&&query&&!value?`${id}-hint`:null].filter(Boolean).join(' ')||undefined} aria-invalid={!open&&!!query&&!value?true:undefined} aria-activedescendant={open&&active>=0?`${id}-option-${active}`:undefined} placeholder="Rechercher un magasin" value={query} onChange={change} onFocus={()=>setOpen(true)} onKeyDown={keyDown} autoComplete="off" disabled={disabled} required/>
+    <div className="select-wrap store-search-input"><Search size={16} aria-hidden="true"/><input ref={input} id={id} type="search" role="combobox" aria-label={label} aria-autocomplete="list" aria-expanded={open} aria-controls={listId} aria-describedby={[open?messageId:null,onUnselectedChange&&query&&!value?`${id}-hint`:null].filter(Boolean).join(' ')||undefined} aria-invalid={!open&&!!query&&!value?true:undefined} aria-activedescendant={open&&active>=0?`${id}-option-${active}`:undefined} placeholder="Rechercher un magasin" value={query} onChange={change} onFocus={()=>setOpen(true)} onKeyDown={keyDown} autoComplete="off" disabled={disabled} required/>
       {!!query&&!disabled&&<button type="button" className="store-search-clear" aria-label="Effacer la recherche de magasin" onMouseDown={event=>event.preventDefault()} onClick={clear}><X size={15}/></button>}
     </div>
     {open&&<div className="store-search-dropdown"><div className="store-search-list" id={listId} role="listbox" aria-label="Magasins trouvés">
-      {shown.map((item,index)=><button key={item.id} type="button" id={`${id}-option-${index}`} role="option" aria-selected={item.id===value} tabIndex={-1} className={`store-search-option ${index===active?'is-active':''}`} onMouseDown={event=>event.preventDefault()} onMouseMove={()=>setActive(index)} onClick={()=>choose(item)}><span>{displayStoreName(item)}</span>{item.directoryStatus==='historical'&&<small>Profil existant · magasin non confirmé</small>}{item.directoryStatus==='manual'&&<small>Copie non vérifiée</small>}{item.directoryStatus==='regional-choice'&&<small>Mention régionale · espace commun</small>}</button>)}
+      {shown.map((item,index)=><button key={item.id} type="button" id={`${id}-option-${index}`} role="option" aria-selected={item.id===value} tabIndex={-1} className={`store-search-option ${index===active?'is-active':''}`} onMouseDown={event=>event.preventDefault()} onMouseMove={()=>setActive(index)} onClick={()=>choose(item)}><span>{displayStoreName(item)}</span>{item.directoryStatus==='manual'&&<small>Copie non vérifiée</small>}{item.directoryStatus==='regional-choice'&&<small>Mention régionale · espace commun</small>}</button>)}
     </div><p className="store-search-message" id={messageId} role="status">{!results.length?'Aucun magasin trouvé. Essayez un autre nom.':results.length>shown.length?`${shown.length} résultats affichés : précisez votre recherche.`:`${results.length} magasin${results.length>1?'s':''} trouvé${results.length>1?'s':''}.`}</p></div>}
   </div>;
 }

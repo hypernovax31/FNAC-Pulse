@@ -15,7 +15,13 @@ import { SellerDeletePanel } from './SellerDelete';
 import { ServiceDeletePanel } from './ServiceDelete';
 import { AdminTabs } from './AdminTabs';
 import { normalizeWorkdays } from './goals.js';
-import { displayStoreName } from './store-directory.js';
+import { displayStoreName, isSelectableStore, storeSelectionGroups } from './store-directory.js';
+import { StoreSearch } from './StoreSearch';
+import { AdminInvitationHelp } from './AdminInvitationHelp';
+
+const MANAGED_STORE_KEY='pulse-admin-managed-store-v1';
+function rememberedStore() {try{return sessionStorage.getItem(MANAGED_STORE_KEY)||'';}catch{return '';}}
+function rememberStore(id) {try{if(id)sessionStorage.setItem(MANAGED_STORE_KEY,id);else sessionStorage.removeItem(MANAGED_STORE_KEY);}catch{}}
 
 function directoryDate(value) {
   const day=String(value||'').slice(0,10),parts=day.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -32,7 +38,7 @@ function directoryStatus(sync) {
   return `${checked} Vérification automatique prévue le 1er de chaque mois.${manual}${regional}`;
 }
 
-function Modal({title,subtitle,onClose,children,wide=false}) {
+function Modal({title,subtitle,onClose,children,wide=false,fixedTabs=false}) {
   const dialog=useRef(null),close=useRef(onClose);
   close.current=onClose;
   useEffect(()=>{
@@ -51,9 +57,9 @@ function Modal({title,subtitle,onClose,children,wide=false}) {
     return ()=>{document.body.style.overflow=previous;document.removeEventListener('keydown',onKeyDown);previousFocus?.focus?.();};
   },[]);
   return <div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget) onClose();}}>
-    <div ref={dialog} role="dialog" aria-modal="true" aria-label={title} className={`modal ${wide?'modal-wide':''}`}>
+    <div ref={dialog} role="dialog" aria-modal="true" aria-label={title} className={`modal ${wide?'modal-wide':''} ${fixedTabs?'admin-modal':''}`}>
       <div className="modal-head"><div><h2>{title}</h2>{subtitle&&<p>{subtitle}</p>}</div><button className="icon-button close-button" aria-label="Fermer" onClick={onClose}><X size={19}/></button></div>
-      <div className="modal-content">{children}</div>
+      <div className={`modal-content ${fixedTabs?'modal-content-fixed-tabs':''}`}>{children}</div>
     </div>
   </div>;
 }
@@ -65,10 +71,14 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [error,setError]=useState('');
   const [notice,setNotice]=useState('');
   const [busy,setBusy]=useState(false);
-  const [tab,setTab]=useState(()=>session?.storeId?'sales':'stores');
   const [all,setAll]=useState({sellers:[],services:[],serviceOrders:{},serviceRemovalsByStore:{},departmentsByStore:{}});
-  const [adminStore,setAdminStore]=useState(session?.storeId||'');
-  const [adminSeller,setAdminSeller]=useState(session?.sellerId?String(session.sellerId):'');
+  const [adminStore,setAdminStore]=useState(()=>{
+    const saved=token&&rememberedStore(),fallback=session?.storeId||'';
+    return [saved,fallback].find(id=>id&&isSelectableStore(data.stores.find(s=>s.id===id)))||'';
+  });
+  const [storeDraft,setStoreDraft]=useState(adminStore),[storeDraftUnselected,setStoreDraftUnselected]=useState(false);
+  const [tab,setTab]=useState(()=>adminStore?'sales':'stores');
+  const [adminSeller,setAdminSeller]=useState(session?.sellerId&&session.storeId===adminStore?String(session.sellerId):'');
   const [allLoaded,setAllLoaded]=useState(false);
   const [counts,setCounts]=useState({});
   const [countsFor,setCountsFor]=useState('');
@@ -92,9 +102,14 @@ export default function Admin({onClose,data,session,onChanged}) {
 
   async function loadAll(auth=token) {
     try { const result=await api('/api/admin/all',{token:auth}); setAll(result);setAllLoaded(true); }
-    catch(e) { if (/expirée/.test(e.message)) {setToken('');sessionStorage.removeItem('pulse-admin-token');} setError(e.message); }
+    catch(e) { if (e.status===401||/expirée/.test(e.message)) {setToken('');sessionStorage.removeItem('pulse-admin-token');rememberStore('');setAdminStore('');setStoreDraft('');setAdminSeller('');} setError(e.message); }
   }
   useEffect(()=>{if(token) loadAll(token);},[token]);
+  useEffect(()=>{if(token&&adminStore)rememberStore(adminStore);},[token,adminStore]);
+  useEffect(()=>{
+    if(token){const saved=rememberedStore();if(saved&&!isSelectableStore(data.stores.find(s=>s.id===saved)))rememberStore('');}
+    if(adminStore&&!isSelectableStore(data.stores.find(s=>s.id===adminStore))){setAdminStore('');setStoreDraft('');setAdminSeller('');rememberStore('');}
+  },[token,adminStore,data.stores]);
   useEffect(()=>{
     if(allLoaded&&adminSeller&&!sellersForStore(all.sellers,adminStore).some(s=>String(s.id)===String(adminSeller)))setAdminSeller('');
   },[all,allLoaded,adminStore,adminSeller]);
@@ -141,27 +156,42 @@ export default function Admin({onClose,data,session,onChanged}) {
     }
     onChanged();
   }
-  async function login(e) {
-    e.preventDefault();setBusy(true);setError('');
+  async function login(e,acceptInvitation=false) {
+    e?.preventDefault();if(busy)return;
+    if(acceptInvitation&&(!email.trim()||!password)){setError('Renseignez l’e-mail invité et votre mot de passe.');return;}
+    setBusy(true);setError('');setNotice('');
     try {
       let auth;
-      if(CLOUD){auth=await adminLogin(email,password);try{await api('/api/admin/all',{token:auth});}catch(e){await adminLogout();throw e;}}
-      else {const result=await api('/api/admin/login',{method:'POST',body:{password}});auth=result.token;}
+      if(CLOUD){
+        auth=await adminLogin(email,password);
+        try {
+          if(acceptInvitation)await api('/api/auth/admin-invitations/accept',{method:'POST',token:auth,body:{confirmed:true}});
+          await api('/api/admin/all',{token:auth});
+        }catch(e){
+          await adminLogout();
+          if(!acceptInvitation&&e.status===403&&!/Confirmez/.test(e.message))throw new Error(`${e.message} Si vous êtes invité, utilisez « Accepter mon invitation ».`);
+          throw e;
+        }
+      } else {const result=await api('/api/admin/login',{method:'POST',body:{password}});auth=result.token;}
       sessionStorage.setItem('pulse-admin-token',auth);setToken(auth);setPassword('');
+      if(acceptInvitation)setNotice('Invitation acceptée. Vous disposez maintenant des droits administrateur.');
     }
     catch(e){setError(e.message);} finally{setBusy(false);}
   }
   async function logout() {
     try {if(CLOUD)await adminLogout();else await api('/api/admin/logout',{method:'POST',token,body:{}})} catch {}
-    sessionStorage.removeItem('pulse-admin-token');setToken('');setNotice('');
+    sessionStorage.removeItem('pulse-admin-token');rememberStore('');setAdminStore('');setStoreDraft('');setAdminSeller('');setToken('');setNotice('');
   }
   async function run(work, success) {
     setBusy(true);setError('');setNotice('');
     try {await work();if(success)setNotice(success);await loadAll();onChanged();}
     catch(e){setError(e.message);} finally{setBusy(false);}
   }
-  function switchTab(next){if(next!==tab)setServiceDeleteReady(false);setTab(next);setCountsFor('');setError('');setNotice('');setEditing(null);setName('');setExpandedSeller(null);setServiceDeleteRequest(null);}
-  function changeStore(value){setAdminStore(value);setAdminSeller('');setCounts({});setCountsFor('');setEditing(null);setNewSellerDepartment('');setExpandedSeller(null);setServiceDeleteRequest(null);setServiceDeleteReady(false);setError('');setNotice('');}
+  function switchTab(next){if(next!==tab)setServiceDeleteReady(false);if(next==='stores')setStoreDraft(adminStore);setTab(next);setCountsFor('');setError('');setNotice('');setEditing(null);setName('');setExpandedSeller(null);setServiceDeleteRequest(null);}
+  function changeStore(value){
+    if(!isSelectableStore(data.stores.find(s=>s.id===value)))return;
+    setAdminStore(value);setStoreDraft(value);rememberStore(value);setAdminSeller('');setCounts({});setCountsFor('');setEditing(null);setNewSellerDepartment('');setExpandedSeller(null);setServiceDeleteRequest(null);setServiceDeleteReady(false);setError('');setNotice('');
+  }
   const activeSellers=sellersForStore(all.sellers,adminStore);
   const storeSellers=sellersForStore(all.sellers,adminStore,{activeOnly:false});
   const storeDepartments=adminStore?departmentsForStore(all,adminStore,{activeOnly:false}):[];
@@ -171,7 +201,8 @@ export default function Admin({onClose,data,session,onChanged}) {
   const orderedServices=allOrderedServices.filter(s=>!serviceRemovedForStore(all,adminStore,s.id));
   const removedServices=allOrderedServices.filter(s=>serviceRemovedForStore(all,adminStore,s.id));
   const activeServices=orderedServices.filter(s=>s.active);
-  const adminStoreName=data.stores.find(s=>s.id===adminStore)?.name||'';
+  const adminStoreRecord=data.stores.find(s=>s.id===adminStore),adminStoreName=adminStoreRecord?.name||'';
+  const adminStoreDisplay=adminStoreRecord?displayStoreName(adminStoreRecord):'';
   const needsStore=['sales','goals','departments','sellers','services'].includes(tab);
   function moveService(index,offset) {
     const ids=orderedServices.map(s=>s.id),target=index+offset;
@@ -191,18 +222,21 @@ export default function Admin({onClose,data,session,onChanged}) {
       <input id="admin-password" className="text-input" type="password" placeholder="Votre mot de passe" value={password} onChange={e=>setPassword(e.target.value)} required autoFocus={!CLOUD} autoComplete="current-password" />
       {error&&<div className="form-error" role="alert">{error}</div>}
       {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
-      {CLOUD&&/Confirmez votre adresse e-mail/.test(error)&&<button type="button" className="outline-button full-button" disabled={busy} onClick={async()=>{
+      {CLOUD&&/Confirmez (votre adresse|d’abord l’adresse) e-mail/.test(error)&&<button type="button" className="outline-button full-button" disabled={busy} onClick={async()=>{
         setBusy(true);setNotice('');
         try {const result=await resendAdminVerification(email,password);setError('');setNotice(result.verified?'Adresse déjà confirmée. Vous pouvez vous connecter.':'Nouveau lien envoyé. Vérifiez votre boîte e-mail.');}
         catch(e){setError(e.message);}finally{setBusy(false);}
       }}>Renvoyer le lien de confirmation</button>}
       <button className="primary-button full-button" type="submit" disabled={busy}>{busy?'Connexion…':'Se connecter'} <ArrowRight size={16}/></button>
+      {CLOUD&&<div className="admin-invitation-accept"><strong>Vous avez été invité ?</strong><p>Choisissez votre mot de passe grâce au lien reçu, puis renseignez votre e-mail et votre mot de passe ci-dessus. En acceptant, vous disposerez des droits sur tous les magasins.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>login(null,true)}>Accepter mon invitation</button></div>}
       <p className="form-footnote"><ShieldCheck size={14}/> L’accès administrateur est protégé par mot de passe.</p>
     </form>
+    {CLOUD&&<AdminInvitationHelp email={email} busy={busy} onBusy={setBusy} onCompleted={address=>{setEmail(address);setPassword('');}} onVerified={setEmail}/>}
   </Modal>;
 
-  return <Modal title="Administration" subtitle={adminStoreName?`Magasin sélectionné : ${adminStoreName}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={onClose} wide>
+  return <Modal title="Administration" subtitle={adminStoreDisplay?`Magasin sélectionné : ${adminStoreDisplay}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={onClose} wide fixedTabs>
     <AdminTabs tab={tab} onSelect={switchTab} disabled={busy}/>
+    <div key={tab} className="admin-scroll-content">
     {error&&<div className="admin-alert error" role="alert">{error}</div>}
     {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
     <div className="admin-body">
@@ -276,8 +310,9 @@ export default function Admin({onClose,data,session,onChanged}) {
       </>}
       {tab==='stores'&&<>
         <div className="admin-store-scope">
-          <label><span className="form-label">MAGASIN À GÉRER</span><select aria-label="Magasin à gérer" className="text-input" disabled={busy} value={adminStore} onChange={e=>changeStore(e.target.value)}><option value="">Choisir un magasin</option>{[...data.stores].sort((a,b)=>displayStoreName(a).localeCompare(displayStoreName(b),'fr',{sensitivity:'base',numeric:true})).map(s=><option value={s.id} key={s.id}>{displayStoreName(s)}{s.directoryStatus==='historical'?' · non confirmé dans l’annuaire':s.directoryStatus==='manual'?' · copie non vérifiée':s.directoryStatus==='regional-choice'?' · mention régionale':''}</option>)}</select></label>
-          <p>Ce choix s’applique aux ventes, objectifs, vendeurs, services et codes PIN de l’administration.</p>
+          <label htmlFor="admin-store-search" className="form-label">MAGASIN À GÉRER</label>
+          <StoreSearch id="admin-store-search" label="Magasin à gérer" stores={storeSelectionGroups(data.stores).all} value={storeDraft} disabled={busy} onUnselectedChange={setStoreDraftUnselected} onChange={value=>{setStoreDraft(value);if(value)changeStore(value);}}/>
+          <p id="admin-store-search-hint">{storeDraftUnselected?(adminStoreName?`Magasin toujours géré : ${adminStoreDisplay}. Choisissez un résultat pour changer.`:'Choisissez un magasin dans les résultats.'):'Dans cet onglet, ce choix reste mémorisé jusqu’à votre déconnexion administrateur et s’applique aux ventes, objectifs, vendeurs, services et codes PIN.'}</p>
           {data.stores.find(s=>s.id===adminStore)?.directoryStatus==='regional-choice'&&<p className="regional-choice-notice">Mention régionale sans magasin précis : les bilans sont communs et les notifications partagées entre vendeurs d’un même département. Ajoutez des magasins distincts si nécessaire.</p>}
         </div>
         <div className="admin-section-heading"><div><h3>Ajouter un magasin</h3><p>Un magasin absent de la liste ? Ajoutez-le à votre espace.</p></div></div>
@@ -318,6 +353,7 @@ export default function Admin({onClose,data,session,onChanged}) {
         </form>
         <button className="logout-button" onClick={logout}><LogOut size={15}/> Déconnexion administrateur</button>
       </>)}
+    </div>
     </div>
   </Modal>;
 }

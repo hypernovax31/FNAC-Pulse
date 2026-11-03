@@ -645,3 +645,104 @@ test('Émulateurs Firebase : création multi-admin, vérifications, reprise et s
     await unlink(generated).catch(()=>{});
   }
 });
+
+test('Émulateurs Firebase : invitation sans secret tiers, choix du mot de passe, reprise et consentement explicite', {skip:!enabled}, async()=>{
+  const project='demo-fnac',port=9099,stamp=Date.now();
+  const generated=`${process.cwd()}/node_modules/.fnac-pulse-tests/invitation-${process.pid}-${stamp}.mjs`;
+  await mkdir(`${process.cwd()}/node_modules/.fnac-pulse-tests`,{recursive:true});
+  await build({entryPoints:['src/cloud.js'],outfile:generated,bundle:true,platform:'node',format:'esm',external:['firebase/*'],
+    define:{'import.meta.env':JSON.stringify({VITE_BACKEND:'cloud',MODE:'test'})},plugins:[{name:'invitation-emulators-only',setup(b){
+      b.onResolve({filter:/^\.\/firebase-config$/},()=>({path:'config',namespace:'test-config'}));
+      b.onLoad({filter:/.*/,namespace:'test-config'},()=>({contents:`export const firebaseConfig=${JSON.stringify({apiKey:'demo-key',projectId:project,authDomain:'demo-fnac.firebaseapp.com',appId:'1:1:web:demo'})};`,loader:'js'}));
+      b.onResolve({filter:/^firebase\/auth$/},args=>args.namespace==='test-auth'?{path:'firebase/auth',external:true}:{path:'auth',namespace:'test-auth'});
+      b.onLoad({filter:/.*/,namespace:'test-auth'},()=>({contents:`import * as auth from 'firebase/auth'; export * from 'firebase/auth';
+        const seen=new WeakSet(); export function getAuth(app){const result=auth.getAuth(app);if(!seen.has(result)){auth.connectAuthEmulator(result,'http://127.0.0.1:${port}',{disableWarnings:true});seen.add(result);}return result;}
+        export async function createUserWithEmailAndPassword(...args){const value=await auth.createUserWithEmailAndPassword(...args);if(globalThis.__pulseLostCreate){globalThis.__pulseLostCreate=false;throw Object.assign(Error('réponse fictive perdue'),{code:'auth/network-request-failed'});}return value;}
+        export async function sendPasswordResetEmail(...args){const value=await auth.sendPasswordResetEmail(...args);if(globalThis.__pulseLostMail){globalThis.__pulseLostMail=false;throw Object.assign(Error('réponse fictive perdue'),{code:'auth/network-request-failed'});}return value;}` ,loader:'js'}));
+    }}]});
+  const before=new Set(getApps().map(a=>a.name)),cloud=await import(pathToFileURL(generated).href);
+  const adminAuth=getAuth(getApp('fnac-pulse-admin')),sellerAuth=getAuth(getApp());
+  const db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'});
+  const rootEmail=`invite-root-${stamp}@example.test`,targetEmail=`invite-new-${stamp}@example.test`,rootPassword='Root-Invitation-2026!';
+  const root=(await createUserWithEmailAndPassword(adminAuth,rootEmail,rootPassword)).user;
+  const sellerUid=`seller-invite-${stamp}`;await signInWithCustomToken(sellerAuth,fakeCustomToken({},sellerUid,{role:'seller',storeId:'keep-store',sellerId:1,sellerKey:'s1',accessVersion:'keep-session'}));
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>JSON.parse(Buffer.from(t.split('.')[1],'base64url').toString()),makeCustomToken:fakeCustomToken});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:root.uid,PIN_PEPPER:Buffer.alloc(32,4).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}};
+  const ctx={waitUntil(){}};
+  const call=async(path,body,token)=>{
+    const response=await worker.fetch(new Request(`https://worker.test${path}`,{method:'POST',headers:{'content-type':'application/json',...(token?{authorization:`Bearer ${token}`}:{})},body:JSON.stringify(body||{})}),env,ctx);
+    return {status:response.status,json:await response.json()};
+  };
+  const bodies=[];let dropResponse=false;
+  const api=async(path,options)=>{
+    assert.equal(options.token,cloud.ADMIN_SESSION);bodies.push(structuredClone(options.body));
+    const result=await call(path,options.body,await adminAuth.currentUser.getIdToken());
+    if(dropResponse){dropResponse=false;throw new TypeError('réponse fictive perdue');}
+    if(result.status>=400){const error=Error(result.json.error);error.status=result.status;throw error;}return result.json;
+  };
+  const codes=async()=>(await (await fetch(`http://127.0.0.1:${port}/emulator/v1/projects/${project}/oobCodes`)).json()).oobCodes||[];
+  const lastCode=async(email)=>[...await codes()].reverse().find(x=>x.email===email&&x.requestType==='PASSWORD_RESET');
+  const accounts=async()=>(await (await fetch(`http://127.0.0.1:${port}/identitytoolkit.googleapis.com/v1/projects/${project}/accounts:batchGet?maxResults=1000&key=demo-key`,{headers:{Authorization:'Bearer owner'}})).json()).users||[];
+  const link=code=>`https://demo-fnac.firebaseapp.com/__/auth/action?mode=resetPassword&oobCode=${encodeURIComponent(code)}&apiKey=demo-key`;
+  const invitePath=async(email)=>`pulseAdminInvitations/${await digestBase64(`admin-invitation:${email.toLowerCase()}`)}`;
+  let clientApp;
+  try {
+    dropResponse=true;
+    const result=await cloud.inviteAdministrator(api,{email:targetEmail,currentPassword:rootPassword});
+    assert.equal(result.accountCreated,true);assert.equal(bodies.length,2);assert.deepEqual(bodies[0],bodies[1],'même requête rejouée');
+    assert(!JSON.stringify(bodies).includes(rootPassword),'aucun mot de passe au Worker');
+    assert.equal(adminAuth.currentUser.uid,root.uid);assert.equal(sellerAuth.currentUser.uid,sellerUid);
+    assert(!getApps().some(x=>x.name.startsWith('fnac-pulse-invitation-')),'applications temporaires détruites');
+    const target=(await accounts()).find(x=>x.email===targetEmail);assert(target);assert.equal(target.emailVerified,false);
+    assert.equal(await db.get(`pulseAdmins/${target.localId}`),null,'aucun droit avant le choix et le consentement');
+    const mail=await lastCode(targetEmail);assert(mail?.oobCode,'l’émulateur a généré un lien de réinitialisation');
+    await assert.rejects(cloud.inspectAdminPasswordReset(link(mail.oobCode).replace('demo-fnac.firebaseapp.com','ailleurs.test')),/lien/);
+    const proof=await cloud.inspectAdminPasswordReset(link(mail.oobCode));assert.equal(proof.email,targetEmail);
+    await assert.rejects(cloud.confirmAdminPasswordReset(proof,'trop-court'),/12 à 128/);
+    await cloud.confirmAdminPasswordReset(proof,'Invited-chosen-2026!');
+    await assert.rejects(cloud.inspectAdminPasswordReset(link(mail.oobCode)),/expiré ou déjà utilisé/);
+    assert.equal(adminAuth.currentUser.uid,root.uid);assert.equal(sellerAuth.currentUser.uid,sellerUid);
+    clientApp=initializeApp({apiKey:'demo-key',projectId:project,appId:'1:1:web:demo'},`invitation-client-${stamp}`);
+    const targetAuth=getAuth(clientApp);connectAuthEmulator(targetAuth,`http://127.0.0.1:${port}`,{disableWarnings:true});
+    const invited=(await signInWithEmailAndPassword(targetAuth,targetEmail,'Invited-chosen-2026!')).user;
+    assert.equal(invited.emailVerified,true,'la réinitialisation vérifie bien l’adresse dans l’émulateur');
+    const token=await invited.getIdToken(true);
+    assert.equal((await call('/api/admin/administrators',{},token)).status,403);
+    assert.equal((await call('/api/auth/admin-invitations/accept',{confirmed:false},token)).status,400);
+    assert.equal(await db.get(`pulseAdmins/${invited.uid}`),null);
+    assert.deepEqual((await call('/api/auth/admin-invitations/accept',{confirmed:true},token)).json,{ok:true,already:false});
+    assert.equal((await call('/api/auth/admin-invitations/accept',{confirmed:true},token)).json.already,true);
+    assert.equal((await db.get(`pulseAdmins/${invited.uid}`)).data.createdBy,root.uid);
+    assert.equal((await db.get(await invitePath(targetEmail))).data.status,'accepted');
+    assert.equal((await call('/api/admin/administrators',{},token)).status,400,'mêmes droits globaux');
+    // Un compte existant garde son propre mot de passe ; rien n’est modifié ni
+    // attribué tant que son titulaire n’accepte pas explicitement.
+    const existingEmail=`invite-existing-${stamp}@example.test`,existingPassword='Existing-Password-2026!';
+    const existing=(await createUserWithEmailAndPassword(targetAuth,existingEmail,existingPassword)).user;
+    const {sendEmailVerification}=await import('firebase/auth');await sendEmailVerification(existing);
+    const verify=(await codes()).find(x=>x.email===existingEmail&&x.requestType==='VERIFY_EMAIL');
+    const verifyLink=`https://demo-fnac.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=${encodeURIComponent(verify.oobCode)}&apiKey=demo-key`;
+    const verification=await cloud.inspectAdminVerification(verifyLink);assert.equal(verification.email,existingEmail);assert.equal(existing.emailVerified,false);
+    await assert.rejects(cloud.confirmAdminVerification({...verification,email:'autre@example.test'}),/ne correspond plus/);
+    await cloud.confirmAdminVerification(verification);await reload(existing);assert.equal(existing.emailVerified,true);
+    await assert.rejects(cloud.inspectAdminVerification(verifyLink),/expiré ou déjà utilisé/);
+    const oldResult=await cloud.inviteAdministrator(api,{email:existingEmail,currentPassword:rootPassword});assert.equal(oldResult.accountCreated,false);
+    assert.equal(await db.get(`pulseAdmins/${existing.uid}`),null);
+    const same=(await signInWithEmailAndPassword(targetAuth,existingEmail,existingPassword)).user;assert.equal(same.uid,existing.uid);assert.equal(same.emailVerified,true);
+    assert.equal((await call('/api/auth/admin-invitations/accept',{confirmed:true},await same.getIdToken(true))).status,200);
+    // Création Firebase ou réponse d'envoi perdues : réinviter sans connaître
+    // le secret aléatoire récupère le compte, sans attribution silencieuse.
+    for(const [kind,address] of [['create',`lost-create-${stamp}@example.test`],['mail',`lost-mail-${stamp}@example.test`]]) {
+      if(kind==='create')globalThis.__pulseLostCreate=true;else globalThis.__pulseLostMail=true;
+      await assert.rejects(cloud.inviteAdministrator(api,{email:address,currentPassword:rootPassword}),/non confirm/);
+      const pending=(await accounts()).find(x=>x.email===address);assert(pending);assert.equal(await db.get(`pulseAdmins/${pending.localId}`),null);
+      const retried=await cloud.inviteAdministrator(api,{email:address,currentPassword:rootPassword});assert.equal(retried.accountCreated,false);assert((await lastCode(address))?.oobCode);
+    }
+    assert.equal(sellerAuth.currentUser.uid,sellerUid);assert.equal(adminAuth.currentUser.uid,root.uid);
+  } finally {
+    delete globalThis.__pulseLostCreate;delete globalThis.__pulseLostMail;
+    if(clientApp)await deleteApp(clientApp);
+    for(const app of getApps())if(!before.has(app.name))await deleteApp(app);
+    await unlink(generated).catch(()=>{});
+  }
+});

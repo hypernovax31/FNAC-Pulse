@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {extractAdminEmailChangeCode} from '../src/admin-email-link.js';
+import {extractAdminEmailChangeCode,extractAdminPasswordResetCode,extractAdminVerificationCode} from '../src/admin-email-link.js';
 import {firebaseConfig} from '../src/firebase-config.js';
 
 const code='EXEMPLE-CODE_NON_REEL-1234567890';
@@ -22,4 +22,20 @@ test('Lien de changement d’e-mail : seules les origines Firebase du projet et 
     'x'.repeat(8193),
   ];
   for(const candidate of wrong)assert.throws(()=>extractAdminEmailChangeCode(candidate,firebaseConfig),e=>!e.message.includes(code)&&/lien/.test(e.message));
+});
+
+test('Lien de choix du mot de passe : action, projet et paramètres stricts, aucun secret dans les erreurs',()=>{
+  const reset=link().replace('verifyAndChangeEmail','resetPassword');
+  assert.equal(extractAdminPasswordResetCode(reset,firebaseConfig),code);
+  const wrong=[link(),reset.replace('https:','http:'),reset.replace(firebaseConfig.authDomain,'ailleurs.test'),
+    reset.replace(firebaseConfig.apiKey,'autre-cle'),reset.replace('oobCode=','oobCode=DOUBLE&oobCode='),
+    reset.replace('/__/auth/action','/ailleurs'),reset+'&tenantId=autre',reset.replace(code,'code%20non%20valide')];
+  for(const candidate of wrong)assert.throws(()=>extractAdminPasswordResetCode(candidate,firebaseConfig),e=>!e.message.includes(code));
+});
+
+test('Lien de vérification : seuls le projet et l’action attendue sont acceptés',()=>{
+  const verification=link().replace('verifyAndChangeEmail','verifyEmail');
+  assert.equal(extractAdminVerificationCode(verification,firebaseConfig),code);
+  for(const candidate of [link(),verification.replace('verifyEmail','resetPassword'),verification.replace(firebaseConfig.authDomain,'autre.test'),verification+'&tenantId=autre'])
+    assert.throws(()=>extractAdminVerificationCode(candidate,firebaseConfig),e=>!e.message.includes(code));
 });

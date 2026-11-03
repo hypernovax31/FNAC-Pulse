@@ -1,11 +1,11 @@
 import React, {useEffect,useRef,useState} from 'react';
 import {ArrowRight, Check, Info, LogOut, Plus, ShieldCheck} from 'lucide-react';
 import {api} from './api';
-import {adminAccountEmail, changeAdminPassword, createAdministrator, requestAdminEmailChange, inspectAdminEmailChange, confirmAdminEmailChange} from './cloud';
+import {adminAccountEmail, changeAdminPassword, inviteAdministrator, requestAdminEmailChange, inspectAdminEmailChange, confirmAdminEmailChange} from './cloud';
 
 export function AdminAccounts({onLogout,onBusy}) {
   const [email,setEmail]=useState('');
-  const [add,setAdd]=useState({email:'',password:'',confirm:'',current:'',existing:false});
+  const [add,setAdd]=useState({email:'',current:''});
   const [password,setPassword]=useState({current:'',next:'',confirm:''});
   const [address,setAddress]=useState({current:'',next:''});
   const [emailLink,setEmailLink]=useState(''),[linkProof,setLinkProof]=useState(null),[linkError,setLinkError]=useState(''),[linkNotice,setLinkNotice]=useState(''),[linkWorking,setLinkWorking]=useState(false);
@@ -31,21 +31,18 @@ export function AdminAccounts({onLogout,onBusy}) {
     {error&&<div className="admin-alert error" role="alert">{error}</div>}
     {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
     <section className="admin-account-section" aria-labelledby="admin-create-title">
-      <div className="admin-section-heading"><div><h3 id="admin-create-title">Ajouter un administrateur</h3><p>Il aura les mêmes droits sur tous les magasins et pourra ajouter d’autres administrateurs.</p></div></div>
+      <div className="admin-section-heading"><div><h3 id="admin-create-title">Inviter un administrateur</h3><p>Il aura les mêmes droits sur tous les magasins et pourra inviter d’autres administrateurs.</p></div></div>
       <form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{
-        if(add.password!==add.confirm)throw new Error('Les mots de passe du nouveau compte ne correspondent pas.');
-        const result=await createAdministrator(api,{email:add.email,password:add.password,currentPassword:add.current,existing:add.existing});
-        setAdd({email:'',password:'',confirm:'',current:'',existing:false});
-        if(result.verificationRequired)return 'Un lien de confirmation a été envoyé. Les droits seront actifs après validation de l’e-mail et connexion avec le mot de passe choisi.';
-        return result.already?'Ce compte est déjà administrateur.':'Administrateur ajouté. Il peut se connecter avec son e-mail et son mot de passe.';
+        const result=await inviteAdministrator(api,{email:add.email,currentPassword:add.current});
+        setAdd({email:'',current:''});
+        if(result.alreadyAccepted)return 'Cette invitation a déjà été acceptée.';
+        return 'Invitation enregistrée et demande de lien transmise à Firebase. Prévenez la personne : elle devrait recevoir un e-mail de réinitialisation pour choisir son mot de passe, puis devra accepter l’invitation dans Fnac Pulse. Vérifiez les courriers indésirables si nécessaire.';
       });}}>
-        <label><span className="form-label">E-mail du nouvel administrateur</span><input className="text-input" type="email" autoComplete="off" required maxLength={254} value={add.email} onChange={e=>setAdd(v=>({...v,email:e.target.value}))}/></label>
-        <label><span className="form-label">Mot de passe {add.existing?'du compte existant':'initial'} · 12 caractères minimum</span><input className="text-input" type="password" autoComplete="new-password" required minLength={12} maxLength={128} value={add.password} onChange={e=>setAdd(v=>({...v,password:e.target.value}))}/></label>
-        <label><span className="form-label">Confirmer ce mot de passe</span><input className="text-input" type="password" autoComplete="new-password" required minLength={12} maxLength={128} value={add.confirm} onChange={e=>setAdd(v=>({...v,confirm:e.target.value}))}/></label>
-        <label className="admin-account-checkbox"><input type="checkbox" checked={add.existing} onChange={e=>setAdd(v=>({...v,existing:e.target.checked}))}/><span>Compte existant : j’ai l’accord de son titulaire et son mot de passe.</span></label>
-        <p className="admin-account-help"><Info size={14}/><span>Le titulaire reçoit un lien si son e-mail n’est pas encore confirmé. Communiquez-lui le mot de passe initial de manière sécurisée ; il pourra ensuite le modifier.</span></p>
+        <label><span className="form-label">E-mail de la personne invitée</span><input className="text-input" type="email" autoComplete="off" required maxLength={254} value={add.email} onChange={e=>setAdd(v=>({...v,email:e.target.value}))}/></label>
         <label><span className="form-label">Votre mot de passe administrateur actuel</span><input className="text-input" type="password" autoComplete="current-password" required value={add.current} onChange={e=>setAdd(v=>({...v,current:e.target.value}))}/></label>
-        <button className="primary-button" disabled={busy}><Plus size={16}/> Ajouter l’administrateur</button>
+        <p className="admin-account-help"><Info size={14}/><span>La personne choisit son mot de passe grâce au lien Firebase de réinitialisation, puis accepte l’invitation dans Fnac Pulse. L’invitation expire dans 7 jours ; le lien peut expirer avant.</span></p>
+        <p className="admin-account-help"><Info size={14}/><span>Prévenez-la séparément. Un compte existant peut garder son mot de passe actuel : aucun changement n’est fait sans elle. Si l’e-mail n’arrive pas, vérifiez les indésirables ou essayez une autre adresse.</span></p>
+        <button className="primary-button" disabled={busy}><Plus size={16}/> Envoyer l’invitation</button>
       </form>
     </section>
     <section className="admin-account-section" aria-labelledby="admin-password-title">

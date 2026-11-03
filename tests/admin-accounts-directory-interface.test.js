@@ -13,17 +13,22 @@ const plugin={name:'admin-fixtures',setup(b){
   b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`
     export const adminAccountEmail=(...x)=>globalThis.__adminTest.email(...x);
     export const changeAdminPassword=(...x)=>globalThis.__adminTest.password(...x);
-    export const createAdministrator=(...x)=>globalThis.__adminTest.create(...x);
+    export const inviteAdministrator=(...x)=>globalThis.__adminTest.invite(...x);
     export const requestAdminEmailChange=(...x)=>globalThis.__adminTest.address(...x);
     export const inspectAdminEmailChange=(...x)=>globalThis.__adminTest.inspect(...x);
     export const confirmAdminEmailChange=(...x)=>globalThis.__adminTest.confirm(...x);
+    export const requestAdminPasswordReset=(...x)=>globalThis.__adminTest.sendReset(...x);
+    export const inspectAdminPasswordReset=(...x)=>globalThis.__adminTest.inspectReset(...x);
+    export const confirmAdminPasswordReset=(...x)=>globalThis.__adminTest.confirmReset(...x);
+    export const inspectAdminVerification=(...x)=>globalThis.__adminTest.inspectVerification(...x);
+    export const confirmAdminVerification=(...x)=>globalThis.__adminTest.confirmVerification(...x);
   `,loader:'js'}));
 }};
 async function load(entry){
   const out=await build({entryPoints:[entry],bundle:true,platform:'node',format:'cjs',write:false,external:['react','lucide-react'],plugins:[plugin],logLevel:'silent'});
   const mod={exports:{}};new Function('module','exports','require',out.outputFiles[0].text)(mod,mod.exports,require);return mod.exports;
 }
-const {AdminAccounts}=await load('src/AdminAccounts.jsx'),{DirectoryImport}=await load('src/DirectoryImport.jsx'),{AdminTabs}=await load('src/AdminTabs.jsx');
+const {AdminAccounts}=await load('src/AdminAccounts.jsx'),{AdminInvitationHelp}=await load('src/AdminInvitationHelp.jsx'),{DirectoryImport}=await load('src/DirectoryImport.jsx'),{AdminTabs}=await load('src/AdminTabs.jsx');
 const text=node=>typeof node==='string'||typeof node==='number'?String(node):!node?'':Array.isArray(node)?node.map(text).join(''):text(node.children);
 const form=(tree,id)=>tree.root.findByProps({'aria-labelledby':id}).findAllByType('form')[0];
 const change=async(input,value)=>act(async()=>{input.props.onChange({target:{value}});await tick();});
@@ -40,7 +45,12 @@ function setup(){
     async address(...args){e.calls.push(['address',...args]);},
     async inspect(...args){e.calls.push(['inspect',...args]);return {code:'code-fictif',newEmail:'nouvelle@example.test'};},
     async confirm(...args){e.calls.push(['confirm',...args]);return {email:'nouvelle@example.test',refreshed:true};},
-    async create(...args){e.calls.push(['create',args[1]]);return {already:false,verificationRequired:true};},
+    async invite(...args){e.calls.push(['invite',args[1]]);return {alreadyAccepted:false,accountCreated:true};},
+    async sendReset(...args){e.calls.push(['sendReset',...args]);},
+    async inspectReset(...args){e.calls.push(['inspectReset',...args]);return {code:'reset-fictif',email:'invite@example.test'};},
+    async confirmReset(...args){e.calls.push(['confirmReset',...args]);return {email:'invite@example.test'};},
+    async inspectVerification(...args){e.calls.push(['inspectVerification',...args]);return {code:'verify-fictif',email:'invite@example.test'};},
+    async confirmVerification(...args){e.calls.push(['confirmVerification',...args]);return {email:'invite@example.test'};},
   });
   e.restore=()=>{for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];};return e;
 }
@@ -56,17 +66,16 @@ test('Administration : ordre exact des onglets et accès clavier',async()=>{
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
-test('Administrateur : création explicite, confirmation et modifications personnelles',async()=>{
+test('Administrateur : invitation sans mot de passe tiers et modifications personnelles',async()=>{
   const e=setup(),busy=[];let tree,loggedOut=0;
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onBusy:x=>busy.push(x),onLogout:()=>loggedOut++}));await tick();});
     assert.match(text(tree.toJSON()),/responsable@example\.test/);assert.match(text(tree.toJSON()),/mêmes droits sur tous les magasins/);
     const create=()=>form(tree,'admin-create-title'),fields=()=>create().findAllByType('input');
-    await change(fields()[0],'nouveau@example.test');await change(fields()[1],'Initial-password-2026!');await change(fields()[2],'different');await change(fields()[4],'Current-password-2026!');
-    await submit(create());assert.match(text(tree.toJSON()),/ne correspondent pas/);assert.equal(e.calls.filter(x=>x[0]==='create').length,0);
-    await change(fields()[2],'Initial-password-2026!');await submit(create());
-    assert.deepEqual(e.calls.find(x=>x[0]==='create')[1],{email:'nouveau@example.test',password:'Initial-password-2026!',currentPassword:'Current-password-2026!',existing:false});
-    assert.match(text(tree.toJSON()),/droits seront actifs après validation/);assert.equal(fields()[0].props.value,'');assert.equal(fields()[1].props.value,'');
+    assert.equal(fields().length,2,'seuls l’adresse invitée et le mot de passe actuel sont demandés');
+    await change(fields()[0],'nouveau@example.test');await change(fields()[1],'Current-password-2026!');await submit(create());
+    assert.deepEqual(e.calls.find(x=>x[0]==='invite')[1],{email:'nouveau@example.test',currentPassword:'Current-password-2026!'});
+    assert.match(text(tree.toJSON()),/doit accepter l’invitation|devra accepter l’invitation/);assert.equal(fields()[0].props.value,'');assert.equal(fields()[1].props.value,'');
     const pw=()=>form(tree,'admin-password-title'),pwFields=()=>pw().findAllByType('input');
     await change(pwFields()[0],'Ancien-password-2026!');await change(pwFields()[1],'Nouveau-password-2026!');await change(pwFields()[2],'Nouveau-password-2026!');await submit(pw());
     assert.deepEqual(e.calls.find(x=>x[0]==='password').slice(1),['Ancien-password-2026!','Nouveau-password-2026!']);assert.match(text(tree.toJSON()),/mot de passe a été mis à jour/);
@@ -74,7 +83,7 @@ test('Administrateur : création explicite, confirmation et modifications person
     await change(emailFields()[0],'autre@example.test');await change(emailFields()[1],'Nouveau-password-2026!');await submit(address());
     assert.deepEqual(e.calls.find(x=>x[0]==='address').slice(1),['Nouveau-password-2026!','autre@example.test']);assert.match(text(tree.toJSON()),/ancienne adresse reste valable/);
     await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('Déconnexion administrateur')).props.onClick());assert.equal(loggedOut,1);
-    assert.deepEqual(busy,[true,false,true,false,true,false,true,false]);
+    assert.deepEqual(busy,[true,false,true,false,true,false]);
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
@@ -96,15 +105,13 @@ test('Administrateur : lien bloqué, vérification puis confirmation explicite d
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
-test('Administrateur : reprise d’un compte existant seulement par choix explicite',async()=>{
+test('Administrateur : le titulaire d’un compte existant garde le choix de son mot de passe',async()=>{
   const e=setup();let tree;
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onLogout(){}}));await tick();});
-    const create=()=>form(tree,'admin-create-title'),fields=()=>create().findAllByType('input');
-    await change(fields()[0],'existant@example.test');await change(fields()[1],'Initial-password-2026!');await change(fields()[2],'Initial-password-2026!');await change(fields()[4],'Current-password-2026!');
-    await act(async()=>fields()[3].props.onChange({target:{checked:true}}));await submit(create());
-    assert.equal(e.calls.find(x=>x[0]==='create')[1].existing,true);
-    assert.equal(fields()[3].props.checked,false,'la case est réinitialisée après attribution');
+    const content=text(tree.toJSON());
+    assert.match(content,/peut garder son mot de passe actuel/);assert.match(content,/aucun changement n’est fait sans elle/);
+    assert.match(content,/droits sur tous les magasins/);assert.doesNotMatch(content,/mot de passe initial|accord de son titulaire et son mot de passe/);
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
@@ -137,5 +144,40 @@ test('Annuaire : échec réseau incertain et double appui bloqué ; fichier trop
     await paste(tree,syntheticDirectory());globalThis.__adminTest.api=async()=>{throw new TypeError('connexion interrompue');};
     await act(async()=>{await importButton(tree).props.onClick();await tick();});
     assert.match(text(tree.toJSON()),/Résultat non confirmé/);assert.equal(importButton(tree).props.disabled,false,'la copie reste disponible pour une reprise volontaire');
+  } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
+});
+
+test('Invitation : lien bloqué vérifié, adresse affichée et mot de passe choisi uniquement par le titulaire',async()=>{
+  const e=setup(),busy=[],completed=[];let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminInvitationHelp,{email:'invite@example.test',busy:false,onBusy:x=>busy.push(x),onCompleted:x=>completed.push(x)}));await tick();});
+    const button=caption=>tree.root.findAllByType('button').find(x=>text(x).includes(caption));
+    await act(async()=>{button('Demander un nouveau lien').props.onClick();await tick();await tick();});
+    assert.deepEqual(e.calls.find(x=>x[0]==='sendReset').slice(1),['invite@example.test']);assert.match(text(tree.toJSON()),/Si cette adresse possède un compte compatible/);
+    const link=tree.root.findByProps({'aria-label':'Lien de réinitialisation ou de confirmation'});
+    await change(link,'https://demo-fnac.firebaseapp.com/__/auth/action?mode=resetPassword&oobCode=secret-fictif');
+    await submit(tree.root.findAllByType('form')[0]);assert.equal(link.props.value,'');assert.match(text(tree.toJSON()),/invite@example\.test/);
+    assert.equal(e.calls.filter(x=>x[0]==='confirmReset').length,0);
+    const resetForm=()=>tree.root.findAllByType('form')[1],inputs=()=>resetForm().findAllByType('input');
+    await change(inputs()[0],'Mon-propre-mot-de-passe');await change(inputs()[1],'incorrect');await submit(resetForm());
+    assert.match(text(tree.toJSON()),/ne correspondent pas/);assert.equal(e.calls.filter(x=>x[0]==='confirmReset').length,0);
+    await change(inputs()[1],'Mon-propre-mot-de-passe');await submit(resetForm());
+    assert.deepEqual(e.calls.find(x=>x[0]==='confirmReset').slice(1),[{code:'reset-fictif',email:'invite@example.test'},'Mon-propre-mot-de-passe']);
+    assert.deepEqual(completed,['invite@example.test']);assert.doesNotMatch(text(tree.toJSON()),/secret-fictif|reset-fictif|Mon-propre-mot-de-passe/);
+    assert.deepEqual(busy,[true,false,true,false,true,false,true,false]);
+  } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
+});
+
+test('Invitation : confirmation d’adresse bloquée vérifiée puis confirmée explicitement',async()=>{
+  const e=setup(),completed=[];let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminInvitationHelp,{email:'invite@example.test',busy:false,onBusy(){},onCompleted(){},onVerified:value=>completed.push(value)}));await tick();});
+    const field=tree.root.findByProps({'aria-label':'Lien de réinitialisation ou de confirmation'});
+    await change(field,'https://demo-fnac.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=fictif');
+    await submit(tree.root.findAllByType('form')[0]);assert.match(text(tree.toJSON()),/Adresse à confirmer/);
+    assert.equal(e.calls.filter(x=>x[0]==='confirmVerification').length,0);
+    await act(async()=>{tree.root.findAllByType('button').find(x=>text(x).includes('Confirmer mon adresse')).props.onClick();await tick();await tick();});
+    assert.deepEqual(completed,['invite@example.test']);assert.deepEqual(e.calls.find(x=>x[0]==='confirmVerification')[1],{code:'verify-fictif',email:'invite@example.test'});
+    assert.doesNotMatch(text(tree.toJSON()),/verify-fictif|oobCode/);
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });

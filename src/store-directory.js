@@ -133,14 +133,16 @@ export function initialDirectorySync(snapshot) {
     source:snapshot.source, reviewCount:0};
 }
 
-// Les magasins historiques restent gérables et disponibles si une équipe
-// active y est encore attachée ; ils ne monopolisent pas la géolocalisation.
-export function storeSelectionGroups(stores,sellers,{selectedId=''}={}) {
-  const linked=new Set((sellers||[]).filter(s=>s.active!==false&&s.active!==0).map(s=>s.storeId));
+// Les fiches non confirmées dans l'annuaire ne sont plus proposées dans les
+// sélecteurs, mais restent en base : les profils et sessions ne sont pas effacés.
+// Les ajouts de l'administrateur et les copies manuelles restent accessibles.
+export function isSelectableStore(store) {
+  return !!store&&store.active!==false&&store.active!==0&&!['region','historical'].includes(store.directoryStatus);
+}
+export function storeSelectionGroups(stores) {
   const official=[],other=[];
   for(const store of stores||[]) {
-    if(store.directoryStatus==='region')continue;
-    if(store.directoryStatus==='historical'&&!linked.has(store.id)&&store.id!==selectedId)continue;
+    if(!isSelectableStore(store))continue;
     (store.directoryStatus==='official'||store.directoryStatus==='regional-choice'?official:other).push(store);
   }
   const compare=(a,b)=>displayStoreName(a).localeCompare(displayStoreName(b),'fr',{sensitivity:'base',numeric:true});

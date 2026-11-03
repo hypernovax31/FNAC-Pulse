@@ -10,7 +10,7 @@ import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
 import { CLOUD, observeVendor, sellerLogin, sellerChoosePin, sellerMigratePin, sellerRegister, sellerLogout, listenStore, prepareFcm, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
 import { parisToday } from './cloud-stats';
 import { sellerStoreId } from './catalog';
-import { displayStoreName, storeSelectionGroups } from './store-directory.js';
+import { displayStoreName, isSelectableStore, storeSelectionGroups } from './store-directory.js';
 import { StoreSearch } from './StoreSearch';
 import { NameSuggestions } from './NameSuggestions';
 import { departmentsForStore, sellerDepartmentId, sellersForDepartment } from './departments';
@@ -77,7 +77,8 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
   const unavailable=!!(CLOUD&&initialProfile&&!fixed);
   const start=initialProfile||initialSession;
   const initialPerson=data.sellers.find(s=>Number(s.id)===Number(start?.sellerId)&&sellerStoreId(s)===start?.storeId);
-  const [store,setStore]=useState(start?.storeId||'');
+  const startStore=fixed||isSelectableStore(data.stores.find(s=>s.id===start?.storeId))?start?.storeId||'':'';
+  const [store,setStore]=useState(startStore);
   const [department,setDepartment]=useState(initialPerson?sellerDepartmentId(initialPerson):start?.departmentId||'');
   const [name,setName]=useState(initialPerson?.name||'');
   const [geoText,setGeoText]=useState(''),[geoBusy,setGeoBusy]=useState(false);
@@ -94,7 +95,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
   const otherDepartment=!!department&&!matched&&matches.length>0;
   const seller=fixed?String(rememberedPerson.id):matched?String(matched.id):'';
   const registerable=!fixed&&!!store&&!!department&&validSellerName(typed)&&!matches.length;
-  const storeGroups=storeSelectionGroups(data.stores,data.sellers,{selectedId:store});
+  const storeGroups=storeSelectionGroups(data.stores);
   const regionalChoice=data.stores.find(s=>s.id===store)?.directoryStatus==='regional-choice';
   const needsRegionalConsent=regionalChoice&&registerable;
   useEffect(()=>()=>{geoRequest.current++;},[]);
@@ -120,6 +121,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
   function cancelLocate(){geoTouched.current=true;geoRequest.current++;setGeoBusy(false);setGeoText('');}
   const changeStore=value=>{if(value!==store){setDepartment('');setName('');setRegionalConsent(false);clearSecrets();}setStore(value);};
   const changeDepartment=value=>{if(value!==department){setName('');clearSecrets();}setDepartment(value);};
+  useEffect(()=>{if(!fixed&&store&&!isSelectableStore(data.stores.find(s=>s.id===store)))changeStore('');},[fixed,store,data.stores]);
   function suggestNearby(coords) {
     const located=storeGroups.all.filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon)).map(s=>({...s,distance:kmBetween(coords.latitude,coords.longitude,s.lat,s.lon)})).sort((a,b)=>a.distance-b.distance);
     setGeoBusy(false);

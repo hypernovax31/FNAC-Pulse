@@ -1,9 +1,9 @@
 import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, setPersistence, browserSessionPersistence, inMemoryPersistence, EmailAuthProvider, reauthenticateWithCredential, updatePassword, verifyBeforeUpdateEmail, sendEmailVerification, checkActionCode, applyActionCode, reload } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, setPersistence, browserSessionPersistence, inMemoryPersistence, EmailAuthProvider, reauthenticateWithCredential, updatePassword, verifyBeforeUpdateEmail, sendEmailVerification, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset, checkActionCode, applyActionCode, reload } from 'firebase/auth';
 import { getFirestore, doc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { getMessaging, getToken, deleteToken, isSupported } from 'firebase/messaging';
 import { firebaseConfig } from './firebase-config';
-import { extractAdminEmailChangeCode } from './admin-email-link.js';
+import { extractAdminEmailChangeCode, extractAdminPasswordResetCode, extractAdminVerificationCode } from './admin-email-link.js';
 import { createPinSalt, pinProof } from './pin';
 import { earliestDate, parisToday, summarize } from './cloud-stats';
 import { comparePeople, orderServices, sellerStoreId, serviceRemovedForStore, servicesForStore } from './catalog';
@@ -164,6 +164,97 @@ export async function confirmAdminEmailChange({code,newEmail}={}) {
   let refreshed=false;
   try {await firebaseDeadline(reload(user),8000);refreshed=user.email?.toLowerCase()===verifiedEmail.toLowerCase();}catch{}
   return {email:verifiedEmail,refreshed};
+}
+// L'administrateur ne choisit et ne reçoit jamais le mot de passe du destinataire.
+// Un secret aléatoire, utilisé uniquement pour créer un compte Firebase neuf,
+// devient inutilisable dès que le titulaire choisit son propre mot de passe.
+function secureRandomText() {
+  if(!globalThis.crypto?.getRandomValues)throw new Error('Générateur sécurisé indisponible sur cet appareil.');
+  const bytes=crypto.getRandomValues(new Uint8Array(32));
+  let raw='';for(const byte of bytes)raw+=String.fromCharCode(byte);
+  return btoa(raw).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+export async function inviteAdministrator(api,{email,currentPassword}) {
+  const address=String(email||'').trim();
+  if(!address||address.length>254)throw new Error('Indiquez une adresse e-mail valide.');
+  await reauthenticateAdmin(currentPassword);
+  const requestId=secureRandomText(),body={email:address,requestId};let invitation;
+  try {invitation=await api('/api/admin/invitations',{method:'POST',token:ADMIN_SESSION,body});}
+  catch(error) {
+    if(error?.status&&error.status<500)throw error;
+    try {invitation=await api('/api/admin/invitations',{method:'POST',token:ADMIN_SESSION,body});}
+    catch {throw new Error('L’invitation n’a pas pu être confirmée. Réessayez ; aucun droit n’est attribué sans l’accord du destinataire.');}
+  }
+  if(invitation?.status==='accepted')return {alreadyAccepted:true};
+  if(invitation?.status!=='pending')throw new Error('L’invitation a expiré. Envoyez une nouvelle invitation.');
+  const appName=`fnac-pulse-invitation-${secureRandomText()}`,temporary=initializeApp(firebaseConfig,appName),temporaryAuth=getAuth(temporary);
+  let accountCreated=false;
+  try {
+    await setPersistence(temporaryAuth,inMemoryPersistence);temporaryAuth.languageCode='fr';
+    try {
+      await createUserWithEmailAndPassword(temporaryAuth,address,`${secureRandomText()}aA1!`);accountCreated=true;
+    } catch(error) {
+      if(error?.code!=='auth/email-already-in-use') {
+        const detail=error?.code==='auth/invalid-email'?'Vérifiez l’adresse e-mail.':error?.code==='auth/too-many-requests'?'Trop de demandes ; réessayez plus tard.':'Vérifiez votre connexion et réessayez.';
+        throw new Error(`Invitation enregistrée, mais création du compte non confirmée. ${detail} Aucun droit n’a été attribué.`);
+      }
+    }
+    try {await sendPasswordResetEmail(temporaryAuth,address);}
+    catch(error) {
+      const detail=error?.code==='auth/too-many-requests'?'Quota d’e-mails atteint. Réessayez plus tard.':'Vérifiez la connexion et réessayez.';
+      throw new Error(`Invitation enregistrée, mais envoi non confirmé. ${detail} Aucun droit n’a été attribué.`);
+    }
+    return {alreadyAccepted:false,accountCreated,expiresAt:invitation.expiresAt};
+  } finally {await signOut(temporaryAuth).catch(()=>{});await deleteApp(temporary).catch(()=>{});}
+}
+export async function requestAdminPasswordReset(email) {
+  const address=String(email||'').trim();
+  if(!address||address.length>254)throw new Error('Indiquez l’adresse e-mail du compte invité.');
+  try {adminAuth.languageCode='fr';await firebaseDeadline(sendPasswordResetEmail(adminAuth,address));}
+  catch(error){
+    if(error?.code==='auth/invalid-email')throw new Error('Indiquez une adresse e-mail valide.');
+    if(error?.code==='auth/too-many-requests')throw new Error('Trop de demandes. Réessayez plus tard.');
+    throw new Error('La demande n’a pas pu être confirmée. Vérifiez votre connexion et réessayez.');
+  }
+}
+function resetLinkFailure(error,{applying=false}={}) {
+  if(['auth/expired-action-code','auth/invalid-action-code'].includes(error?.code))return new Error('Lien expiré ou déjà utilisé. Demandez un nouveau lien.');
+  if(error?.code==='auth/weak-password')return new Error('Choisissez un mot de passe plus robuste.');
+  return new Error(applying?'Le changement n’est pas certain. Essayez de vous connecter avec le nouveau mot de passe avant de demander un autre lien.':'Impossible de vérifier le lien. Vérifiez votre connexion et réessayez.');
+}
+export async function inspectAdminPasswordReset(link) {
+  const code=extractAdminPasswordResetCode(link,firebaseConfig);let email;
+  try {email=await firebaseDeadline(verifyPasswordResetCode(adminAuth,code));}catch(error){throw resetLinkFailure(error);}
+  if(typeof email!=='string'||!email)throw new Error('Ce lien ne correspond pas à un compte valide.');
+  return {code,email};
+}
+export async function confirmAdminPasswordReset({code,email}={},password) {
+  if(typeof code!=='string'||!/^[^\s\u0000-\u001f\u007f]{6,2048}$/.test(code)||typeof email!=='string'||!email)throw new Error('Vérifiez à nouveau le lien.');
+  if(typeof password!=='string'||password.length<12||password.length>128)throw new Error('Le mot de passe doit comporter de 12 à 128 caractères.');
+  let checked;try{checked=await firebaseDeadline(verifyPasswordResetCode(adminAuth,code));}catch(error){throw resetLinkFailure(error);}
+  if(checked.toLowerCase()!==email.toLowerCase())throw new Error('L’adresse ne correspond plus au lien vérifié. Recommencez.');
+  try {await firebaseDeadline(confirmPasswordReset(adminAuth,code,password));}catch(error){throw resetLinkFailure(error,{applying:true});}
+  return {email:checked};
+}
+async function checkedAdminVerification(code,expectedEmail) {
+  let info;try{info=await firebaseDeadline(checkActionCode(adminAuth,code));}catch(error){throw resetLinkFailure(error);}
+  const email=info?.data?.email;
+  if(info?.operation!=='VERIFY_EMAIL'||typeof email!=='string'||!email)throw new Error('Ce lien ne correspond pas à une confirmation d’adresse.');
+  if(expectedEmail&&email.toLowerCase()!==expectedEmail.toLowerCase())throw new Error('L’adresse ne correspond plus au lien vérifié. Recommencez.');
+  return email;
+}
+export async function inspectAdminVerification(link) {
+  const code=extractAdminVerificationCode(link,firebaseConfig),email=await checkedAdminVerification(code);
+  return {code,email};
+}
+export async function confirmAdminVerification({code,email}={}) {
+  if(typeof code!=='string'||!/^[^\s\u0000-\u001f\u007f]{6,2048}$/.test(code)||typeof email!=='string'||!email)throw new Error('Vérifiez à nouveau le lien.');
+  const checked=await checkedAdminVerification(code,email);
+  try{await firebaseDeadline(applyActionCode(adminAuth,code));}catch(error){
+    if(['auth/expired-action-code','auth/invalid-action-code'].includes(error?.code))throw resetLinkFailure(error);
+    throw new Error('La confirmation n’est pas certaine. Essayez de vous connecter avant de demander un autre lien.');
+  }
+  return {email:checked};
 }
 function provisioningMessage(error,existing) {
   switch(error?.code) {

@@ -10,7 +10,7 @@ const bundled=await build({entryPoints:['src/Admin.jsx'],bundle:true,platform:'n
   b.onResolve({filter:/^\.\/api$/},()=>({path:'api',namespace:'mock'}));
   b.onResolve({filter:/^\.\/cloud$/},()=>({path:'cloud',namespace:'mock'}));
   b.onLoad({filter:/^api$/,namespace:'mock'},()=>({contents:`export const api=(...x)=>globalThis.__adminTestApi(...x);export const uid=()=>"admin-test-job-0001";export const dateLabel=x=>x;export const timeLabel=x=>x;`,loader:'js'}));
-  b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`export const CLOUD=true;export const adminLogin=()=>{};export const adminLogout=()=>{};export const changeAdminPassword=()=>{}; export const adminAccountEmail=async()=>"admin@example.test"; export const createAdministrator=()=>{}; export const requestAdminEmailChange=()=>{};export const inspectAdminEmailChange=()=>{};export const confirmAdminEmailChange=()=>{}; export const resendAdminVerification=()=>{};`,loader:'js'}));
+  b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`export const CLOUD=true;export const adminLogin=()=>{};export const adminLogout=()=>{};export const changeAdminPassword=()=>{}; export const adminAccountEmail=async()=>"admin@example.test"; export const createAdministrator=()=>{}; export const inviteAdministrator=()=>{},requestAdminPasswordReset=()=>{},inspectAdminPasswordReset=()=>{},confirmAdminPasswordReset=()=>{},inspectAdminVerification=()=>{},confirmAdminVerification=()=>{}; export const requestAdminEmailChange=()=>{};export const inspectAdminEmailChange=()=>{};export const confirmAdminEmailChange=()=>{}; export const resendAdminVerification=()=>{};`,loader:'js'}));
 }}]});
 const module={exports:{}};new Function('module','exports','require',bundled.outputFiles[0].text)(module,module.exports,require);
 const Admin=module.exports.default;
@@ -60,4 +60,44 @@ test('Administration : vendeurs, ajout, réinitialisation PIN et suppression dan
     if(tree)await act(async()=>tree.unmount());
     for(const [name,value] of Object.entries(original))if(value===undefined)delete globalThis[name];else globalThis[name]=value;
   }
+});
+
+test('Magasin administré : recherche, historique masqué, mémorisation et déconnexion sans toucher au profil vendeur',async()=>{
+  const keys=['window','document','sessionStorage','__adminTestApi'],prior=new Map(keys.map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+  const saved=new Map([['pulse-admin-token','admin-token']]),seller={storeId:'historique',sellerId:41};
+  const stores=[{id:'historique',name:'Ancienne Fnac',directoryStatus:'historical'},{id:'officiel',name:'Fnac Labège',directoryStatus:'official'},
+    {id:'manuel',name:'Fnac Copie Test',directoryStatus:'manual'},{id:'ajout',name:'Magasin Ajouté'},
+    {id:'region-cachee',name:'Région non sélectionnable',directoryStatus:'region'}];
+  const props={onClose(){},onChanged(){},session:seller,data:{stores,services:[],today:'2026-11-03'}};
+  Object.defineProperty(globalThis,'window',{configurable:true,value:{confirm:()=>true,matchMedia:()=>({matches:true})}});
+  Object.defineProperty(globalThis,'document',{configurable:true,value:{body:{style:{overflow:''}},activeElement:null,addEventListener(){},removeEventListener(){},getElementById(){return null;}}});
+  Object.defineProperty(globalThis,'sessionStorage',{configurable:true,value:{getItem:k=>saved.get(k)||null,setItem:(k,v)=>saved.set(k,String(v)),removeItem:k=>saved.delete(k)}});
+  Object.defineProperty(globalThis,'__adminTestApi',{configurable:true,value:async(path)=>{
+    if(path==='/api/admin/all')return {sellers:[{id:41,name:'Profil historique',storeId:'historique',active:true}],services:[],serviceOrders:{},departmentsByStore:{}};
+    if(path.startsWith('/api/admin/counts'))return {counts:[]};return {ok:true};
+  }});
+  let tree;
+  const tab=label=>tree.root.findAllByProps({role:'tab'}).find(x=>text(x)===label);
+  const input=()=>tree.root.findByProps({'aria-label':'Magasin à gérer'});
+  const search=async(value)=>act(async()=>{input().props.onChange({target:{value}});await tick();});
+  const open=async()=>act(async()=>{tree=TestRenderer.create(React.createElement(Admin,props));await tick();});
+  try {
+    await open();assert.equal(tab('Magasins').props['aria-selected'],true,'le profil historique reste connecté, mais non proposé');
+    await search('Ancienne');assert.equal(tree.root.findAllByProps({role:'option'}).length,0);
+    await search('Copie');const option=tree.root.findByProps({role:'option'});assert.match(text(option),/Copie non vérifiée/);
+    await act(async()=>{option.props.onClick();await tick();});assert.equal(saved.get('pulse-admin-managed-store-v1'),'manuel');
+    assert.equal(seller.storeId,'historique');assert.match(text(tree.toJSON()),/Magasin sélectionné : Fnac Copie Test/);
+    await act(async()=>tree.unmount());await open();assert.equal(tab('Ventes').props['aria-selected'],true);assert.match(text(tree.toJSON()),/Fnac Copie Test/);
+    await act(async()=>{tab('Magasins').props.onClick();await tick();});
+    await search('Labège');assert.match(text(tree.toJSON()),/Magasin toujours géré/);assert.equal(saved.get('pulse-admin-managed-store-v1'),'manuel','une recherche abandonnée ne change pas le magasin');
+    await act(async()=>tree.unmount());await open();assert.match(text(tree.toJSON()),/Fnac Copie Test/);
+    await act(async()=>{tab('Magasins').props.onClick();await tick();});await search('Labège');
+    await act(async()=>{tree.root.findByProps({role:'option'}).props.onClick();await tick();});assert.equal(saved.get('pulse-admin-managed-store-v1'),'officiel');
+    await act(async()=>{tab('Administrateur').props.onClick();await tick();});
+    await act(async()=>{tree.root.findAllByType('button').find(b=>text(b).includes('Déconnexion administrateur')).props.onClick();await tick();});
+    assert.equal(saved.has('pulse-admin-managed-store-v1'),false);assert.equal(saved.has('pulse-admin-token'),false);assert.deepEqual(seller,{storeId:'historique',sellerId:41});
+    await act(async()=>tree.unmount());
+    saved.set('pulse-admin-token','admin-token');saved.set('pulse-admin-managed-store-v1','historique');await open();
+    assert.equal(saved.has('pulse-admin-managed-store-v1'),false,'une ancienne sélection non éligible est invalidée');assert.equal(tab('Magasins').props['aria-selected'],true);
+  } finally {if(tree)await act(async()=>tree.unmount());for(const key of keys){const descriptor=prior.get(key);if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];}}
 });

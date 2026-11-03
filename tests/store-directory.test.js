@@ -101,14 +101,14 @@ test('Fusion mensuelle : pas de suppression, pas de réactivation, homonyme et c
   assert.throws(()=>mergeStoreDirectory([{id:'fnac-cl9',name:'magasin déjà utilisé'}],[{fnacId:'cl9',name:'Fnac Exemple'}]),/déjà utilisé/);
 });
 
-test('Sélection : Fnac, ajouts, ancien magasin ayant un vendeur ; pas de proposition historique vide',()=>{
+test('Sélection : masquer tous les historiques non confirmés sans supprimer leurs données',()=>{
   const stores=[{id:'off',name:'Fnac Bordeaux',directoryStatus:'official'},{id:'old',name:'Ancien',directoryStatus:'historical'},
     {id:'used',name:'Historique utilisé',directoryStatus:'historical'},{id:'custom',name:'Ajouté'},
+    {id:'manual',name:'Copie non vérifiée',directoryStatus:'manual'},{id:'inactive',name:'Désactivé',active:false},
     {id:'region',name:'Région sans fiche',directoryStatus:'region'}];
-  const selected=storeSelectionGroups(stores,[{storeId:'used',active:true}]);
-  assert.deepEqual(selected.official.map(s=>s.id),['off']);assert.deepEqual(selected.other.map(s=>s.id),['custom','used']);
-  assert(!selected.all.some(s=>s.id==='region'));
-  assert(storeSelectionGroups(stores,[],{selectedId:'old'}).all.some(s=>s.id==='old'));
+  const before=structuredClone(stores),selected=storeSelectionGroups(stores,[{storeId:'used',active:true}],{selectedId:'old'});
+  assert.deepEqual(selected.official.map(s=>s.id),['off']);assert.deepEqual(new Set(selected.other.map(s=>s.id)),new Set(['custom','manual']));
+  assert(!selected.all.some(s=>['region','old','used','inactive'].includes(s.id)));assert.deepEqual(stores,before);
 });
 
 test('Extraction HTML : noms et identifiants Fnac, accents, liens génériques ignorés',()=>{
