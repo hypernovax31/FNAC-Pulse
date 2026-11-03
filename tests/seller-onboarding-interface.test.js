@@ -180,3 +180,15 @@ test('Prénoms nombreux : liste bornée, défilement indiqué et recherche dans 
     assert.equal(field(tree,'Code PIN personnel').props.maxLength,4);
   } finally {if(tree)await act(async()=>tree.unmount());restore();}
 });
+
+test('Département : l’indication vide reste distincte jusqu’à une sélection',async()=>{
+  const restore=apiMock(async()=>({needsPin:true}));let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(SessionForm,{data,onSubmit:async()=>{}}));await tick();});
+    assert.equal(field(tree,'Votre département').props.value,'');assert.equal(field(tree,'Votre département').props.className,'is-placeholder');
+    await change(tree,'Votre magasin Fnac','Fnac Test');await act(async()=>{tree.root.findByProps({role:'option'}).props.onClick();await tick();});
+    assert.equal(field(tree,'Votre département').props.disabled,false);assert.equal(field(tree,'Votre département').props.className,'is-placeholder');
+    await change(tree,'Votre département','tech');assert.equal(field(tree,'Votre département').props.value,'tech');assert.equal(field(tree,'Votre département').props.className,'');
+    await change(tree,'Votre département','');assert.equal(field(tree,'Votre département').props.className,'is-placeholder');
+  } finally {if(tree)await act(async()=>tree.unmount());restore();}
+});

@@ -134,6 +134,9 @@ p,h1,h2,h3 { margin:0; }
 .select-wrap { height:40px; display:flex; align-items:center; gap:8px; border:1px solid #e8e8df; background:#fff; border-radius:6px; padding-left:11px; color:#a8a99d; min-width:0; }
 .select-wrap:focus-within { border-color:#d7b735; }
 .select-wrap select { min-width:0; flex:1; color:#50524b; background:transparent; appearance:none; border:0; outline:0; font-size:11px; font-weight:600; height:100%; text-overflow:ellipsis; cursor:pointer; }
+.department-field .select-wrap select.is-placeholder { color:#70766c; }
+.department-field select option { color:#50524b; background:#fff; }
+.department-field select option[value=''] { color:#70766c; }
 .name-wrap input { min-width:0; width:100%; flex:1; color:#50524b; background:transparent; border:0; outline:0; font-size:13px; font-weight:600; height:100%; padding:0 9px 0 0; }
 .select-chevron { flex:0 0 auto; margin-right:9px; pointer-events:none; color:#a3a59b; }
 .locate-button { flex:0 0 40px; height:40px; display:grid; place-items:center; border:1px solid #e8e8df; border-radius:6px; background:#fff; color:#9e8d50; }
@@ -702,6 +705,9 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .outline-button,
 [data-theme='dark'] .small-outline-button { background:#292d27; border-color:#484e43; color:#f0f1e9; }
 [data-theme='dark'] .select-wrap select,[data-theme='dark'] .name-wrap input { color:#f0f1e9; }
+[data-theme='dark'] .department-field .select-wrap select.is-placeholder { color:#a3a99d; }
+[data-theme='dark'] .department-field select option { color:#f0f1e9; background:#292d27; }
+[data-theme='dark'] .department-field select option[value=''] { color:#a3a99d; }
 [data-theme='dark'] .text-input::placeholder { color:#a7aca0; }
 [data-theme='dark'] .primary-button:disabled { background:#514a35; color:#c1bbaa; }
 [data-theme='dark'] .install-app-preview { background:#29291f; border-color:#50472c; }
@@ -1190,17 +1196,21 @@ p,h1,h2,h3 { margin:0; }
 .admin-account-current p { color:var(--muted); font-size:11px; margin-top:4px; overflow-wrap:anywhere; }
 .admin-account-section { padding:16px; border:1px solid var(--border); border-radius:9px; background:var(--panel); }
 .admin-account-section .admin-section-heading { margin-top:0; }
-.admin-account-checkbox { display:flex; align-items:flex-start; gap:9px; color:var(--ink); font-size:11px; line-height:1.5; }
-.admin-account-checkbox input { flex:0 0 auto; width:17px; height:17px; accent-color:#e2ad00; }
 .admin-account-help { display:flex; align-items:flex-start; gap:7px; color:var(--muted); font-size:11px; line-height:1.5; }
 .admin-account-help svg { flex:0 0 auto; margin-top:1px; }
+.admin-invite-confirm { display:grid; gap:12px; padding:14px; border:1px solid #e8dfbf; border-radius:10px; background:#fdfbf3; }
+.admin-invite-confirm strong { color:var(--ink); font-size:12px; }
+.admin-invite-confirm p { margin-top:5px; color:#777b70; font-size:11px; line-height:1.5; }
+.admin-invite-confirm .admin-alert,.admin-accounts .store-form > .admin-alert { margin:0; }
+.admin-invite-actions { display:flex; align-items:center; flex-wrap:wrap; gap:10px 14px; }
+.admin-invite-actions .text-button { min-height:44px; }
+[data-theme='dark'] .admin-invite-confirm { background:#302e22; border-color:#5c5436; }
+[data-theme='dark'] .admin-invite-confirm p { color:#c5c8bb; }
 .admin-email-fallback { margin-top:17px; padding-top:15px; border-top:1px solid var(--border); }
 .admin-email-fallback summary { color:var(--ink); font-size:13px; font-weight:750; cursor:pointer; }
 .admin-email-fallback > p { margin:10px 0 13px; color:var(--muted); font-size:12px; line-height:1.6; }
 .admin-email-fallback p.admin-email-working { color:var(--ink); font-weight:700; }
 .admin-email-fallback .admin-alert { margin-top:10px; overflow-wrap:anywhere; }
-.admin-email-proof { display:grid; gap:10px; margin-top:12px; padding:12px; border:1px solid var(--border); border-radius:8px; color:var(--ink); font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
-.admin-email-proof .primary-button { justify-self:start; min-height:44px; white-space:normal; }
 .admin-accounts .logout-button { justify-self:start; }
 
 /* Import facultatif : copie explicite, jamais présentée comme une synchro automatique. */
