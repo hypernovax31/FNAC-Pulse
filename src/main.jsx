@@ -3,4 +3,8 @@ import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import './styles.css';
 
-createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>);
+// Un lien d'action Firebase ouvre sa page indépendante : ne pas monter
+// l'application ni toucher aux sessions pendant le choix du mot de passe.
+if (!window.__fnacEmailActionMode) {
+  createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>);
+}

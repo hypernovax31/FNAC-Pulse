@@ -2,6 +2,35 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Les codes reçus par e-mail restent dans cette page et ne sont pas
+      // conservés dans l'historique ni transmis à l'application ou au Worker.
+      (function () {
+        try {
+          const url = new URL(window.location.href);
+          const p = url.searchParams;
+          const direct = p.has('oobCode') || (p.has('mode') && p.has('apiKey'));
+          const help = p.get('aide-invitation') === '1';
+          if (direct || help) {
+            window.__fnacEmailActionMode = true;
+            window.__fnacEmailActionLink = direct ? url.href : '';
+            document.documentElement.dataset.emailAction = 'true';
+            try { history.replaceState(null, '', url.pathname); } catch (_) {}
+            const referrer = document.createElement('meta');
+            referrer.name = 'referrer'; referrer.content = 'origin'; document.head.appendChild(referrer);
+            const script = document.createElement('script');
+            script.type = 'module'; script.src = '%BASE_URL%auth-action-v1.js';
+            script.onerror = function () { window.__fnacEmailActionLoadFailed = true; window.__fnacShowActionLoadError?.(); };
+            document.head.appendChild(script);
+          } else if (p.get('administration') === 'invitation') {
+            window.__fnacOpenAdminInvitation = true;
+            p.delete('administration');
+            const remaining = p.toString();
+            try { history.replaceState(null, '', url.pathname + (remaining ? '?' + remaining : '') + url.hash); } catch (_) {}
+          }
+        } catch (_) {}
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#eab900" />
     <meta name="description" content="Le pouls de vos services. Suivez les ventes de votre équipe en temps réel." />
@@ -31,10 +60,73 @@
         document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
       } catch (_) {}
     </script>
+    <style>
+      /* Page d'action e-mail indépendante de l'initialisation de l'application. */
+      .email-action-shell[hidden] { display:none !important; }
+      .email-action-shell { box-sizing:border-box; min-height:100vh; min-height:100dvh; display:grid; place-items:center; padding:calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); background:#f6f7f4; color:#252621; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+      .email-action-shell * { box-sizing:border-box; }
+      .email-action-card { width:min(100%,440px); padding:30px 26px; border:1px solid #e5e7e1; border-radius:20px; background:#fff; box-shadow:0 16px 42px rgba(38,38,25,.06); }
+      .email-action-brand { display:flex; align-items:center; gap:10px; margin-bottom:28px; }
+      .email-action-brand img { width:38px; height:38px; object-fit:contain; }
+      .email-action-brand strong { font-size:22px; letter-spacing:-1px; }
+      .email-action-brand strong span { color:#d1a000; }
+      .email-action-card .email-action-kicker { margin:0 0 10px; color:#947300; font-size:10px; font-weight:800; letter-spacing:1px; text-transform:uppercase; }
+      .email-action-card h1 { margin:0; font-size:26px; line-height:1.18; letter-spacing:-.7px; }
+      .email-action-lead,.email-action-card p { color:#62675d; font-size:14px; line-height:1.55; }
+      .email-action-lead { margin:12px 0 0; }
+      .email-action-content { display:grid; gap:14px; margin-top:22px; }
+      .email-action-content form { display:grid; gap:14px; }
+      .email-action-content label,.email-action-account { display:grid; gap:7px; color:#42483e; font-size:12px; font-weight:700; }
+      .email-action-account strong { padding:13px 12px; overflow-wrap:anywhere; border:1px solid #dfe3d9; border-radius:8px; background:#f7f8f5; color:#42483e; font-size:14px; line-height:1.4; }
+      .email-action-content input.email-action-username { position:absolute; width:1px; height:1px; min-height:0; padding:0; opacity:0; pointer-events:none; }
+      .email-action-content input { width:100%; min-width:0; min-height:48px; padding:0 12px; border:1px solid #dfe3d9; border-radius:8px; background:#fff; color:#252621; font-size:16px; }
+      .email-action-content input[readonly] { background:#f7f8f5; color:#62675d; }
+      .email-action-content input:focus-visible,.email-action-content button:focus-visible,.email-action-content a:focus-visible { outline:3px solid rgba(221,169,0,.4); outline-offset:2px; }
+      .email-action-content button,.email-action-content .email-action-button { min-height:48px; display:flex; align-items:center; justify-content:center; padding:12px 16px; border:0; border-radius:8px; background:#ebb300; color:#27230e; font:700 14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; text-align:center; text-decoration:none; cursor:pointer; }
+      .email-action-content button:disabled { opacity:.58; cursor:wait; }
+      .email-action-content .email-action-secondary { border:1px solid #dfe3d9; background:transparent; color:#42483e; }
+      .email-action-message { padding:12px; border-radius:8px; background:#fbf3f1; color:#8c352c !important; font-size:13px !important; line-height:1.5; }
+      .email-action-help { margin-top:22px; padding-top:16px; border-top:1px solid #e9eae6; color:#777c72; font-size:12px; line-height:1.5; }
+      .email-action-help a { color:#6f5900; }
+      [data-theme='dark'] .email-action-shell { background:#171a17; color:#f0f1e9; }
+      [data-theme='dark'] .email-action-card { background:#20241f; border-color:#3b4137; }
+      [data-theme='dark'] .email-action-lead,[data-theme='dark'] .email-action-card p,[data-theme='dark'] .email-action-help { color:#bfc4b8; }
+      [data-theme='dark'] .email-action-content label,[data-theme='dark'] .email-action-account { color:#e4e7dc; }
+      [data-theme='dark'] .email-action-account strong { background:#292d27; border-color:#4a5146; color:#e4e7dc; }
+      [data-theme='dark'] .email-action-content input { background:#292e27; border-color:#4a5146; color:#f0f1e9; }
+      [data-theme='dark'] .email-action-content input[readonly] { background:#292d27; color:#c4c9bc; }
+      [data-theme='dark'] .email-action-content .email-action-secondary { border-color:#4a5146; color:#f0f1e9; }
+      [data-theme='dark'] .email-action-message { background:#3c2826; color:#ffc1b8 !important; }
+      [data-theme='dark'] .email-action-help { border-color:#3b4137; }
+      [data-theme='dark'] .email-action-help a { color:#e3c76c; }
+    </style>
     <title>Fnac Pulse — Chaque service compte</title>
   </head>
   <body>
     <div id="root"></div>
+    <main id="email-action-root" class="email-action-shell" hidden>
+      <section class="email-action-card" aria-labelledby="email-action-title">
+        <div class="email-action-brand"><img src="%BASE_URL%fnac.svg" alt="Fnac"/><strong>pulse<span>.</span></strong></div>
+        <p class="email-action-kicker">Lien sécurisé</p>
+        <h1 id="email-action-title">Ouverture du lien…</h1>
+        <p id="email-action-lead" class="email-action-lead" role="status" aria-live="polite">Nous préparons votre espace sécurisé.</p>
+        <div id="email-action-content" class="email-action-content" aria-live="polite"></div>
+        <div class="email-action-help">Ce lien est personnel : ne le partagez avec personne.</div>
+      </section>
+    </main>
+    <script>
+      if (window.__fnacEmailActionMode) {
+        document.getElementById('root').hidden = true;
+        document.getElementById('email-action-root').hidden = false;
+        window.__fnacShowActionLoadError = function () {
+          if (window.__fnacEmailActionReady) return;
+          document.getElementById('email-action-title').textContent = 'Chargement impossible';
+          document.getElementById('email-action-lead').textContent = 'Vérifiez votre connexion, puis ouvrez à nouveau le lien dans Safari.';
+        };
+        if (window.__fnacEmailActionLoadFailed) window.__fnacShowActionLoadError();
+        setTimeout(window.__fnacShowActionLoadError, 12000);
+      }
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

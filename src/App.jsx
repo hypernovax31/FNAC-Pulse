@@ -359,7 +359,7 @@ export default function App() {
   const [connection,setConnection]=useState('waiting');
   const [activeNav,setActiveNav]=useState('today');
   const [sessionModal,setSessionModal]=useState(false);
-  const [adminModal,setAdminModal]=useState(false);
+  const [adminModal,setAdminModal]=useState(()=>typeof window!=='undefined'&&window.__fnacOpenAdminInvitation===true);
   const [notificationsModal,setNotificationsModal]=useState(false);
   const [installed,setInstalled]=useState(isStandalone);
   const [platform]=useState(installPlatform);

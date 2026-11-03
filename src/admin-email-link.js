@@ -5,7 +5,9 @@ function extractFirebaseActionCode(input,config,mode,message) {
   if(typeof input!=='string'||input.length>8192)return invalid();
   let url;try {url=new URL(input.trim());}catch{return invalid();}
   const hosts=[config?.authDomain,config?.projectId?`${config.projectId}.web.app`:null].filter(Boolean);
-  if(url.protocol!=='https:'||url.username||url.password||url.port||!hosts.includes(url.hostname)||url.pathname!=='/__/auth/action')return invalid();
+  const firebaseLink=hosts.includes(url.hostname)&&url.pathname==='/__/auth/action';
+  const pulseLink=config?.projectId==='fnac-pulse'&&url.hostname==='hypernovax31.github.io'&&url.pathname==='/FNAC-Pulse/';
+  if(url.protocol!=='https:'||url.username||url.password||url.port||(!firebaseLink&&!pulseLink))return invalid();
   const one=name=>url.searchParams.getAll(name).length===1?url.searchParams.get(name):null;
   const code=one('oobCode');
   if(one('mode')!==mode||one('apiKey')!==config?.apiKey||!code||!/^[^\s\u0000-\u001f\u007f]{6,2048}$/.test(code))return invalid();

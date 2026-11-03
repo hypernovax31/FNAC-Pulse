@@ -38,12 +38,12 @@ export function AdminAccounts({onLogout,onBusy}) {
             const result=await inviteAdministrator(api,{email:inviteEmail,currentPassword:invitePassword});
             setInviteEmail('');setConfirmInvite(false);
             if(result.alreadyAccepted)return 'Cette invitation a déjà été acceptée.';
-            return 'Invitation enregistrée. Prévenez la personne : elle peut choisir son mot de passe grâce au lien reçu ou conserver celui de son compte, puis accepter l’invitation dans Fnac Pulse. Si l’e-mail n’arrive pas, vérifiez aussi les indésirables.';
+            return 'Invitation enregistrée. Demandez à la personne d’ouvrir l’e-mail, de choisir son mot de passe, puis de se connecter dans Administration et d’appuyer sur « Accepter mon invitation ». Elle peut garder son mot de passe si elle a déjà un compte. Si l’e-mail n’arrive pas, vérifiez les indésirables.';
           } finally {setInvitePassword('');}
         });
       }}>
         <label><span className="form-label">Adresse e-mail de la personne</span><input className="text-input" type="email" autoComplete="off" required maxLength={254} value={inviteEmail} readOnly={confirmInvite} disabled={busy} onChange={e=>{setInviteEmail(e.target.value);setFeedback(null);}}/></label>
-        <p className="admin-account-help"><Info size={14}/><span>La personne choisit son mot de passe ou conserve celui de son compte, puis accepte l’invitation. Tous les administrateurs ont les mêmes droits sur tous les magasins.</span></p>
+        <p className="admin-account-help"><Info size={14}/><span>Saisissez son e-mail et confirmez avec votre mot de passe. La personne recevra un lien pour choisir le sien, puis se connectera à Fnac Pulse et acceptera l’invitation. Elle pourra alors gérer tous les magasins.</span></p>
         {!confirmInvite&&<>{message('invite')}<button className="primary-button" type="submit" disabled={busy}><Plus size={16}/> Continuer</button></>}
         {confirmInvite&&<div className="admin-invite-confirm">
           <div><strong>Confirmer l’invitation</strong><p>Pour sécuriser l’envoi, confirmez votre mot de passe administrateur.</p></div>

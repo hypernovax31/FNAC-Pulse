@@ -9,6 +9,7 @@ const link=(origin=`https://${firebaseConfig.authDomain}`)=>`${origin}/__/auth/a
 test('Lien de changement d’e-mail : seules les origines Firebase du projet et la bonne action sont acceptées',()=>{
   assert.equal(extractAdminEmailChangeCode(link(),firebaseConfig),code);
   assert.equal(extractAdminEmailChangeCode(`  ${link(`https://${firebaseConfig.projectId}.web.app`)}  `,firebaseConfig),code);
+  assert.equal(extractAdminEmailChangeCode(link('https://hypernovax31.github.io').replace('/__/auth/action','/FNAC-Pulse/'),firebaseConfig),code);
   const wrong=[
     link().replace('https:','http:'),
     link('https://attaquant.example'),
@@ -27,6 +28,9 @@ test('Lien de changement d’e-mail : seules les origines Firebase du projet et 
 test('Lien de choix du mot de passe : action, projet et paramètres stricts, aucun secret dans les erreurs',()=>{
   const reset=link().replace('verifyAndChangeEmail','resetPassword');
   assert.equal(extractAdminPasswordResetCode(reset,firebaseConfig),code);
+  const appLink=reset.replace(`https://${firebaseConfig.authDomain}/__/auth/action`,'https://hypernovax31.github.io/FNAC-Pulse/');
+  assert.equal(extractAdminPasswordResetCode(appLink,firebaseConfig),code);
+  assert.throws(()=>extractAdminPasswordResetCode(appLink.replace('/FNAC-Pulse/','/autre/'),firebaseConfig));
   const wrong=[link(),reset.replace('https:','http:'),reset.replace(firebaseConfig.authDomain,'ailleurs.test'),
     reset.replace(firebaseConfig.apiKey,'autre-cle'),reset.replace('oobCode=','oobCode=DOUBLE&oobCode='),
     reset.replace('/__/auth/action','/ailleurs'),reset+'&tenantId=autre',reset.replace(code,'code%20non%20valide')];

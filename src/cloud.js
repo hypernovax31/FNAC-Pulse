@@ -15,10 +15,13 @@ import { salesGeneration, saleInGeneration } from './sales-reset.js';
 export const CLOUD=import.meta.env.VITE_BACKEND==='cloud';
 export const WORKER_URL=(import.meta.env.VITE_WORKER_URL||'').replace(/\/$/,'');
 const VAPID=import.meta.env.VITE_FIREBASE_VAPID_KEY||'';
-const app=initializeApp(firebaseConfig);
-const auth=getAuth(app), db=getFirestore(app);
-const adminApp=initializeApp(firebaseConfig,'fnac-pulse-admin');
-const adminAuth=getAuth(adminApp);
+// La page d'action e-mail est autonome, même si le navigateur télécharge
+// aussi le module principal : ne pas initialiser Auth ni lire les sessions.
+const emailActionMode=typeof window!=='undefined'&&window.__fnacEmailActionMode===true;
+const app=emailActionMode?null:initializeApp(firebaseConfig);
+const auth=app?getAuth(app):null, db=app?getFirestore(app):null;
+const adminApp=emailActionMode?null:initializeApp(firebaseConfig,'fnac-pulse-admin');
+const adminAuth=adminApp?getAuth(adminApp):null;
 export const ADMIN_SESSION='firebase-admin-session';
 export async function vendorToken() {await auth.authStateReady();return auth.currentUser?.getIdToken()||'';}
 export async function adminToken() {await adminAuth.authStateReady();return adminAuth.currentUser?.getIdToken()||'';}
