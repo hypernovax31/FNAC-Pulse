@@ -31,8 +31,11 @@ export function parseActionLink(input, {appUrl=DEFAULT_APP, project=ACTION_PROJE
     [project.authDomain,`${project.projectId}.web.app`].includes(url.hostname)&&url.pathname==='/__/auth/action';
   if(!appLink&&!firebaseLink)throw actionError('INVALID_LINK');
   const one=name=>url.searchParams.getAll(name).length===1?url.searchParams.get(name):null;
-  const mode=one('mode'),code=one('oobCode'),key=one('apiKey');
-  if(!mode||!/^[A-Za-z]{3,64}$/.test(mode)||!code||!CODE.test(code)||!key||!/^[A-Za-z0-9_-]{6,256}$/.test(key)||url.searchParams.has('tenantId'))throw actionError('INVALID_LINK');
+  const mode=one('mode'),code=one('oobCode'),keys=url.searchParams.getAll('apiKey');
+  // apiKey est facultative dans certains e-mails. Elle ne sert jamais à
+  // choisir le projet : firebasePost utilise toujours la configuration fixe.
+  if(!mode||!/^[A-Za-z]{3,64}$/.test(mode)||!code||!CODE.test(code)||keys.length>1||
+    (keys.length===1&&!/^[A-Za-z0-9_-]{6,256}$/.test(keys[0]))||url.searchParams.has('tenantId'))throw actionError('INVALID_LINK');
   // Ne jamais suivre une redirection continueUrl arbitraire. Si une action
   // non gérée doit retourner au gestionnaire Firebase, conserver seulement
   // une continuation située dans l'application elle-même.

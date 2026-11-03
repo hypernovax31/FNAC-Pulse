@@ -8,6 +8,7 @@ const link=(origin=`https://${firebaseConfig.authDomain}`)=>`${origin}/__/auth/a
 
 test('Lien de changement d’e-mail : seules les origines Firebase du projet et la bonne action sont acceptées',()=>{
   assert.equal(extractAdminEmailChangeCode(link(),firebaseConfig),code);
+  assert.equal(extractAdminEmailChangeCode(link().replace(`&apiKey=${firebaseConfig.apiKey}`,''),firebaseConfig),code);
   assert.equal(extractAdminEmailChangeCode(`  ${link(`https://${firebaseConfig.projectId}.web.app`)}  `,firebaseConfig),code);
   assert.equal(extractAdminEmailChangeCode(link('https://hypernovax31.github.io').replace('/__/auth/action','/FNAC-Pulse/'),firebaseConfig),code);
   const wrong=[
@@ -28,18 +29,22 @@ test('Lien de changement d’e-mail : seules les origines Firebase du projet et 
 test('Lien de choix du mot de passe : action, projet et paramètres stricts, aucun secret dans les erreurs',()=>{
   const reset=link().replace('verifyAndChangeEmail','resetPassword');
   assert.equal(extractAdminPasswordResetCode(reset,firebaseConfig),code);
+  assert.equal(extractAdminPasswordResetCode(reset.replace(`&apiKey=${firebaseConfig.apiKey}`,''),firebaseConfig),code);
   const appLink=reset.replace(`https://${firebaseConfig.authDomain}/__/auth/action`,'https://hypernovax31.github.io/FNAC-Pulse/');
   assert.equal(extractAdminPasswordResetCode(appLink,firebaseConfig),code);
+  assert.equal(extractAdminPasswordResetCode(appLink.replace(`&apiKey=${firebaseConfig.apiKey}`,''),firebaseConfig),code);
   assert.throws(()=>extractAdminPasswordResetCode(appLink.replace('/FNAC-Pulse/','/autre/'),firebaseConfig));
   const wrong=[link(),reset.replace('https:','http:'),reset.replace(firebaseConfig.authDomain,'ailleurs.test'),
-    reset.replace(firebaseConfig.apiKey,'autre-cle'),reset.replace('oobCode=','oobCode=DOUBLE&oobCode='),
-    reset.replace('/__/auth/action','/ailleurs'),reset+'&tenantId=autre',reset.replace(code,'code%20non%20valide')];
+    reset.replace(firebaseConfig.apiKey,'autre-cle'),reset.replace(firebaseConfig.apiKey,''),
+    reset.replace('mode=','mode=verifyEmail&mode='),reset.replace('oobCode=','oobCode=DOUBLE&oobCode='),
+    reset.replace('/__/auth/action','/ailleurs'),reset+'&tenantId=autre',reset+'&apiKey=seconde-cle',reset.replace(code,'code%20non%20valide')];
   for(const candidate of wrong)assert.throws(()=>extractAdminPasswordResetCode(candidate,firebaseConfig),e=>!e.message.includes(code));
 });
 
 test('Lien de vérification : seuls le projet et l’action attendue sont acceptés',()=>{
   const verification=link().replace('verifyAndChangeEmail','verifyEmail');
   assert.equal(extractAdminVerificationCode(verification,firebaseConfig),code);
+  assert.equal(extractAdminVerificationCode(verification.replace(`&apiKey=${firebaseConfig.apiKey}`,''),firebaseConfig),code);
   for(const candidate of [link(),verification.replace('verifyEmail','resetPassword'),verification.replace(firebaseConfig.authDomain,'autre.test'),verification+'&tenantId=autre'])
     assert.throws(()=>extractAdminVerificationCode(candidate,firebaseConfig),e=>!e.message.includes(code));
 });

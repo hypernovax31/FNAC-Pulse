@@ -9,8 +9,10 @@ function extractFirebaseActionCode(input,config,mode,message) {
   const pulseLink=config?.projectId==='fnac-pulse'&&url.hostname==='hypernovax31.github.io'&&url.pathname==='/FNAC-Pulse/';
   if(url.protocol!=='https:'||url.username||url.password||url.port||(!firebaseLink&&!pulseLink))return invalid();
   const one=name=>url.searchParams.getAll(name).length===1?url.searchParams.get(name):null;
-  const code=one('oobCode');
-  if(one('mode')!==mode||one('apiKey')!==config?.apiKey||!code||!/^[^\s\u0000-\u001f\u007f]{6,2048}$/.test(code))return invalid();
+  const code=one('oobCode'),keys=url.searchParams.getAll('apiKey');
+  // Certains e-mails ne portent pas apiKey. Le SDK utilise toujours la
+  // configuration du projet, jamais une clé fournie par le lien.
+  if(one('mode')!==mode||keys.length>1||(keys.length===1&&keys[0]!==config?.apiKey)||!code||!/^[^\s\u0000-\u001f\u007f]{6,2048}$/.test(code))return invalid();
   if(url.searchParams.has('tenantId'))return invalid();
   return code;
 }
