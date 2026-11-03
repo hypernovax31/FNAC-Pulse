@@ -8,7 +8,9 @@ export function StartupGate({base='/',enabled=true,ready=true,status='ready',onS
   return <main className="startup-screen" aria-labelledby="startup-title">
     <header className="startup-topbar">
       <div className="startup-brand" aria-label="Fnac Pulse"><img src={`${base}fnac.svg`} width="34" height="35" alt=""/><strong>pulse<span>.</span></strong></div>
-      <span className="startup-top-context">ESPACE ÉQUIPE</span>
+      <button type="button" className="startup-sound-toggle" onClick={onSound} disabled={busy} aria-pressed={enabled} aria-label={enabled?'Désactiver le son Fnac':'Activer le son Fnac'}>
+        {enabled?<Volume2 size={17} aria-hidden="true"/>:<VolumeX size={17} aria-hidden="true"/>}<span>{enabled?'SON activée':'SON désactivé'}</span>
+      </button>
     </header>
     <div className="startup-body">
       <section className="startup-card">
@@ -21,11 +23,8 @@ export function StartupGate({base='/',enabled=true,ready=true,status='ready',onS
           {!ready?'Préparation…':busy?'Ouverture…':failed?'Réessayer':'Accéder aux services'} <ArrowRight size={18} aria-hidden="true"/>
         </button>
         {failed&&<button type="button" className="startup-continue" onClick={onContinue}>Continuer sans son</button>}
-        <button type="button" className="startup-sound-toggle" onClick={onSound} disabled={busy} aria-pressed={enabled} aria-label={enabled?'Désactiver le son Fnac':'Activer le son Fnac'}>
-          {enabled?<Volume2 size={17} aria-hidden="true"/>:<VolumeX size={17} aria-hidden="true"/>}<span>{enabled?'SON activée':'SON désactivé'}</span>
-        </button>
       </section>
     </div>
-    <footer className="startup-footnote">Chaque service compte.</footer>
+    <footer className="startup-footnote"><span>ESPACE ÉQUIPE</span><p>Chaque service compte.</p></footer>
   </main>;
 }
