@@ -2,7 +2,7 @@ import locations from '../server/locations.json' with {type:'json'};
 import directorySnapshot from '../server/fnac-directory.json' with {type:'json'};
 import { DIRECTORY_VERSION, REGIONAL_CHOICES_VERSION, mergeStoreDirectory, mergeRegionalChoices, initialDirectorySync } from '../src/store-directory.js';
 import { fetchFnacDirectory, assertDirectoryCoverage, validateFnacDirectoryCopy, DirectorySourceError } from './fnac-source.js';
-import { FirestoreRest, FirebaseError, googleAccessToken, verifyIdToken, makeCustomToken, digestBase64, pinMac, verifyPin } from './firebase.js';
+import { FirestoreRest, FirebaseError, googleAccessToken, verifyIdToken, makeCustomToken, lookupFirebaseAccount, digestBase64, pinMac, verifyPin } from './firebase.js';
 import { LEGACY_STORE_ID, comparePeople, sellerStoreId, serviceRemovedForStore, servicesForStore } from '../src/catalog.js';
 import { validGoalValues, GOAL_PERIODS, validWorkdays, normalizeWorkdays } from '../src/goals.js';
 import { saleMessage } from '../src/sale-message.js';
@@ -30,6 +30,11 @@ const STORE_ID=/^[A-Za-z0-9_-]{1,80}$/;
 const ADMIN_ID=/^[A-Za-z0-9_-]{1,128}$/;
 const ADMIN_RECENT_SECONDS=5*60;
 const ADMIN_INVITATION_MS=7*24*60*60*1000;
+// Une reprise d'une création interrompue est autorisée pendant sept jours ;
+// seul un compte Firebase né après cette réservation peut bénéficier de
+// l'exception de confirmation d'adresse consentie par l'administrateur.
+const ADMIN_DIRECT_MS=7*24*60*60*1000;
+const ADMIN_DIRECT_SOURCE='direct-v1';
 const normalizeAdminEmail=value=>typeof value==='string'?value.trim().toLowerCase():'';
 const validAdminEmail=value=>value.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 // Diagnostics anonymes : aucun jeton, identifiant ou texte utilisateur dans les journaux.
@@ -226,6 +231,7 @@ export function createWorker(deps={}) {
   const createDb=deps.createDb || (env=>new FirestoreRest(env));
   const verify=deps.verifyIdToken || verifyIdToken;
   const custom=deps.makeCustomToken || makeCustomToken;
+  const lookupAccount=deps.lookupFirebaseAccount || lookupFirebaseAccount;
   const send=deps.sendFcm || sendFcm;
   const directoryFetch=deps.fetchDirectory || fetch;
 
@@ -292,7 +298,7 @@ export function createWorker(deps={}) {
     }
     throw new Error('Import de l’annuaire impossible après modifications simultanées');
   }
-  async function admin(req,env,db) {
+  async function admin(req,env,db,{allowPasswordChange=false}={}) {
     if(!env.ADMIN_UID)fail(503,'Administration non configurée.');
     let payload;try{payload=await verify(env,authHeader(req));}catch{fail(401,'Session administrateur expirée. Reconnectez-vous.');}
     // L'UID historique conserve exactement son accès, même si son ancien
@@ -301,12 +307,117 @@ export function createWorker(deps={}) {
     if(!ADMIN_ID.test(payload.sub||'')||payload.role==='seller'||payload.firebase?.sign_in_provider!=='password')fail(403,'Accès administrateur refusé.');
     const grant=await db.get(`pulseAdmins/${payload.sub}`);
     if(!grant?.data?.active)fail(403,'Accès administrateur refusé.');
-    if(payload.email_verified!==true)fail(403,'Confirmez votre adresse e-mail avec le lien reçu avant de vous connecter.');
+    if(payload.email_verified!==true) {
+      // Exception réservée aux comptes réellement créés dans le nouveau
+      // parcours, et liée à l'adresse acceptée par leur créateur. On ne
+      // prétend pas que Firebase a vérifié cette adresse.
+      const email=normalizeAdminEmail(payload.email);
+      const direct=grant.data.source===ADMIN_DIRECT_SOURCE&&grant.data.requiresVerifiedEmail===false&&
+        validAdminEmail(email)&&grant.data.directEmailDigest===await digestBase64(`direct-admin-email:${email}`);
+      if(!direct)fail(403,'Confirmez votre adresse e-mail avec le lien reçu avant de vous connecter.');
+    }
+    if(grant.data.source===ADMIN_DIRECT_SOURCE&&!allowPasswordChange) {
+      if(grant.data.passwordChangeRequired!==false)fail(403,'Choisissez d’abord votre propre mot de passe administrateur.');
+      // Un jeton obtenu avec le mot de passe provisoire reste signé jusqu'à son
+      // expiration. Exiger une connexion postérieure au changement empêche
+      // son utilisation, même si Firebase n'a pas encore expiré ce jeton.
+      const changed=grant.data.passwordChangedAt;
+      if(!Number.isFinite(changed)||!Number.isFinite(payload.auth_time)||payload.auth_time<=Math.floor(changed/1000))
+        fail(401,'Reconnectez-vous avec votre nouveau mot de passe.');
+    }
     return payload;
   }
   function recentAdminAuthentication(payload) {
     const now=Math.floor(Date.now()/1000);
     return Number.isFinite(payload?.auth_time)&&payload.auth_time>=now-ADMIN_RECENT_SECONDS&&payload.auth_time<=now+10;
+  }
+  async function directReservationPath(actor,email) {
+    return `pulseAdminDirectRequests/${await digestBase64(`direct-admin-request:${actor.sub}:${email}`)}`;
+  }
+  async function beginDirectAdministrator(env,db,actor,body) {
+    if(!recentAdminAuthentication(actor))fail(401,'Confirmez à nouveau votre mot de passe administrateur.');
+    const email=normalizeAdminEmail(body?.email);
+    if(!validAdminEmail(email)||body?.confirmed!==true||body?.password!==undefined||body?.currentPassword!==undefined)
+      fail(400,'Vérifiez l’adresse et confirmez la création sans e-mail.');
+    if(normalizeAdminEmail(actor.email)===email)fail(409,'Cette adresse correspond à votre propre compte administrateur.');
+    await limitAuthentication(env,`admin-direct:${actor.sub}`);
+    const path=await directReservationPath(actor,email);
+    for(let attempt=0;attempt<8;attempt++) {
+      const previous=await db.get(path),now=Date.now(),old=previous?.data;
+      if(old?.createdBy===actor.sub&&SAFE_ID.test(old.requestId||'')&&
+         (old.status==='completed'||(old.status==='pending'&&Number.isFinite(old.expiresAt)&&old.expiresAt>now)))
+        return {ok:true,requestId:old.requestId,resume:true};
+      const next={createdBy:actor.sub,requestId:crypto.randomUUID(),status:'pending',startedAt:now,expiresAt:now+ADMIN_DIRECT_MS};
+      try {await db.commit([db.write(path,next,precondition(previous))]);return {ok:true,requestId:next.requestId,resume:false};}
+      catch(error){if(!conflict(error))throw error;}
+    }
+    fail(409,'Création modifiée simultanément. Réessayez.');
+  }
+  async function completeDirectAdministrator(env,db,actor,body) {
+    if(!recentAdminAuthentication(actor))fail(401,'Confirmez à nouveau votre mot de passe administrateur.');
+    const email=normalizeAdminEmail(body?.email),requestId=body?.requestId;
+    if(!validAdminEmail(email)||!SAFE_ID.test(requestId||'')||typeof body?.userToken!=='string'||
+       body.userToken.length<20||body.userToken.length>8192||body?.password!==undefined||body?.currentPassword!==undefined)
+      fail(400,'Création du compte invalide.');
+    let target;try{target=await verify(env,body.userToken);}catch{fail(400,'Compte à ajouter invalide.');}
+    if(!ADMIN_ID.test(target.sub||'')||target.sub===env.ADMIN_UID||target.sub===actor.sub||target.role==='seller'||
+       target.firebase?.sign_in_provider!=='password'||normalizeAdminEmail(target.email)!==email||!recentAdminAuthentication(target))
+      fail(400,'Le nouveau compte doit être connecté avec l’adresse et le mot de passe indiqués.');
+    const path=await directReservationPath(actor,email),adminPath=`pulseAdmins/${target.sub}`,accessPath=`pulseAccess/${target.sub}`;
+    for(let attempt=0;attempt<8;attempt++) {
+      const [request,access,existing]=await Promise.all([db.get(path),db.get(accessPath),db.get(adminPath)]),r=request?.data;
+      if(!r||r.createdBy!==actor.sub||r.requestId!==requestId)fail(409,'Cette demande de création a changé. Recommencez.');
+      if(r.status==='completed') {
+        if(r.targetUid===target.sub&&existing?.data?.active&&existing.data.source===ADMIN_DIRECT_SOURCE)return {ok:true,already:true};
+        fail(409,'Ce compte administrateur ne peut pas être modifié par cette demande.');
+      }
+      if(r.status!=='pending'||!Number.isFinite(r.startedAt)||!Number.isFinite(r.expiresAt)||r.expiresAt<=Date.now())
+        fail(409,'Cette demande de création a expiré. Recommencez.');
+      if(access)fail(409,'Utilisez un compte distinct du profil vendeur.');
+      if(existing)fail(409,'Ce compte possède déjà des droits. Ses protections restent inchangées.');
+      let account;try{account=await lookupAccount(env,body.userToken);}catch{fail(503,'Vérification Firebase indisponible. Le compte est peut-être créé, mais ses droits ne sont pas confirmés. Réessayez avec les mêmes identifiants.');}
+      if(account?.localId!==target.sub||normalizeAdminEmail(account.email)!==email||account.disabled===true||
+         !Number.isFinite(account.createdAt)||account.createdAt<r.startedAt||account.createdAt>Date.now()+10000||
+         !Number.isFinite(account.passwordUpdatedAt)||account.passwordUpdatedAt<=0)
+        fail(409,'Cette adresse possède déjà un compte ou ses informations ne peuvent pas être vérifiées. Aucun nouveau droit n’a été attribué.');
+      const grant={active:true,createdBy:actor.sub,createdAt:new Date().toISOString(),source:ADMIN_DIRECT_SOURCE,
+        requiresVerifiedEmail:false,directEmailDigest:await digestBase64(`direct-admin-email:${email}`),
+        passwordChangeRequired:true,initialPasswordUpdatedAt:account.passwordUpdatedAt,firebaseCreatedAt:account.createdAt};
+      const complete={...r,status:'completed',targetUid:target.sub,completedAt:Date.now()};
+      try {
+        // Auth et Firestore ne sont pas atomiques, mais l'absence de profil
+        // vendeur, le droit et la consommation de la réservation le sont.
+        await db.commit([db.verify(accessPath,precondition(access)),db.write(adminPath,grant,{exists:false}),db.write(path,complete,precondition(request))]);
+        return {ok:true,already:false};
+      } catch(error){if(!conflict(error))throw error;}
+    }
+    fail(409,'Création modifiée simultanément. Réessayez avec les mêmes identifiants.');
+  }
+  async function administratorAccountStatus(req,env,db) {
+    const user=await admin(req,env,db,{allowPasswordChange:true});
+    if(user.sub===env.ADMIN_UID)return {passwordChangeRequired:false};
+    const path=`pulseAdmins/${user.sub}`;
+    for(let attempt=0;attempt<8;attempt++) {
+      const grant=await db.get(path),g=grant?.data;
+      if(!g?.active)fail(403,'Accès administrateur refusé.');
+      if(g.source!==ADMIN_DIRECT_SOURCE)return {passwordChangeRequired:false};
+      if(g.passwordChangeRequired===false) {
+        if(!Number.isFinite(g.passwordChangedAt))fail(503,'Vérification du compte indisponible. Réessayez plus tard.');
+        return {passwordChangeRequired:false,...(user.auth_time<=Math.floor(g.passwordChangedAt/1000)?{reauthenticate:true}:{})};
+      }
+      if(!Number.isFinite(g.initialPasswordUpdatedAt)||g.initialPasswordUpdatedAt<=0||!Number.isFinite(g.firebaseCreatedAt))
+        fail(503,'Vérification du compte indisponible. Réessayez plus tard.');
+      let account;try{account=await lookupAccount(env,authHeader(req));}catch{fail(503,'Vérification Firebase indisponible. Réessayez plus tard.');}
+      if(account?.localId!==user.sub||normalizeAdminEmail(account.email)!==normalizeAdminEmail(user.email)||account.disabled===true||
+         account.createdAt!==g.firebaseCreatedAt||!Number.isFinite(account.passwordUpdatedAt))
+        fail(403,'Vérification du compte administrateur impossible.');
+      if(account.passwordUpdatedAt<=g.initialPasswordUpdatedAt)return {passwordChangeRequired:true};
+      try {
+        await db.commit([db.write(path,{...g,passwordChangeRequired:false,passwordChangedAt:account.passwordUpdatedAt},precondition(grant))]);
+        return {passwordChangeRequired:false,...(user.auth_time<=Math.floor(account.passwordUpdatedAt/1000)?{reauthenticate:true}:{})};
+      } catch(error){if(!conflict(error))throw error;}
+    }
+    fail(409,'Compte modifié simultanément. Reconnectez-vous.');
   }
   async function grantAdministrator(env,db,actor,body) {
     if(!recentAdminAuthentication(actor))fail(401,'Confirmez à nouveau votre mot de passe administrateur.');
@@ -1481,8 +1592,11 @@ export function createWorker(deps={}) {
     if(method==='DELETE'&&sale)return deleteSale(req,env,db,sale[1]);
     if((method==='POST'||method==='DELETE')&&path==='/api/push/subscribe')return tokenSubscribe(req,env,db,await readBody(req),method);
     if(method==='POST'&&path==='/api/auth/admin-invitations/accept')return acceptAdministratorInvitation(req,env,db,await readBody(req));
+    if(method==='POST'&&path==='/api/auth/admin-account-status')return administratorAccountStatus(req,env,db);
     if(path.startsWith('/api/admin/')) {
       const administrator=await admin(req,env,db);
+      if(method==='POST'&&path==='/api/admin/direct-account/start')return beginDirectAdministrator(env,db,administrator,await readBody(req));
+      if(method==='POST'&&path==='/api/admin/direct-account/complete')return completeDirectAdministrator(env,db,administrator,await readBody(req));
       if(method==='POST'&&path==='/api/admin/invitations')return inviteAdministrator(env,db,administrator,await readBody(req));
       if(method==='POST'&&path==='/api/admin/administrators')return grantAdministrator(env,db,administrator,await readBody(req));
       if(method==='GET'&&path==='/api/admin/all'){const d=(await catalog(db)).data;return {sellers:d.sellers,services:d.services,serviceOrders:d.serviceOrders||{},serviceRemovalsByStore:d.serviceRemovalsByStore||{},departmentsByStore:d.departmentsByStore||{},directorySync:d.directorySync||null};}

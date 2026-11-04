@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, LockKeyhole, ArrowRight, Plus, Check, Pencil, Archive, RotateCcw, LogOut, ShieldCheck, Store, Info, ArrowUp, ArrowDown, Trash2 } from 'lucide-react';
 import { api } from './api';
-import { CLOUD, adminLogin, adminLogout, resendAdminVerification } from './cloud';
+import { CLOUD, ADMIN_SESSION, adminLogin, adminLogout, resendAdminVerification } from './cloud';
 import { AdminAccounts } from './AdminAccounts';
+import { AdminFirstPassword } from './AdminFirstPassword';
 import { DirectoryImport } from './DirectoryImport';
 import { sellersForStore, orderServices, serviceRemovedForStore } from './catalog';
 import { departmentsForStore, sellerDepartmentId } from './departments';
@@ -68,6 +69,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [token,setToken]=useState(()=>sessionStorage.getItem('pulse-admin-token')||'');
   const [password,setPassword]=useState('');
   const [email,setEmail]=useState('');
+  const [firstPassword,setFirstPassword]=useState(false),[firstBusy,setFirstBusy]=useState(false);
   const [error,setError]=useState('');
   const [notice,setNotice]=useState('');
   const [busy,setBusy]=useState(false);
@@ -166,6 +168,16 @@ export default function Admin({onClose,data,session,onChanged}) {
         auth=await adminLogin(email,password);
         try {
           if(acceptInvitation)await api('/api/auth/admin-invitations/accept',{method:'POST',token:auth,body:{confirmed:true}});
+          let status=await api('/api/auth/admin-account-status',{method:'POST',token:auth,body:{}});
+          if(status.passwordChangeRequired){setFirstPassword(true);setPassword('');return;}
+          if(status.reauthenticate) {
+            // Les jetons Firebase ont une précision d'une seconde. Attendre un
+            // instant avant de se reconnecter avec le nouveau mot de passe.
+            await new Promise(resolve=>setTimeout(resolve,1100));
+            await adminLogin(email,password);
+            status=await api('/api/auth/admin-account-status',{method:'POST',token:auth,body:{}});
+            if(status.reauthenticate)throw new Error('Patientez un instant puis reconnectez-vous avec votre nouveau mot de passe.');
+          }
           await api('/api/admin/all',{token:auth});
         }catch(e){
           await adminLogout();
@@ -177,6 +189,30 @@ export default function Admin({onClose,data,session,onChanged}) {
       if(acceptInvitation)setNotice('Invitation acceptée. Vous disposez maintenant des droits administrateur.');
     }
     catch(e){setError(e.message);} finally{setBusy(false);}
+  }
+  async function finishFirstPassword(newPassword) {
+    let status=await api('/api/auth/admin-account-status',{method:'POST',token:ADMIN_SESSION,body:{}});
+    if(status.passwordChangeRequired)throw new Error('Le changement de mot de passe n’a pas encore été confirmé.');
+    if(status.reauthenticate&&newPassword) {
+      // Une nouvelle connexion rend inutilisable l'ancien jeton associé au
+      // mot de passe provisoire ; la session vendeur reste indépendante.
+      await new Promise(resolve=>setTimeout(resolve,1100));
+      await adminLogin(email,newPassword);
+      status=await api('/api/auth/admin-account-status',{method:'POST',token:ADMIN_SESSION,body:{}});
+    }
+    if(status.reauthenticate) {
+      await adminLogout();setFirstPassword(false);setPassword('');
+      setNotice('Votre mot de passe est enregistré. Reconnectez-vous avec votre nouveau mot de passe.');return;
+    }
+    if(status.passwordChangeRequired)throw new Error('Le changement de mot de passe n’a pas encore été confirmé.');
+    await api('/api/admin/all',{token:ADMIN_SESSION});
+    sessionStorage.setItem('pulse-admin-token',ADMIN_SESSION);setFirstPassword(false);setToken(ADMIN_SESSION);
+    setNotice('Votre mot de passe personnel est enregistré.');
+  }
+  async function cancelFirstPassword() {
+    if(firstBusy)return;
+    try{await adminLogout();}catch{}
+    setFirstPassword(false);setPassword('');setError('');
   }
   async function logout() {
     try {if(CLOUD)await adminLogout();else await api('/api/admin/logout',{method:'POST',token,body:{}})} catch {}
@@ -214,6 +250,10 @@ export default function Admin({onClose,data,session,onChanged}) {
     run(()=>api('/api/admin/services/order',{method:'POST',token,body:{storeId:adminStore,serviceIds:complete}}),'Ordre enregistré pour ce magasin.');
   }
 
+  if(firstPassword) return <Modal title="Créez votre mot de passe" subtitle="Une seule étape avant votre première connexion." onClose={()=>{if(!firstBusy){cancelFirstPassword();onClose();}}}>
+    <AdminFirstPassword email={email} onFinish={finishFirstPassword} onCancel={cancelFirstPassword} onBusy={setFirstBusy}/>
+  </Modal>;
+
   if(!token) return <Modal title="Espace administrateur" subtitle="Un accès réservé pour gérer votre espace." onClose={onClose}>
     <div className="admin-login-illustration"><div className="admin-lock"><LockKeyhole size={24}/></div><div><strong>Gardez la main sur votre équipe.</strong><p>Gérez les vendeurs, les services et les ventes du jour.</p></div></div>
     <form onSubmit={login} className="admin-login-form">
@@ -228,7 +268,8 @@ export default function Admin({onClose,data,session,onChanged}) {
         catch(e){setError(e.message);}finally{setBusy(false);}
       }}>Renvoyer le lien de confirmation</button>}
       <button className="primary-button full-button" type="submit" disabled={busy}>{busy?'Connexion…':'Se connecter'} <ArrowRight size={16}/></button>
-      {CLOUD&&<div className="admin-invitation-accept"><strong>Vous avez été invité ?</strong><p>Choisissez votre mot de passe grâce au lien reçu, puis renseignez votre e-mail et votre mot de passe ci-dessus. En acceptant, vous disposerez des droits sur tous les magasins.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>login(null,true)}>Accepter mon invitation</button></div>}
+      {CLOUD&&<p className="admin-direct-login-help">Accès créé par un administrateur ? Utilisez l’adresse et le mot de passe provisoire transmis en privé.</p>}
+      {CLOUD&&<div className="admin-invitation-accept"><strong>Vous avez reçu une ancienne invitation ?</strong><p>Choisissez votre mot de passe grâce au lien reçu, puis renseignez votre e-mail et votre mot de passe ci-dessus. En acceptant, vous disposerez des droits sur tous les magasins.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>login(null,true)}>Accepter mon invitation</button></div>}
       <p className="form-footnote"><ShieldCheck size={14}/> L’accès administrateur est protégé par mot de passe.</p>
     </form>
     {CLOUD&&<AdminInvitationHelp email={email} busy={busy} onBusy={setBusy} onCompleted={address=>{setEmail(address);setPassword('');}} onVerified={setEmail}/>}

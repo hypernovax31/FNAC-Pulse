@@ -270,9 +270,59 @@ function provisioningMessage(error,existing) {
     default:return 'Création ou connexion du compte impossible. Vérifiez votre connexion et réessayez.';
   }
 }
-// Un deuxième FirebaseApp en mémoire évite de déconnecter le vendeur ou
-// l’administrateur courant. Le mot de passe va directement à Firebase Auth ;
-// le Worker reçoit seulement le jeton signé du compte à autoriser.
+// Création directe explicitement demandée : ni invitation, ni e-mail. La
+// réservation serveur permet de reprendre une réponse perdue sans transformer
+// un ancien compte en administrateur. Le mot de passe ne va qu'à Firebase Auth.
+export async function createDirectAdministrator(api,{email,password,currentPassword,confirmed=false}) {
+  const address=String(email||'').trim();
+  if(!address||address.length>254)throw new Error('Indiquez une adresse e-mail valide.');
+  if(typeof password!=='string'||password.length<12||password.length>128)throw new Error('Le mot de passe provisoire doit comporter de 12 à 128 caractères.');
+  if(password===currentPassword)throw new Error('Choisissez un mot de passe provisoire différent du vôtre.');
+  if(!confirmed)throw new Error('Confirmez que vous avez vérifié l’adresse et les droits accordés.');
+  await reauthenticateAdmin(currentPassword);
+  const startBody={email:address,confirmed:true};let reservation;
+  try {reservation=await api('/api/admin/direct-account/start',{method:'POST',token:ADMIN_SESSION,body:startBody});}
+  catch(error) {
+    if(error?.status&&error.status<500)throw error;
+    try {reservation=await api('/api/admin/direct-account/start',{method:'POST',token:ADMIN_SESSION,body:startBody});}
+    catch {throw new Error('La création n’a pas pu être préparée. Aucun compte n’a été créé par cette tentative.');}
+  }
+  if(!reservation?.ok||!reservation.requestId)throw new Error('La création n’a pas pu être préparée. Aucun compte n’a été créé par cette tentative.');
+  const temporary=initializeApp(firebaseConfig,`fnac-pulse-direct-admin-${secureRandomText()}`),temporaryAuth=getAuth(temporary);
+  let accountCreated=false;
+  try {
+    await setPersistence(temporaryAuth,inMemoryPersistence);
+    let user;
+    try {
+      user=(await createUserWithEmailAndPassword(temporaryAuth,address,password)).user;accountCreated=true;
+    } catch(error) {
+      if(error?.code==='auth/email-already-in-use'&&reservation.resume) {
+        // Ce n'est qu'une reprise possible : le serveur vérifie ensuite auprès
+        // de Firebase que le compte est né après la réservation initiale.
+        try {user=(await signInWithEmailAndPassword(temporaryAuth,address,password)).user;}
+        catch {throw new Error('Cette adresse est déjà utilisée ou le mot de passe provisoire ne correspond pas. Aucun nouveau droit n’a été attribué.');}
+      } else if(error?.code==='auth/email-already-in-use') {
+        throw new Error('Cette adresse possède déjà un compte Firebase. Aucun droit n’a été modifié ; la création directe est réservée aux nouveaux comptes.');
+      } else if(error?.code==='auth/network-request-failed') {
+        throw new Error('La création du compte n’est pas confirmée. Réessayez avec la même adresse et le même mot de passe provisoire.');
+      } else {throw new Error(provisioningMessage(error,false));}
+    }
+    let userToken;
+    try {userToken=await user.getIdToken(true);}
+    catch {throw new Error('Le compte est peut-être créé, mais ses droits ne sont pas confirmés. Réessayez avec les mêmes identifiants.');}
+    const body={email:address,requestId:reservation.requestId,userToken};let result;
+    try {result=await api('/api/admin/direct-account/complete',{method:'POST',token:ADMIN_SESSION,body});}
+    catch(error) {
+      if(error?.status&&error.status<500)throw error;
+      try {result=await api('/api/admin/direct-account/complete',{method:'POST',token:ADMIN_SESSION,body});}
+      catch {throw new Error('Le compte est peut-être créé, mais ses droits ne sont pas confirmés. Réessayez avec les mêmes identifiants.');}
+    }
+    if(!result?.ok)throw new Error('Le compte est peut-être créé, mais ses droits ne sont pas confirmés. Réessayez avec les mêmes identifiants.');
+    return {already:!!result.already,accountCreated};
+  } finally {await signOut(temporaryAuth).catch(()=>{});await deleteApp(temporary).catch(()=>{});}
+}
+// Ancien parcours conservé pour la compatibilité : il exige toujours la
+// confirmation e-mail et n'est pas utilisé par la nouvelle interface.
 export async function createAdministrator(api,{email,password,currentPassword,existing=false}) {
   const address=String(email||'').trim();
   if(!address||address.length>254)throw new Error('Indiquez une adresse e-mail valide.');

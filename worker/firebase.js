@@ -1,4 +1,5 @@
 import { importPKCS8, SignJWT, jwtVerify, createRemoteJWKSet } from 'jose';
+import { firebaseConfig } from '../src/firebase-config.js';
 
 const GOOGLE_KEYS = createRemoteJWKSet(new URL('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'));
 const enc = new TextEncoder();
@@ -46,6 +47,23 @@ export async function verifyIdToken(env,token) {
   });
   if (!payload.sub || payload.sub.length>128 || !Number.isFinite(payload.auth_time) || payload.auth_time>Math.floor(Date.now()/1000)+10) throw new Error('Jeton Firebase invalide');
   return payload;
+}
+// Lecture limitée au compte qui présente son propre jeton Firebase. L'API Web
+// et sa clé publique ne requièrent pas le rôle IAM de gestion des utilisateurs.
+// Ne jamais journaliser la réponse : elle peut contenir des données du compte.
+export async function lookupFirebaseAccount(env,idToken) {
+  if(env.FIREBASE_PROJECT_ID!==firebaseConfig.projectId||typeof idToken!=='string'||!idToken)throw new Error('Compte Firebase indisponible');
+  const url=`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
+  const result=await fetch(url,{
+    method:'POST',redirect:'error',cache:'no-store',signal:AbortSignal.timeout(10000),
+    headers:{'content-type':'application/json',...(env.APP_URL?{referer:env.APP_URL}:{})},
+    body:JSON.stringify({idToken}),
+  });
+  if(!result.ok)throw new Error('Compte Firebase indisponible');
+  const json=await result.json(),users=json?.users;
+  if(!Array.isArray(users)||users.length!==1)throw new Error('Compte Firebase indisponible');
+  const u=users[0];
+  return {localId:u.localId,email:u.email,disabled:u.disabled===true,createdAt:Number(u.createdAt),passwordUpdatedAt:Number(u.passwordUpdatedAt)};
 }
 export async function digestBase64(text) {
   const bytes=new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(text)));

@@ -746,3 +746,98 @@ test('Émulateurs Firebase : invitation sans secret tiers, choix du mot de passe
     await unlink(generated).catch(()=>{});
   }
 });
+
+test('Émulateurs Firebase : création directe sans e-mail, mot de passe personnel et reprise sûre', {skip:!enabled}, async()=>{
+  const project='demo-fnac',port=9099,stamp=Date.now(),generated=`${process.cwd()}/node_modules/.fnac-pulse-tests/direct-${process.pid}-${stamp}.mjs`;
+  await mkdir(`${process.cwd()}/node_modules/.fnac-pulse-tests`,{recursive:true});
+  await build({entryPoints:['src/cloud.js'],outfile:generated,bundle:true,platform:'node',format:'esm',external:['firebase/*'],
+    define:{'import.meta.env':JSON.stringify({VITE_BACKEND:'cloud',MODE:'test'})},plugins:[{name:'direct-emulators-only',setup(b){
+      b.onResolve({filter:/^\.\/firebase-config$/},()=>({path:'config',namespace:'test-config'}));
+      b.onLoad({filter:/.*/,namespace:'test-config'},()=>({contents:`export const firebaseConfig=${JSON.stringify({apiKey:'demo-key',projectId:project,authDomain:'demo-fnac.firebaseapp.com',appId:'1:1:web:demo'})};`,loader:'js'}));
+      b.onResolve({filter:/^firebase\/auth$/},args=>args.namespace==='test-auth'?{path:'firebase/auth',external:true}:{path:'auth',namespace:'test-auth'});
+      b.onLoad({filter:/.*/,namespace:'test-auth'},()=>({contents:`import * as auth from 'firebase/auth'; export * from 'firebase/auth';
+        const seen=new WeakSet(); export function getAuth(app){const result=auth.getAuth(app);if(!seen.has(result)){auth.connectAuthEmulator(result,'http://127.0.0.1:${port}',{disableWarnings:true});seen.add(result);}return result;}
+        export async function createUserWithEmailAndPassword(...args){const value=await auth.createUserWithEmailAndPassword(...args);if(globalThis.__directLostCreate){globalThis.__directLostCreate=false;throw Object.assign(Error('réponse fictive perdue'),{code:'auth/network-request-failed'});}return value;}` ,loader:'js'}));
+    }}]});
+  const before=new Set(getApps().map(a=>a.name)),cloud=await import(pathToFileURL(generated).href);
+  const adminAuth=getAuth(getApp('fnac-pulse-admin')),sellerAuth=getAuth(getApp());
+  const db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'});
+  const rootEmail=`direct-root-${stamp}@example.test`,targetEmail=`direct-new-${stamp}@example.test`,rootPassword='Root-Password-2026!';
+  const tempPassword='Provisional-Password-2026!',newPassword='Personal-Password-2026!';
+  const root=(await createUserWithEmailAndPassword(adminAuth,rootEmail,rootPassword)).user;
+  const sellerUid=`seller-direct-${stamp}`;await signInWithCustomToken(sellerAuth,fakeCustomToken({},sellerUid,{role:'seller',storeId:'store-test',sellerId:1,sellerKey:'s1',accessVersion:'unchanged'}));
+  const lookup=async(_env,idToken)=>{
+    const result=await fetch(`http://127.0.0.1:${port}/identitytoolkit.googleapis.com/v1/accounts:lookup?key=demo-key`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({idToken})});
+    if(!result.ok)throw Error('fictif');const json=await result.json(),u=json.users[0];
+    return {localId:u.localId,email:u.email,disabled:u.disabled===true,createdAt:Number(u.createdAt),passwordUpdatedAt:Number(u.passwordUpdatedAt)};
+  };
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>JSON.parse(Buffer.from(t.split('.')[1],'base64url').toString()),lookupFirebaseAccount:lookup});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:root.uid,PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),ALLOWED_ORIGIN:'http://example.test',LOGIN_LIMITER:{async limit(){return {success:true};}}};
+  const ctx={waitUntil(){}};
+  const call=async(path,body,token)=>{
+    const res=await worker.fetch(new Request(`https://worker.test${path}`,{method:body?'POST':'GET',headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:res.status,json:await res.json()};
+  };
+  const seenBodies=[];
+  const api=async(path,options={})=>{
+    assert.equal(options.token,cloud.ADMIN_SESSION);seenBodies.push({path,body:options.body});
+    if(options.body)assert(!('password' in options.body)&&!('currentPassword' in options.body),'aucun mot de passe au Worker');
+    const result=await call(path,options.body,await adminAuth.currentUser.getIdToken());
+    if(result.status>=400){const e=new Error(result.json.error||'Erreur');e.status=result.status;throw e;}return result.json;
+  };
+  const codes=async()=>(await (await fetch(`http://127.0.0.1:${port}/emulator/v1/projects/${project}/oobCodes`)).json()).oobCodes||[];
+  const accounts=async()=>(await (await fetch(`http://127.0.0.1:${port}/identitytoolkit.googleapis.com/v1/projects/${project}/accounts:batchGet?maxResults=1000&key=demo-key`,{headers:{Authorization:'Bearer owner'}})).json()).users||[];
+  let clientApp;
+  try {
+    assert.match(adminAuth.config.emulator.url,/127\.0\.0\.1:9099/);assert.match(sellerAuth.config.emulator.url,/127\.0\.0\.1:9099/);
+    const result=await cloud.createDirectAdministrator(api,{email:targetEmail,password:tempPassword,currentPassword:rootPassword,confirmed:true});
+    assert.deepEqual(result,{already:false,accountCreated:true});assert.equal(adminAuth.currentUser.uid,root.uid);assert.equal(sellerAuth.currentUser.uid,sellerUid);
+    assert(!getApps().some(a=>a.name.startsWith('fnac-pulse-direct-admin-')),'application temporaire détruite');
+    assert(!(await codes()).some(x=>x.email===targetEmail),'aucun e-mail créé');
+    clientApp=initializeApp({apiKey:'demo-key',projectId:project,appId:'1:1:web:demo'},`direct-check-${stamp}`);
+    const targetAuth=getAuth(clientApp);connectAuthEmulator(targetAuth,`http://127.0.0.1:${port}`,{disableWarnings:true});
+    const target=(await signInWithEmailAndPassword(targetAuth,targetEmail,tempPassword)).user,oldToken=await target.getIdToken(true);
+    assert.equal(target.emailVerified,false,'l’exception ne prétend pas que Firebase a vérifié l’adresse');
+    const grant=(await db.get(`pulseAdmins/${target.uid}`)).data;assert.equal(grant.passwordChangeRequired,true);assert.equal(grant.requiresVerifiedEmail,false);
+    assert.equal((await call('/api/admin/administrators',{},oldToken)).status,403);
+    assert.deepEqual((await call('/api/auth/admin-account-status',{},oldToken)).json,{passwordChangeRequired:true});
+    const {updatePassword}=await import('firebase/auth');await updatePassword(target,newPassword);
+    const changedToken=await target.getIdToken(true),changed=await call('/api/auth/admin-account-status',{},changedToken);
+    assert.equal(changed.status,200);assert.equal(changed.json.passwordChangeRequired,false);assert.equal(changed.json.reauthenticate,true);
+    assert.equal((await call('/api/admin/administrators',{},oldToken)).status,401,'un ancien jeton ne contourne pas le changement');
+    await new Promise(resolve=>setTimeout(resolve,1150));
+    await signInWithEmailAndPassword(targetAuth,targetEmail,newPassword);
+    const fresh=await targetAuth.currentUser.getIdToken(true);
+    assert.deepEqual((await call('/api/auth/admin-account-status',{},fresh)).json,{passwordChangeRequired:false});
+    assert.equal((await call('/api/admin/administrators',{},fresh)).status,400,'mêmes droits globaux après reconnexion');
+    await assert.rejects(signInWithEmailAndPassword(targetAuth,targetEmail,tempPassword));
+    assert.equal(adminAuth.currentUser.uid,root.uid);assert.equal(sellerAuth.currentUser.uid,sellerUid);
+
+    // Une adresse Firebase déjà existante ne doit pas être modifiée ni promue.
+    const oldEmail=`direct-existing-${stamp}@example.test`,oldPass='Existing-Password-2026!';
+    const existing=(await createUserWithEmailAndPassword(targetAuth,oldEmail,oldPass)).user;
+    await assert.rejects(cloud.createDirectAdministrator(api,{email:oldEmail,password:oldPass,currentPassword:rootPassword,confirmed:true}),/possède déjà un compte/);
+    assert.equal(await db.get(`pulseAdmins/${existing.uid}`),null);assert.equal((await signInWithEmailAndPassword(targetAuth,oldEmail,oldPass)).user.uid,existing.uid);
+    // Si la réponse de création Firebase est perdue, le compte reste sans
+    // droit ; la même réservation permet une reprise après contrôle Firebase.
+    const lostEmail=`direct-lost-create-${stamp}@example.test`;globalThis.__directLostCreate=true;
+    await assert.rejects(cloud.createDirectAdministrator(api,{email:lostEmail,password:tempPassword,currentPassword:rootPassword,confirmed:true}),/n’est pas confirmée/);
+    const orphan=(await accounts()).find(u=>u.email===lostEmail);assert(orphan);assert.equal(await db.get(`pulseAdmins/${orphan.localId}`),null);
+    const recovered=await cloud.createDirectAdministrator(api,{email:lostEmail,password:tempPassword,currentPassword:rootPassword,confirmed:true});
+    assert.deepEqual(recovered,{already:false,accountCreated:false});assert((await db.get(`pulseAdmins/${orphan.localId}`)).data.passwordChangeRequired);
+    assert(!(await codes()).some(x=>x.email===lostEmail));
+    // Une réponse perdue après le commit est rejouée sans double attribution.
+    const lostCommitEmail=`direct-lost-commit-${stamp}@example.test`;let drop=true;
+    const lostCommit=await cloud.createDirectAdministrator(async(...args)=>{
+      const response=await api(...args);if(drop&&args[0]==='/api/admin/direct-account/complete'){drop=false;throw new TypeError('réponse perdue');}return response;
+    },{email:lostCommitEmail,password:tempPassword,currentPassword:rootPassword,confirmed:true});
+    assert.deepEqual(lostCommit,{already:true,accountCreated:true});assert.equal(sellerAuth.currentUser.uid,sellerUid);
+    assert(!(await codes()).some(x=>x.email===lostCommitEmail));
+    assert(seenBodies.some(x=>x.path==='/api/admin/direct-account/complete'));
+  } finally {
+    delete globalThis.__directLostCreate;
+    if(clientApp)await deleteApp(clientApp);
+    for(const app of getApps())if(!before.has(app.name))await deleteApp(app);
+    await unlink(generated).catch(()=>{});
+  }
+});

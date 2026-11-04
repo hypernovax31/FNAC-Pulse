@@ -74,3 +74,23 @@ test('Firestore : pagination par nom avec curseur et filtre de magasin',async()=
   assert.equal(query.orderBy[0].field.fieldPath,'__name__');
   assert.equal(query.startAt.before,false);assert.equal(query.startAt.values[0].referenceValue,db.name('pulseOutbox/old-id'));
 });
+
+test('Firebase : lecture du compte avec le seul jeton personnel, réponse filtrée et échec fermé',async()=>{
+  const {lookupFirebaseAccount}=await import('../worker/firebase.js');
+  const old=globalThis.fetch,requests=[],env={FIREBASE_PROJECT_ID:'fnac-pulse',APP_URL:'https://example.test/FNAC-Pulse/'};
+  let answer={users:[{localId:'fake-uid',email:'fake@example.test',createdAt:'1793000000000',passwordUpdatedAt:1793000000000,passwordHash:'never-return',disabled:false}]};
+  globalThis.fetch=async(url,options)=>{requests.push({url:String(url),options});return Response.json(answer);};
+  try {
+    const result=await lookupFirebaseAccount(env,'fake-id-token');
+    assert.deepEqual(result,{localId:'fake-uid',email:'fake@example.test',disabled:false,createdAt:1793000000000,passwordUpdatedAt:1793000000000});
+    assert(!JSON.stringify(result).includes('never-return'));
+    const request=requests[0];assert.match(request.url,/^https:\/\/identitytoolkit\.googleapis\.com\/v1\/accounts:lookup\?key=/);
+    assert.deepEqual(JSON.parse(request.options.body),{idToken:'fake-id-token'});assert.equal(request.options.headers.referer,env.APP_URL);
+    assert.equal(request.options.redirect,'error');assert.equal(request.options.cache,'no-store');
+    await assert.rejects(lookupFirebaseAccount({...env,FIREBASE_PROJECT_ID:'autre-projet'},'fake-id-token'));
+    answer={users:[]};await assert.rejects(lookupFirebaseAccount(env,'fake-id-token'));
+    answer={users:[{},{}]};await assert.rejects(lookupFirebaseAccount(env,'fake-id-token'));
+    globalThis.fetch=async()=>Response.json({error:{message:'private'}},{status:403});
+    await assert.rejects(lookupFirebaseAccount(env,'fake-id-token'),e=>!e.message.includes('private'));
+  } finally {globalThis.fetch=old;}
+});

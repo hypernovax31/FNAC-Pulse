@@ -338,6 +338,7 @@ p,h1,h2,h3 { margin:0; }
 .admin-invitation-accept { margin-top:4px; padding:14px; border:1px solid var(--border); border-radius:10px; background:var(--bg); }
 .admin-invitation-accept strong { color:var(--ink); font-size:12px; }
 .admin-invitation-accept p { margin:6px 0 12px; color:var(--muted); font-size:11px; line-height:1.5; }
+.admin-direct-login-help { color:var(--muted); font-size:11px; line-height:1.5; margin:4px 0; }
 .admin-invitation-help { margin-top:14px; }
 .admin-invitation-help > .outline-button { margin-top:10px; }
 .admin-reset-proof { margin-top:12px; padding:12px; border:1px solid var(--border); border-radius:9px; background:var(--bg); }
@@ -1198,20 +1199,29 @@ p,h1,h2,h3 { margin:0; }
 .admin-account-section .admin-section-heading { margin-top:0; }
 .admin-account-help { display:flex; align-items:flex-start; gap:7px; color:var(--muted); font-size:11px; line-height:1.5; }
 .admin-account-help svg { flex:0 0 auto; margin-top:1px; }
-.admin-invite-confirm { display:grid; gap:12px; padding:14px; border:1px solid #e8dfbf; border-radius:10px; background:#fdfbf3; }
+.admin-direct-note { width:100%; display:flex; align-items:flex-start; gap:9px; padding:12px; border:1px solid #e8dfbf; border-radius:10px; background:#fdfbf3; color:var(--ink); font-size:12px; line-height:1.5; }
+.admin-direct-note svg { flex:0 0 auto; margin-top:2px; color:#9c7b0b; }
+.admin-direct-note p { margin:4px 0 0; color:var(--muted); }
+.admin-direct-check { display:flex; align-items:flex-start; gap:10px; color:var(--ink); font-size:12px; line-height:1.5; cursor:pointer; }
+.admin-direct-check input { flex:0 0 auto; width:20px; height:20px; margin:0; accent-color:#d9a900; }
+.admin-password-visibility { min-height:40px; padding:0 2px; }
+.admin-invite-confirm { width:100%; display:grid; gap:12px; padding:14px; border:1px solid #e8dfbf; border-radius:10px; background:#fdfbf3; }
 .admin-invite-confirm strong { color:var(--ink); font-size:12px; }
 .admin-invite-confirm p { margin-top:5px; color:#777b70; font-size:11px; line-height:1.5; }
 .admin-invite-confirm .admin-alert,.admin-accounts .store-form > .admin-alert { margin:0; }
 .admin-invite-actions { display:flex; align-items:center; flex-wrap:wrap; gap:10px 14px; }
 .admin-invite-actions .text-button { min-height:44px; }
-[data-theme='dark'] .admin-invite-confirm { background:#302e22; border-color:#5c5436; }
-[data-theme='dark'] .admin-invite-confirm p { color:#c5c8bb; }
+[data-theme='dark'] .admin-invite-confirm,[data-theme='dark'] .admin-direct-note { background:#302e22; border-color:#5c5436; }
+[data-theme='dark'] .admin-invite-confirm p,[data-theme='dark'] .admin-direct-note p { color:#c5c8bb; }
 .admin-email-fallback { margin-top:17px; padding-top:15px; border-top:1px solid var(--border); }
 .admin-email-fallback summary { color:var(--ink); font-size:13px; font-weight:750; cursor:pointer; }
 .admin-email-fallback > p { margin:10px 0 13px; color:var(--muted); font-size:12px; line-height:1.6; }
 .admin-email-fallback p.admin-email-working { color:var(--ink); font-weight:700; }
 .admin-email-fallback .admin-alert { margin-top:10px; overflow-wrap:anywhere; }
 .admin-accounts .logout-button { justify-self:start; }
+.admin-first-password { display:grid; gap:14px; }
+.admin-first-intro { color:var(--muted); font-size:12px; line-height:1.6; }
+.admin-first-retry { justify-self:start; min-height:40px; padding:0 2px; }
 
 /* Import facultatif : copie explicite, jamais présentée comme une synchro automatique. */
 .directory-import { margin-top:10px; padding:14px; border:1px solid var(--border); border-radius:9px; background:var(--panel); }

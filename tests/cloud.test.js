@@ -1686,6 +1686,132 @@ test('Administrateurs cloud : identité signée, confirmation e-mail, droits cô
   assert.equal((await db.get('pulseAccess/seller-uid')).data.pinMac,'préservé');
 });
 
+test('Administrateurs directs : uniquement nouveaux comptes, changement de mot de passe et protections inchangées',async()=>{
+  const db=new MemoryDb(),identities=new Map(),accounts=new Map(),now=Math.floor(Date.now()/1000),calls=[];
+  const identity=(sub,email,extra={})=>({sub,email,auth_time:now,email_verified:false,firebase:{sign_in_provider:'password'},...extra});
+  const root='root-admin-token-test-000001',oldRoot='old-admin-token-test-0000001',other='ordinary-token-test-0000001';
+  const target='direct-new-token-test-00001',oldTarget='direct-old-token-test-00001',seller='direct-seller-token-test-01';
+  identities.set(root,identity('root-admin','root@example.test'));
+  identities.set(oldRoot,identity('root-admin','root@example.test',{auth_time:now-1000}));
+  identities.set(other,identity('ordinary','ordinary@example.test'));
+  identities.set(target,identity('new-admin','new@example.test'));
+  identities.set(oldTarget,identity('old-account','old@example.test'));
+  identities.set(seller,identity('seller-uid','seller@example.test'));
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,token)=>{const found=identities.get(token);if(!found)throw Error('invalid');return found;},
+    lookupFirebaseAccount:async(_env,token)=>{calls.push(token);if(!accounts.has(token))throw Error('unavailable');return {...accounts.get(token)};}});
+  const env={ADMIN_UID:'root-admin',FIREBASE_PROJECT_ID:'demo-fnac',ALLOWED_ORIGIN:'https://example.test',PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true};}}},ctx={waitUntil(){}};
+  const call=async(path,body,token=root,origin='https://example.test')=>{
+    const res=await worker.fetch(new Request(`https://worker.test${path}`,{method:body?'POST':'GET',headers:{origin,...(token?{authorization:`Bearer ${token}`} : {}),...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:res.status,json:await res.json()};
+  };
+  const start=(email,extra={})=>({email,confirmed:true,...extra});
+  const begin='/api/admin/direct-account/start',complete='/api/admin/direct-account/complete',status='/api/auth/admin-account-status';
+  assert.equal((await call(begin,start('new@example.test'),null)).status,401);
+  assert.equal((await call(begin,start('new@example.test'),other)).status,403);
+  assert.equal((await call(begin,start('new@example.test'),oldRoot)).status,401);
+  assert.equal((await call(begin,start('new@example.test'),root,'https://evil.test')).status,403);
+  assert.equal((await call(begin,start('new@example.test',{confirmed:false}))).status,400);
+  assert.equal((await call(begin,start('new@example.test',{password:'ne-pas-envoyer'}))).status,400);
+  assert.equal((await call(begin,start('root@example.test'))).status,409);
+  assert.equal((await call(begin,start('pas-une-adresse'))).status,400);
+  assert.deepEqual((await call(status,{},oldRoot)).json,{passwordChangeRequired:false},'compte historique inchangé');
+
+  const initial=await call(begin,start('new@example.test'));assert.equal(initial.status,200);assert.equal(initial.json.resume,false);
+  const again=await call(begin,start('NEW@example.test'));assert.equal(again.json.requestId,initial.json.requestId);assert.equal(again.json.resume,true);
+  const reservationPath=`pulseAdminDirectRequests/${await digestBase64('direct-admin-request:root-admin:new@example.test')}`;
+  const reservation=(await db.get(reservationPath)).data;
+  assert.equal(reservation.createdBy,'root-admin');assert(!JSON.stringify(reservation).includes('new@example.test'));assert(!JSON.stringify(reservation).includes('password'));
+  const grantBody={email:'new@example.test',requestId:initial.json.requestId,userToken:target};
+  assert.equal((await call(complete,{...grantBody,userToken:'invalid-token-test-000000000'})).status,400);
+  assert.equal((await call(complete,{...grantBody,email:'different@example.test'})).status,400);
+  assert.equal((await call(complete,{...grantBody,password:'ne-pas-envoyer'})).status,400);
+  assert.equal((await call(complete,grantBody,oldRoot)).status,401);
+  assert.equal((await call(complete,grantBody)).status,503,'échec Firebase : aucun droit');assert.equal(await db.get('pulseAdmins/new-admin'),null);
+  const initialTime=Math.max(Date.now(),reservation.startedAt);
+  accounts.set(target,{localId:'new-admin',email:'new@example.test',disabled:false,createdAt:initialTime,passwordUpdatedAt:initialTime});
+  const first=await call(complete,grantBody);assert.equal(first.status,200);assert.equal(first.json.already,false);
+  const grant=(await db.get('pulseAdmins/new-admin')).data;
+  assert.equal(grant.source,'direct-v1');assert.equal(grant.requiresVerifiedEmail,false);assert.equal(grant.passwordChangeRequired,true);
+  assert(!JSON.stringify(grant).includes('new@example.test'));assert(!JSON.stringify(grant).includes('Provisoire'));
+  assert.equal((await call(complete,grantBody)).json.already,true,'réponse perdue idempotente');
+  assert.equal((await call('/api/admin/administrators',{},target)).status,403,'pas de droits avant changement de mot de passe');
+  assert.deepEqual((await call(status,{},target)).json,{passwordChangeRequired:true});
+  accounts.get(target).passwordUpdatedAt=initialTime-1;
+  assert.deepEqual((await call(status,{},target)).json,{passwordChangeRequired:true});
+  accounts.get(target).passwordUpdatedAt=initialTime+25;
+  assert.deepEqual((await call(status,{},target)).json,{passwordChangeRequired:false,reauthenticate:true});
+  assert.equal((await db.get('pulseAdmins/new-admin')).data.passwordChangeRequired,false);
+  assert.equal((await call('/api/admin/administrators',{},target)).status,401,'ancien jeton provisoire refusé après changement');
+  const fresh='direct-fresh-token-test-0001';
+  identities.set(fresh,identity('new-admin','new@example.test',{auth_time:Math.floor((initialTime+25)/1000)+1}));
+  assert.equal((await call('/api/admin/administrators',{},fresh)).status,400,'mêmes droits après reconnexion');
+  assert.deepEqual((await call(status,{},fresh)).json,{passwordChangeRequired:false});
+
+  identities.set('wrong-email-token-test-00001',identity('new-admin','autre@example.test'));
+  identities.set('wrong-provider-token-000001',identity('new-admin','new@example.test',{firebase:{sign_in_provider:'custom'}}));
+  assert.equal((await call('/api/admin/administrators',{},'wrong-email-token-test-00001')).status,403,'exception limitée à l’adresse approuvée');
+  assert.equal((await call('/api/admin/administrators',{},'wrong-provider-token-000001')).status,403);
+  await db.commit([db.write('pulseAdmins/new-admin',{...grant,active:false})]);
+  assert.equal((await call(status,{},target)).status,403,'un droit désactivé reste désactivé');
+
+  const old=await call(begin,start('old@example.test'));
+  accounts.set(oldTarget,{localId:'old-account',email:'old@example.test',createdAt:Date.now()-3600000,passwordUpdatedAt:Date.now()-3600000});
+  assert.equal((await call(complete,{email:'old@example.test',requestId:old.json.requestId,userToken:oldTarget})).status,409,'aucun compte déjà existant promu');
+  assert.equal(await db.get('pulseAdmins/old-account'),null);
+  await db.commit([db.write('pulseAccess/seller-uid',{active:true,version:'inchangée'})]);
+  const sellerBegin=await call(begin,start('seller@example.test'));
+  accounts.set(seller,{localId:'seller-uid',email:'seller@example.test',createdAt:Date.now(),passwordUpdatedAt:Date.now()});
+  assert.equal((await call(complete,{email:'seller@example.test',requestId:sellerBegin.json.requestId,userToken:seller})).status,409);
+  assert.equal((await db.get('pulseAccess/seller-uid')).data.version,'inchangée');
+
+  // Les anciennes attributions restent soumises à la confirmation d'e-mail.
+  const legacy='legacy-admin-token-test-0001';identities.set(legacy,identity('legacy-uid','legacy@example.test'));
+  await db.commit([db.write('pulseAdmins/legacy-uid',{active:true,requiresVerifiedEmail:true})]);
+  assert.equal((await call('/api/admin/administrators',{},legacy)).status,403);
+  identities.set('legacy-verified-token-test-01',identity('legacy-uid','legacy@example.test',{email_verified:true}));
+  assert.equal((await call('/api/admin/administrators',{},'legacy-verified-token-test-01')).status,400);
+  assert(calls.every(t=>t===target||t===oldTarget),'aucune recherche Firebase pour un vendeur ou le compte historique');
+});
+
+test('Administrateurs directs : collision atomique, compte désactivé et reprise après réponse perdue',async()=>{
+  const db=new MemoryDb(),ids=new Map(),accounts=new Map(),now=Math.floor(Date.now()/1000),root='race-root-token-test-00001';
+  const identity=(uid,email)=>({sub:uid,email,auth_time:now,email_verified:false,firebase:{sign_in_provider:'password'}});
+  ids.set(root,identity('root','root@example.test'));
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!ids.has(t))throw Error();return ids.get(t);},lookupFirebaseAccount:async(_env,t)=>accounts.get(t)});
+  const env={ADMIN_UID:'root',FIREBASE_PROJECT_ID:'demo-fnac',PIN_PEPPER:Buffer.alloc(32,1).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true};}}},ctx={waitUntil(){}};
+  const call=async(path,body,token=root)=>{const res=await worker.fetch(new Request(`https://worker.test${path}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)}),env,ctx);return {status:res.status,json:await res.json()};};
+  const start=email=>call('/api/admin/direct-account/start',{email,confirmed:true});
+  const begin=await start('race@example.test'),requestId=begin.json.requestId;
+  const token='race-new-user-token-0000001',email='race@example.test',uid='race-user',created=Date.now();
+  ids.set(token,identity(uid,email));accounts.set(token,{localId:uid,email,createdAt:created,passwordUpdatedAt:created,disabled:false});
+  const body={email,requestId,userToken:token},commit=db.commit.bind(db);let race=true;
+  db.commit=async writes=>{
+    if(race&&writes.some(w=>w.path===`pulseAdmins/${uid}`)){
+      race=false;await commit([db.write(`pulseAccess/${uid}`,{active:true,version:'vendeur-non-modifié'})]);
+    }
+    return commit(writes);
+  };
+  assert.equal((await call('/api/admin/direct-account/complete',body)).status,409);
+  assert.equal(await db.get(`pulseAdmins/${uid}`),null);assert.equal((await db.get(`pulseAccess/${uid}`)).data.version,'vendeur-non-modifié');
+  db.commit=commit;
+  const other=await start('lost-commit@example.test'),otherToken='lost-commit-user-token-0001',otherEmail='lost-commit@example.test',otherUid='lost-uid',created2=Date.now();
+  ids.set(otherToken,identity(otherUid,otherEmail));accounts.set(otherToken,{localId:otherUid,email:otherEmail,createdAt:created2,passwordUpdatedAt:created2,disabled:true});
+  const otherBody={email:otherEmail,requestId:other.json.requestId,userToken:otherToken};
+  assert.equal((await call('/api/admin/direct-account/complete',otherBody)).status,409);assert.equal(await db.get(`pulseAdmins/${otherUid}`),null);
+  accounts.get(otherToken).disabled=false;let lost=true;
+  db.commit=async writes=>{
+    if(lost&&writes.some(w=>w.path===`pulseAdmins/${otherUid}`)){
+      lost=false;await commit(writes);const error=new Error('réponse perdue');error.status=409;throw error;
+    }
+    return commit(writes);
+  };
+  const completed=await call('/api/admin/direct-account/complete',otherBody);
+  assert.equal(completed.status,200);assert.equal(completed.json.already,true);
+  assert.equal((await db.get(`pulseAdmins/${otherUid}`)).data.passwordChangeRequired,true);
+  assert.equal((await call('/api/admin/administrators',{},otherToken)).status,403);
+  db.commit=commit;
+});
+
 test('Import manuel Fnac : authentification, validation, sauvegarde et aucune suppression ou fusion',async()=>{
   const db=new MemoryDb(),worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(t!=='admin')throw Error();return {sub:'root'};}});
   const env={ADMIN_UID:'root',FIREBASE_PROJECT_ID:'demo-fnac'},ctx={waitUntil(){}};
