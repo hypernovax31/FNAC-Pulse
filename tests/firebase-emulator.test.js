@@ -9,6 +9,7 @@ import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocFromServer, 
 import { FirestoreRest, digestBase64, pinMac } from '../worker/firebase.js';
 import { createWorker } from '../worker/index.js';
 import { pinProof } from '../src/pin.js';
+import { createInvitationPassword, invitationMessage } from '../src/admin-invitation.js';
 import { LEGACY_STORE_ID } from '../src/catalog.js';
 import legacyLocations from '../server/locations.json' with {type:'json'};
 
@@ -749,7 +750,7 @@ test('Émulateurs Firebase : invitation sans secret tiers, choix du mot de passe
   }
 });
 
-test('Émulateurs Firebase : création directe sans e-mail, mot de passe personnel et reprise sûre', {skip:!enabled}, async()=>{
+test('Émulateurs Firebase : mot de passe généré, message préparé, première connexion et reprise sûre', {skip:!enabled}, async()=>{
   const project='demo-fnac',port=9099,stamp=Date.now(),generated=`${process.cwd()}/node_modules/.fnac-pulse-tests/direct-${process.pid}-${stamp}.mjs`;
   await mkdir(`${process.cwd()}/node_modules/.fnac-pulse-tests`,{recursive:true});
   await build({entryPoints:['src/cloud.js'],outfile:generated,bundle:true,platform:'node',format:'esm',external:['firebase/*'],
@@ -765,7 +766,11 @@ test('Émulateurs Firebase : création directe sans e-mail, mot de passe personn
   const adminAuth=getAuth(getApp('fnac-pulse-admin')),sellerAuth=getAuth(getApp());
   const db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'});
   const rootEmail=`direct-root-${stamp}@example.test`,targetEmail=`direct-new-${stamp}@example.test`,rootPassword='Root-Password-2026!';
-  const tempPassword='Provisional-Password-2026!',newPassword='Personal-Password-2026!';
+  const tempPassword=createInvitationPassword(),newPassword='Personal-Password-2026!';
+  const draft=invitationMessage({email:targetEmail,password:tempPassword,appUrl:'https://example.test/FNAC-Pulse/'});
+  const mailUrl=new URL(draft.href),mailBody=mailUrl.searchParams.get('body');
+  assert.equal(decodeURIComponent(mailUrl.pathname),targetEmail);
+  const deliveredPassword=mailBody.match(/Mot de passe provisoire : ([^\r\n]+)/)?.[1];assert.equal(deliveredPassword,tempPassword);
   const root=(await createUserWithEmailAndPassword(adminAuth,rootEmail,rootPassword)).user;
   const sellerUid=`seller-direct-${stamp}`;await signInWithCustomToken(sellerAuth,fakeCustomToken({},sellerUid,{role:'seller',storeId:'store-test',sellerId:1,sellerKey:'s1',accessVersion:'unchanged'}));
   const lookup=async(_env,idToken)=>{
@@ -798,9 +803,11 @@ test('Émulateurs Firebase : création directe sans e-mail, mot de passe personn
     assert(!(await codes()).some(x=>x.email===targetEmail),'aucun e-mail créé');
     clientApp=initializeApp({apiKey:'demo-key',projectId:project,appId:'1:1:web:demo'},`direct-check-${stamp}`);
     const targetAuth=getAuth(clientApp);connectAuthEmulator(targetAuth,`http://127.0.0.1:${port}`,{disableWarnings:true});
-    const target=(await signInWithEmailAndPassword(targetAuth,targetEmail,tempPassword)).user,oldToken=await target.getIdToken(true);
+    const target=(await signInWithEmailAndPassword(targetAuth,targetEmail,deliveredPassword)).user,oldToken=await target.getIdToken(true);
     assert.equal(target.emailVerified,false,'l’exception ne prétend pas que Firebase a vérifié l’adresse');
     const grant=(await db.get(`pulseAdmins/${target.uid}`)).data;assert.equal(grant.passwordChangeRequired,true);assert.equal(grant.requiresVerifiedEmail,false);
+    assert(!JSON.stringify(grant).includes(tempPassword),'aucun mot de passe en clair dans le droit Firestore');
+    assert(!JSON.stringify(seenBodies).includes(tempPassword),'aucun mot de passe dans les requêtes au Worker');
     assert.equal((await call('/api/admin/administrators',{},oldToken)).status,403);
     assert.deepEqual((await call('/api/auth/admin-account-status',{},oldToken)).json,{passwordChangeRequired:true});
     const {updatePassword}=await import('firebase/auth');await updatePassword(target,newPassword);

@@ -1261,6 +1261,11 @@ p,h1,h2,h3 { margin:0; }
 .admin-invite-confirm .admin-alert,.admin-accounts .store-form > .admin-alert { margin:0; }
 .admin-invite-actions { display:flex; align-items:center; flex-wrap:wrap; gap:10px 14px; }
 .admin-invite-actions .text-button { min-height:44px; }
+.admin-mail-link { min-height:44px; text-decoration:none; }
+.admin-copy-message { min-height:44px; padding:0 13px; }
+.admin-legacy-invitations { width:100%; padding:12px 0; border-top:1px solid var(--border); }
+.admin-legacy-invitations summary { color:var(--muted); font-size:11px; font-weight:700; cursor:pointer; }
+.admin-legacy-invitations .admin-invitation-accept { margin-top:12px; }
 [data-theme='dark'] .admin-invite-confirm,[data-theme='dark'] .admin-direct-note { background:#302e22; border-color:#5c5436; }
 [data-theme='dark'] .admin-invite-confirm p,[data-theme='dark'] .admin-direct-note p { color:#c5c8bb; }
 .admin-email-fallback { margin-top:17px; padding-top:15px; border-top:1px solid var(--border); }

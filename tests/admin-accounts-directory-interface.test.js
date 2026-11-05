@@ -39,10 +39,11 @@ const form=(tree,id)=>tree.root.findByProps({'aria-labelledby':id}).findAllByTyp
 const change=async(input,value)=>act(async()=>{input.props.onChange({target:{value}});await tick();});
 const submit=async(form)=>act(async()=>{form.props.onSubmit({preventDefault(){}});await tick();await tick();});
 function setup(){
-  const names=['document','window','__adminTest'],old=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)])),e={calls:[],confirms:[],allow:true};
+  const names=['document','window','navigator','__adminTest'],old=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)])),e={calls:[],confirms:[],allow:true};
   const put=(n,value)=>Object.defineProperty(globalThis,n,{configurable:true,writable:true,value});
   put('document',{visibilityState:'visible',addEventListener(){},removeEventListener(){}});
-  put('window',{confirm:q=>{e.confirms.push(q);return e.allow;},addEventListener(){},removeEventListener(){}});
+  put('window',{location:{origin:'https://example.test'},confirm:q=>{e.confirms.push(q);return e.allow;},addEventListener(){},removeEventListener(){}});
+  put('navigator',{clipboard:{async writeText(value){e.clipboard=value;}}});
   put('__adminTest',{
     async api(...args){e.calls.push(['api',...args]);return {imported:50,reviewCount:1};},
     async email(...args){e.calls.push(['email',...args]);return 'responsable@example.test';},
@@ -76,50 +77,79 @@ test('Administration : ordre exact des onglets et accès clavier',async()=>{
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
-test('Administrateur : création du code avec session, droits explicites et sans mot de passe du créateur',async()=>{
-  const e=setup(),busy=[];let tree,loggedOut=0;
+test('Administrateur : invitation à la bonne adresse, message préparé et changement du mot de passe personnel',async()=>{
+  const e=setup(),busy=[],pending=[];let tree,loggedOut=0;
   try {
-    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onBusy:x=>busy.push(x),onLogout:()=>loggedOut++}));await tick();});
+    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onBusy:x=>busy.push(x),onPending:x=>pending.push(x),onLogout:()=>loggedOut++}));await tick();});
     let content=text(tree.toJSON());
-    assert.match(content,/responsable@example\.test/);assert.match(content,/Aucun e-mail ne sera envoyé/);
-    assert.match(content,/contrôlant cette boîte pourrait récupérer le compte/);assert.match(content,/tous les magasins/);
-    assert.match(content,/6 caractères maximum/);assert.doesNotMatch(content,/Modifier mon e-mail/);
+    assert.match(content,/responsable@example\.test/);assert.match(content,/vous-même le courriel/);assert.match(content,/tous les magasins/);
+    assert.doesNotMatch(content,/Générer le code|Modifier mon e-mail|6 caractères maximum/);
     const create=()=>form(tree,'admin-create-title'),fields=()=>create().findAllByType('input');
-    assert.equal(fields().length,1,'seule la confirmation des droits est demandée');
-    await submit(create());assert.match(text(tree.toJSON()),/Confirmez les droits/);assert.equal(e.calls.filter(x=>x[0]==='code').length,0);
-    await act(async()=>fields()[0].props.onChange({target:{checked:true}}));await submit(create());
-    const request=e.calls.find(x=>x[0]==='code');assert.equal(request.length,2,'pas d’adresse ni de mot de passe du créateur');
-    content=text(tree.toJSON());assert.match(content,/ABCD-EFGH-JKLM-NPQR/);assert.match(content,/24 heures/);assert.match(content,/7 jours/);
-    assert.match(content,/ne sera plus affiché/);assert.match(content,/Masquer le code ne l’annule pas/);
-    await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('Annuler ce code')).props.onClick());await tick();
-    assert.equal(e.calls.filter(x=>x[0]==='cancelCode').length,1);assert.equal(e.calls.find(x=>x[0]==='cancelCode')[2],'ABCD-EFGH-JKLM-NPQR');
-    assert.match(text(tree.toJSON()),/Code annulé/);assert.doesNotMatch(text(tree.toJSON()),/ABCD-EFGH-JKLM-NPQR/);
+    assert.equal(fields().length,3,'adresse, mot de passe du créateur et confirmation des droits');
+    await change(fields()[0],' NOUVEAU@example.test ');await change(fields()[1],'Password-createur-2026!');
+    await submit(create());assert.match(text(tree.toJSON()),/Confirmez les droits/);assert.equal(e.calls.filter(x=>x[0]==='direct').length,0);
+    await act(async()=>fields()[2].props.onChange({target:{checked:true}}));await submit(create());
+    const request=e.calls.find(x=>x[0]==='direct')[1];
+    assert.equal(request.email,'nouveau@example.test');assert.equal(request.currentPassword,'Password-createur-2026!');assert.equal(request.confirmed,true);
+    assert.match(request.password,/^[A-Za-z0-9_-]{24}aA1!$/);assert.equal(e.calls.filter(x=>x[0]==='code').length,0);
+    content=text(tree.toJSON());assert.match(content,/Message prêt pour nouveau@example\.test/);assert.match(content,/L’envoi n’est pas automatique/);
+    assert.doesNotMatch(content,new RegExp(request.password.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),'pas de mot de passe affiché dans la page');
+    const link=tree.root.findByType('a'),url=new URL(link.props.href);
+    assert.equal(url.protocol,'mailto:');assert.equal(decodeURIComponent(url.pathname),'nouveau@example.test');
+    assert.equal(url.searchParams.get('subject'),'Bienvenue sur Fnac Pulse');
+    assert.match(url.searchParams.get('body'),/vendeurs à suivre leurs objectifs personnels/);
+    assert(url.searchParams.get('body').includes(request.password));assert.match(url.searchParams.get('body'),/première connexion/);
+    assert.match(url.searchParams.get('body'),/https:\/\/example\.test\//);
+    await act(async()=>{tree.root.findAllByType('button').find(x=>text(x).includes('Copier le message')).props.onClick();await tick();});
+    assert.equal(e.clipboard,url.searchParams.get('body'));assert.match(text(tree.toJSON()),/Message copié/);
+    e.allow=false;await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('J’ai terminé')).props.onClick());
+    assert.equal(tree.root.findAllByType('a').length,1,'le message reste disponible si la confirmation est refusée');
+    e.allow=true;await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('J’ai terminé')).props.onClick());
+    assert.deepEqual(pending,[true,false]);assert.match(text(tree.toJSON()),/Sa réception dépend de votre messagerie/);
+    assert.equal(tree.root.findAllByType('a').length,0);
     const pw=()=>form(tree,'admin-password-title'),pwFields=()=>pw().findAllByType('input');
     await change(pwFields()[0],'Ancien-password-2026!');await change(pwFields()[1],'Nouveau-password-2026!');await change(pwFields()[2],'Incorrect-password-2026!');await submit(pw());
     assert.match(text(tree.toJSON()),/ne correspondent pas/);assert.equal(e.calls.filter(x=>x[0]==='password').length,0);
     await change(pwFields()[2],'Nouveau-password-2026!');await submit(pw());
     assert.deepEqual(e.calls.find(x=>x[0]==='password').slice(1),['Ancien-password-2026!','Nouveau-password-2026!']);assert.match(text(tree.toJSON()),/mot de passe a été mis à jour/);
     assert(pwFields().every(x=>x.props.value===''));await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('Déconnexion administrateur')).props.onClick());assert.equal(loggedOut,1);
-    assert.deepEqual(busy,[true,false,true,false,true,false,true,false]);
+    assert.deepEqual(busy,[true,false,true,false,true,false]);
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
-test('Code : échec réseau, double appui et annulation seulement après confirmation',async()=>{
-  const e=setup();let tree,resolve;
+test('Invitation : réponse perdue, même mot de passe pour la reprise et double appui bloqué',async()=>{
+  const e=setup(),pending=[];let tree,resolve,first;
   try {
-    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onLogout(){}}));await tick();});
+    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onLogout(){},onPending:x=>pending.push(x)}));await tick();});
     const create=()=>form(tree,'admin-create-title'),fields=()=>create().findAllByType('input');
-    await act(async()=>fields()[0].props.onChange({target:{checked:true}}));
-    globalThis.__adminTest.code=async()=>{e.calls.push(['code']);throw new Error('Connexion interrompue.');};
-    await submit(create());assert.match(text(tree.toJSON()),/Connexion interrompue/);assert.equal(fields()[0].props.checked,true);
-    globalThis.__adminTest.code=()=>{e.calls.push(['code']);return new Promise(r=>{resolve=r;});};
+    await change(fields()[0],'invite@example.test');await change(fields()[1],'Password-createur-2026!');
+    await act(async()=>fields()[2].props.onChange({target:{checked:true}}));
+    globalThis.__adminTest.direct=async(_api,data)=>{first=data;e.calls.push(['attempt',data]);throw new Error('Connexion interrompue.');};
+    await submit(create());assert.match(text(tree.toJSON()),/Connexion interrompue/);assert.equal(fields()[0].props.disabled,true);
+    assert.deepEqual(pending,[true]);assert.equal(fields()[2].props.checked,true);
+    globalThis.__adminTest.direct=(_api,data)=>{e.calls.push(['attempt',data]);return new Promise(r=>{resolve=r;});};
     await act(async()=>{create().props.onSubmit({preventDefault(){}});create().props.onSubmit({preventDefault(){}});await tick();});
-    assert.equal(e.calls.filter(x=>x[0]==='code').length,2,'un seul appel pour le double appui');assert.equal(fields()[0].props.disabled,true);
-    await act(async()=>{resolve({code:'ABCD-EFGH-JKLM-NPQR'});await tick();await tick();});
-    e.allow=false;await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('Annuler ce code')).props.onClick());
-    assert.equal(e.calls.filter(x=>x[0]==='cancelCode').length,0);assert.match(text(tree.toJSON()),/ABCD-EFGH-JKLM-NPQR/);
-    e.allow=true;await act(async()=>{tree.root.findAllByType('button').find(x=>text(x).includes('Annuler ce code')).props.onClick();await tick();});
-    assert.equal(e.calls.filter(x=>x[0]==='cancelCode').length,1);
+    assert.equal(e.calls.filter(x=>x[0]==='attempt').length,2,'un seul appel pour le double appui');assert.equal(fields()[1].props.disabled,true);
+    assert.equal(e.calls.at(-1)[1].password,first.password,'la reprise utilise le même mot de passe provisoire');
+    await act(async()=>{resolve({already:true,accountCreated:true});await tick();await tick();});
+    const url=new URL(tree.root.findByType('a').props.href);assert(url.searchParams.get('body').includes(first.password));
+    e.allow=true;await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('J’ai terminé')).props.onClick());
+    assert.deepEqual(pending,[true,false]);
+  } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
+});
+
+test('Invitation interrompue : abandon explicitement confirmé, sans prétendre que le compte est absent',async()=>{
+  const e=setup(),pending=[];let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onLogout(){},onPending:x=>pending.push(x)}));await tick();});
+    const f=()=>form(tree,'admin-create-title'),inputs=()=>f().findAllByType('input');
+    await change(inputs()[0],'invite@example.test');await change(inputs()[1],'Password-createur-2026!');
+    await act(async()=>inputs()[2].props.onChange({target:{checked:true}}));
+    globalThis.__adminTest.direct=async()=>{throw new Error('Résultat inconnu.');};await submit(f());
+    const cancel=()=>tree.root.findAllByType('button').find(x=>text(x).includes('Abandonner la tentative'));
+    e.allow=false;await act(async()=>cancel().props.onClick());assert.equal(inputs()[0].props.disabled,true);
+    e.allow=true;await act(async()=>cancel().props.onClick());assert.equal(inputs()[0].props.disabled,false);
+    assert.match(text(tree.toJSON()),/Si un compte a été créé/);assert.deepEqual(pending,[true,false]);
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 

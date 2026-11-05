@@ -70,7 +70,8 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [token,setToken]=useState(()=>sessionStorage.getItem('pulse-admin-token')||'');
   const [password,setPassword]=useState('');
   const [email,setEmail]=useState('');
-  const [firstPassword,setFirstPassword]=useState(false),[firstBusy,setFirstBusy]=useState(false),[codeRegistration,setCodeRegistration]=useState(false);
+  const [firstPassword,setFirstPassword]=useState(false),[firstTemporary,setFirstTemporary]=useState(''),[firstBusy,setFirstBusy]=useState(false),[codeRegistration,setCodeRegistration]=useState(false);
+  const [accountPending,setAccountPending]=useState(false);
   const [error,setError]=useState('');
   const [notice,setNotice]=useState('');
   const [busy,setBusy]=useState(false);
@@ -170,7 +171,7 @@ export default function Admin({onClose,data,session,onChanged}) {
         try {
           if(acceptInvitation)await api('/api/auth/admin-invitations/accept',{method:'POST',token:auth,body:{confirmed:true}});
           let status=await api('/api/auth/admin-account-status',{method:'POST',token:auth,body:{}});
-          if(status.passwordChangeRequired){setFirstPassword(status.method==='code'?'code':'direct');setPassword('');return;}
+          if(status.passwordChangeRequired){setFirstTemporary(status.method==='code'?'':password);setFirstPassword(status.method==='code'?'code':'direct');setPassword('');return;}
           if(status.reauthenticate) {
             // Les jetons Firebase ont une précision d'une seconde. Attendre un
             // instant avant de se reconnecter avec le nouveau mot de passe.
@@ -194,7 +195,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   async function codeRegistered(address) {
     const status=await api('/api/auth/admin-account-status',{method:'POST',token:ADMIN_SESSION,body:{}});
     if(!status.passwordChangeRequired||status.method!=='code')throw new Error('La première connexion n’a pas pu être confirmée. Reprenez avec le même code et les mêmes informations.');
-    setEmail(address);setPassword('');setCodeRegistration(false);setFirstPassword('code');
+    setEmail(address);setPassword('');setFirstTemporary('');setCodeRegistration(false);setFirstPassword('code');
   }
   async function cancelCodeRegistration() {
     if(firstBusy)return;
@@ -212,18 +213,18 @@ export default function Admin({onClose,data,session,onChanged}) {
       status=await api('/api/auth/admin-account-status',{method:'POST',token:ADMIN_SESSION,body:{}});
     }
     if(status.reauthenticate) {
-      await adminLogout();setFirstPassword(false);setPassword('');
+      await adminLogout();setFirstPassword(false);setFirstTemporary('');setPassword('');
       setNotice('Votre mot de passe est enregistré. Reconnectez-vous avec votre nouveau mot de passe.');return;
     }
     if(status.passwordChangeRequired)throw new Error('Le changement de mot de passe n’a pas encore été confirmé.');
     await api('/api/admin/all',{token:ADMIN_SESSION});
-    sessionStorage.setItem('pulse-admin-token',ADMIN_SESSION);setFirstPassword(false);setToken(ADMIN_SESSION);
+    sessionStorage.setItem('pulse-admin-token',ADMIN_SESSION);setFirstPassword(false);setFirstTemporary('');setToken(ADMIN_SESSION);
     setNotice('Votre mot de passe personnel est enregistré.');
   }
   async function cancelFirstPassword() {
     if(firstBusy)return;
     try{await adminLogout();}catch{}
-    setFirstPassword(false);setPassword('');setError('');
+    setFirstPassword(false);setFirstTemporary('');setPassword('');setError('');
   }
   async function logout() {
     try {if(CLOUD)await adminLogout();else await api('/api/admin/logout',{method:'POST',token,body:{}})} catch {}
@@ -234,7 +235,12 @@ export default function Admin({onClose,data,session,onChanged}) {
     try {await work();if(success)setNotice(success);await loadAll();onChanged();}
     catch(e){setError(e.message);} finally{setBusy(false);}
   }
-  function switchTab(next){if(next!==tab)setServiceDeleteReady(false);if(next==='stores')setStoreDraft(adminStore);setTab(next);setCountsFor('');setError('');setNotice('');setEditing(null);setName('');setExpandedSeller(null);setServiceDeleteRequest(null);}
+  function closeAdministration(){
+    if(accountPending&&busy)return;
+    if(accountPending&&!window.confirm('Une invitation est en cours. Si vous quittez, son mot de passe provisoire ne sera plus disponible ici. Quitter quand même ?'))return;
+    onClose();
+  }
+  function switchTab(next){if(accountPending)return;if(next!==tab)setServiceDeleteReady(false);if(next==='stores')setStoreDraft(adminStore);setTab(next);setCountsFor('');setError('');setNotice('');setEditing(null);setName('');setExpandedSeller(null);setServiceDeleteRequest(null);}
   function changeStore(value){
     if(!isSelectableStore(data.stores.find(s=>s.id===value)))return;
     setAdminStore(value);setStoreDraft(value);rememberStore(value);setAdminSeller('');setCounts({});setCountsFor('');setEditing(null);setNewSellerDepartment('');setExpandedSeller(null);setServiceDeleteRequest(null);setServiceDeleteReady(false);setError('');setNotice('');
@@ -262,7 +268,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   }
 
   if(firstPassword) return <Modal title="Créez votre mot de passe" subtitle="Une seule étape avant votre première connexion." onClose={()=>{if(!firstBusy){cancelFirstPassword();onClose();}}}>
-    <AdminFirstPassword email={email} method={firstPassword} onFinish={finishFirstPassword} onCancel={cancelFirstPassword} onBusy={setFirstBusy}/>
+    <AdminFirstPassword email={email} method={firstPassword} temporaryPassword={firstTemporary} onFinish={finishFirstPassword} onCancel={cancelFirstPassword} onBusy={setFirstBusy}/>
   </Modal>;
 
   if(codeRegistration&&!token) return <Modal title="Créer mon accès administrateur" subtitle="Avec un code transmis en privé." onClose={()=>{if(!firstBusy){cancelCodeRegistration();onClose();}}}>
@@ -283,16 +289,18 @@ export default function Admin({onClose,data,session,onChanged}) {
         catch(e){setError(e.message);}finally{setBusy(false);}
       }}>Renvoyer le lien de confirmation</button>}
       <button className="primary-button full-button" type="submit" disabled={busy}>{busy?'Connexion…':'Se connecter'} <ArrowRight size={16}/></button>
-      {CLOUD&&<div className="admin-invitation-accept"><strong>Vous avez reçu un code administrateur ?</strong><p>Créez votre accès avec le code transmis en privé.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>{setError('');setNotice('');setCodeRegistration(true);}}>Créer mon accès avec un code</button></div>}
-      {CLOUD&&<p className="admin-direct-login-help">Pour un accès créé auparavant avec un mot de passe provisoire transmis, utilisez l’adresse et ce mot de passe ci-dessus.</p>}
-      {CLOUD&&<div className="admin-invitation-accept"><strong>Vous avez reçu une ancienne invitation ?</strong><p>Choisissez votre mot de passe grâce au lien reçu, puis renseignez votre e-mail et votre mot de passe ci-dessus. En acceptant, vous disposerez des droits sur tous les magasins.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>login(null,true)}>Accepter mon invitation</button></div>}
+      {CLOUD&&<p className="admin-direct-login-help">Vous êtes invité ? Utilisez l’adresse et le mot de passe provisoire reçus par e-mail.</p>}
+      {CLOUD&&<details className="admin-legacy-invitations"><summary>Anciennes invitations</summary>
+        <div className="admin-invitation-accept"><strong>Invitation avec un code</strong><p>Utilisez cette option uniquement pour un code reçu précédemment.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>{setError('');setNotice('');setCodeRegistration(true);}}>Créer mon accès avec un code</button></div>
+        <div className="admin-invitation-accept"><strong>Invitation avec un lien</strong><p>Choisissez votre mot de passe grâce au lien reçu, puis renseignez votre e-mail et votre mot de passe ci-dessus. En acceptant, vous disposerez des droits sur tous les magasins.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>login(null,true)}>Accepter mon invitation</button></div>
+      </details>}
       <p className="form-footnote"><ShieldCheck size={14}/> L’accès administrateur est protégé par mot de passe.</p>
     </form>
     {CLOUD&&<AdminInvitationHelp email={email} busy={busy} onBusy={setBusy} onCompleted={address=>{setEmail(address);setPassword('');}} onVerified={setEmail}/>}
   </Modal>;
 
-  return <Modal title="Administration" subtitle={adminStoreDisplay?`Magasin sélectionné : ${adminStoreDisplay}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={onClose} wide fixedTabs>
-    <AdminTabs tab={tab} onSelect={switchTab} disabled={busy}/>
+  return <Modal title="Administration" subtitle={adminStoreDisplay?`Magasin sélectionné : ${adminStoreDisplay}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={closeAdministration} wide fixedTabs>
+    <AdminTabs tab={tab} onSelect={switchTab} disabled={busy||accountPending}/>
     <div key={tab} className="admin-scroll-content">
     {error&&<div className="admin-alert error" role="alert">{error}</div>}
     {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
@@ -403,7 +411,7 @@ export default function Admin({onClose,data,session,onChanged}) {
         <div className="admin-note"><ShieldCheck size={15}/> Tant qu’aucun PIN n’a été créé après une réinitialisation, la première personne à sélectionner ce profil peut le définir. L’administrateur ne voit pas le PIN.</div>
       </div>}
       {tab==='sellers'&&adminStore&&<SellerDeletePanel key={adminStore} storeId={adminStore} storeName={adminStoreName} sellers={storeSellers} departments={storeDepartments} token={token} disabled={busy||!allLoaded} onUpdate={()=>{loadAll();onChanged();}}/>}
-      {tab==='security'&&(CLOUD?<AdminAccounts onLogout={logout} onBusy={setBusy}/>:<>
+      {tab==='security'&&(CLOUD?<AdminAccounts onLogout={logout} onBusy={setBusy} onPending={setAccountPending}/>:<>
         <div className="admin-section-heading"><div><h3>Mot de passe administrateur</h3><p>La gestion de plusieurs comptes est disponible dans la version en ligne. Choisissez un mot de passe d’au moins 12 caractères.</p></div></div>
         <form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{await api('/api/admin/password',{method:'POST',token,body:{currentPassword:oldPass,newPassword:newPass}});setOldPass('');setNewPass('');},'Mot de passe mis à jour.')}}>
           <label><span className="form-label">Mot de passe actuel</span><input className="text-input" type="password" required value={oldPass} onChange={e=>setOldPass(e.target.value)}/></label>

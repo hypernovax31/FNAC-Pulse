@@ -46,7 +46,11 @@ test('Première connexion directe : pas de session admin avant changement et rec
     assert.match(text(tree.toJSON()),/Remplacez le mot de passe provisoire/);assert.equal(values.has('pulse-admin-token'),false);
     assert.equal(calls.filter(x=>x[0]==='api'&&x[1]==='/api/admin/all').length,0,'aucune donnée admin avant le changement');
     const form=tree.root.findByType('form'),inputs=form.findAllByType('input');
-    await set(inputs[0],'Provisoire-test-2026!');await set(inputs[1],'Personnel-test-2026!');await set(inputs[2],'Personnel-test-2026!');
+    assert.equal(inputs.length,2,'le provisoire déjà saisi à la connexion n’est pas redemandé');
+    await set(inputs[0],'Provisoire-test-2026!');await set(inputs[1],'Provisoire-test-2026!');
+    await act(async()=>{form.props.onSubmit({preventDefault(){}});await tick();});
+    assert.match(text(tree.toJSON()),/différent du mot de passe provisoire/);assert.equal(calls.filter(x=>x[0]==='change').length,0);
+    await set(inputs[0],'Personnel-test-2026!');await set(inputs[1],'Personnel-test-2026!');
     await act(async()=>{form.props.onSubmit({preventDefault(){}});await new Promise(r=>setTimeout(r,1250));await tick();await tick();});
     assert.deepEqual(calls.filter(x=>x[0]==='login').map(x=>x[2]),['Provisoire-test-2026!','Personnel-test-2026!']);
     assert.deepEqual(calls.find(x=>x[0]==='change').slice(1),['Provisoire-test-2026!','Personnel-test-2026!']);

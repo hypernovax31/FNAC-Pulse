@@ -6,15 +6,23 @@ Ce guide configure **GitHub Pages + Firebase Spark + Cloudflare Workers/Queues F
 >
 > Ne partagez jamais ici ou dans Git de mot de passe, PIN, fichier JSON de compte de service, clé privée VAPID, `PIN_PEPPER` ou jeton d'accès. La configuration Web Firebase, l'URL Worker et la **clé VAPID publique** ne sont pas des secrets. Les règles Firestore et les contrôles du Worker, et non la confidentialité de la configuration Web, protègent les données.
 
+## Mise à jour : invitation administrateur par messagerie
+
+Cette version utilise les routes de création directe du Worker déjà en place ; aucun nouveau fournisseur d’e-mails, réglage Firebase, secret ou règle Firestore n’est nécessaire. Après les vérifications convenues, publier Pages par le workflow manuel. Fermer puis rouvrir la PWA en ligne pour charger le cache v48.
+
+Dans **Administration → Administrateur**, saisir la nouvelle adresse du destinataire, confirmer son propre mot de passe et les droits sur tous les magasins. L’application crée le compte et prépare un message d’accueil contenant un mot de passe généré. Toucher **Ouvrir le courriel**, vérifier l’adresse et **envoyer soi-même** depuis sa messagerie. Si elle ne s’ouvre pas, utiliser **Copier le message**. L’application ne confirme ni l’envoi ni la réception. Le destinataire choisit un mot de passe personnel avant l’accès ; seule son adresse s’affiche, elle ne peut pas être modifiée à cette étape. Consulter les précautions, notamment l’absence d’expiration automatique du provisoire et le risque d’un message transféré, dans [le README](README.md#comptes-administrateurs).
+
+Le mot de passe est présent en clair dans le courriel et reste dans la mémoire de l’écran jusqu’à sa fermeture ; il n’est pas enregistré dans Firestore ni transmis au Worker. Ne pas quitter l’écran avant l’envoi. Après une erreur de réseau, **Réessayer** sur le même écran réutilise le même provisoire. En cas d’abandon, l’état du compte peut rester incertain. Les anciens parcours restent accessibles pour les invitations existantes.
+
 ## Mise à jour : correction des ventes et navigation
 
 Cette mise à jour attend un **accord explicite de publication**. Ensuite, déployer d’abord le Worker avec ses secrets, sa Queue et ses réglages existants, puis publier GitHub Pages par son workflow manuel. L’interface utilise une nouvelle route d’ajout ; les anciennes routes restent compatibles. Les règles Firestore ne changent pas. Le déploiement ne modifie aucune vente, aucun objectif, profil ou session. Fermer puis rouvrir la PWA en ligne pour charger le cache v47.
 
 Dans **Administration → Ventes → Correction des ventes**, choisir le vendeur et la période. Un ajout demande le service, le département historique, la quantité, et pour une semaine ou un mois le jour exact ; un récapitulatif précède la confirmation. La suppression reste limitée aux ventes cochées et confirmées. Les cibles d’objectifs et le catalogue restent inchangés ; seule leur progression est recalculée. Les vendeurs archivés et les anciens services ou départements inactifs restent utilisables pour corriger l’historique, à l’exception des services retirés du magasin. Voir les précautions et les limites dans [le README](README.md#correction-des-ventes).
 
-Les vérifications de cette modification se font exclusivement sur des données fictives et l’émulateur `demo-fnac` : **ne pas appeler `/api/health` ou `/api/bootstrap` du projet réel, ni créer de vente, de compte ou d’e-mail de test sans nouvel accord spécifique**, même si des sections historiques ci-dessous évoquent une recette réelle. Aucun test fictif ne garantit le fonctionnement en production.
+Pour cette correction antérieure, les vérifications ont utilisé des données fictives et l’émulateur `demo-fnac`, sans essai réel. Aucun test fictif ne garantit le fonctionnement en production ; toute nouvelle création de compte ou tout nouvel envoi doit utiliser une adresse de test autorisée.
 
-## Mise à jour : code administrateur à transmettre en privé
+## Historique : code administrateur à transmettre en privé
 
 Cette mise à jour doit être publiée uniquement après accord explicite. Déployer d’abord le **Worker**, puis Pages, en conservant les secrets, la Queue et les règles Firestore existants. La nouvelle interface dépend des nouvelles routes Worker ; les anciennes routes restent compatibles. Aucun utilisateur, droit, donnée ou session n’est migré par le déploiement. Fermer puis rouvrir la PWA en ligne pour obtenir le cache v46.
 
