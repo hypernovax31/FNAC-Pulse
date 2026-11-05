@@ -38,6 +38,7 @@ const ADMIN_DIRECT_MS=7*24*60*60*1000;
 const ADMIN_CODE_TTL_MS=24*60*60*1000;
 const ADMIN_CODE_RESUME_MS=7*24*60*60*1000;
 const ADMIN_DIRECT_SOURCE='direct-v1';
+const ADMIN_MANUAL_SOURCE='manual-approval-v1';
 const ADMIN_CODE_METHOD='code-v1';
 const normalizeAdminEmail=value=>typeof value==='string'?value.trim().toLowerCase():'';
 const validAdminEmail=value=>value.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -302,38 +303,171 @@ export function createWorker(deps={}) {
     }
     throw new Error('Import de l’annuaire impossible après modifications simultanées');
   }
-  async function admin(req,env,db,{allowPasswordChange=false}={}) {
-    if(!env.ADMIN_UID)fail(503,'Administration non configurée.');
-    let payload;try{payload=await verify(env,authHeader(req));}catch{fail(401,'Session administrateur expirée. Reconnectez-vous.');}
-    // L'UID historique conserve exactement son accès, même si son ancien
-    // compte n'avait pas exigé la vérification de son adresse e-mail.
-    if(payload.sub===env.ADMIN_UID)return payload;
-    if(!ADMIN_ID.test(payload.sub||'')||payload.role==='seller'||payload.firebase?.sign_in_provider!=='password')fail(403,'Accès administrateur refusé.');
-    const grant=await db.get(`pulseAdmins/${payload.sub}`);
-    if(!grant?.data?.active)fail(403,'Accès administrateur refusé.');
-    if(payload.email_verified!==true) {
-      // Exception réservée aux comptes réellement créés dans le nouveau
-      // parcours, et liée à l'adresse acceptée par leur créateur. On ne
-      // prétend pas que Firebase a vérifié cette adresse.
-      const email=normalizeAdminEmail(payload.email);
+  async function checkAdminGrant(payload,grant,{allowPasswordChange=false}={}) {
+    if(!ADMIN_ID.test(payload.sub||'')||payload.role==='seller'||payload.firebase?.sign_in_provider!=='password'||!grant?.data?.active)
+      fail(403,'Accès administrateur refusé.');
+    const email=normalizeAdminEmail(payload.email);
+    if(grant.data.source===ADMIN_MANUAL_SOURCE) {
+      // L'UID ET l'adresse approuvés sont liés, même si Firebase signale plus
+      // tard une autre adresse comme vérifiée. L'approbation humaine ne
+      // prétend jamais être une vérification Firebase de la boîte e-mail.
+      if(grant.data.requiresVerifiedEmail!==false||!validAdminEmail(email)||
+         grant.data.manualEmailDigest!==await digestBase64(`manual-admin-email:${email}`))fail(403,'L’adresse du compte ne correspond plus à l’accès validé.');
+    } else if(payload.email_verified!==true) {
       const direct=grant.data.source===ADMIN_DIRECT_SOURCE&&grant.data.requiresVerifiedEmail===false&&
         validAdminEmail(email)&&grant.data.directEmailDigest===await digestBase64(`direct-admin-email:${email}`);
       if(!direct)fail(403,'Confirmez votre adresse e-mail avec le lien reçu avant de vous connecter.');
     }
     if(grant.data.source===ADMIN_DIRECT_SOURCE&&!allowPasswordChange) {
       if(grant.data.passwordChangeRequired!==false)fail(403,'Choisissez d’abord votre propre mot de passe administrateur.');
-      // Un jeton obtenu avec le mot de passe provisoire reste signé jusqu'à son
-      // expiration. Exiger une connexion postérieure au changement empêche
-      // son utilisation, même si Firebase n'a pas encore expiré ce jeton.
       const changed=grant.data.passwordChangedAt;
       if(!Number.isFinite(changed)||!Number.isFinite(payload.auth_time)||payload.auth_time<=Math.floor(changed/1000))
         fail(401,'Reconnectez-vous avec votre nouveau mot de passe.');
     }
+  }
+  async function admin(req,env,db,{allowPasswordChange=false}={}) {
+    if(!env.ADMIN_UID)fail(503,'Administration non configurée.');
+    let payload;try{payload=await verify(env,authHeader(req));}catch{fail(401,'Session administrateur expirée. Reconnectez-vous.');}
+    // L'UID historique conserve exactement son accès et ses sessions.
+    if(payload.sub===env.ADMIN_UID)return payload;
+    await checkAdminGrant(payload,await db.get(`pulseAdmins/${payload.sub}`),{allowPasswordChange});
     return payload;
+  }
+  async function adminActorChecks(db,env,actor) {
+    if(actor.sub===env.ADMIN_UID)return [];
+    const path=`pulseAdmins/${actor.sub}`,grant=await db.get(path);
+    await checkAdminGrant(actor,grant);
+    return [db.verify(path,precondition(grant))];
   }
   function recentAdminAuthentication(payload) {
     const now=Math.floor(Date.now()/1000);
     return Number.isFinite(payload?.auth_time)&&payload.auth_time>=now-ADMIN_RECENT_SECONDS&&payload.auth_time<=now+10;
+  }
+  const validManualEmail=email=>validAdminEmail(email)&&!/[;,<>]/.test(email);
+  async function manualRequestPath(email) {
+    return `pulseAdminAccessRequests/${await digestBase64(`manual-admin-request:${email}`)}`;
+  }
+  function noPasswordBody(body) {
+    return body&&body.password===undefined&&body.currentPassword===undefined&&body.newPassword===undefined;
+  }
+  async function addManualAdminRequest(env,db,actor,body) {
+    const email=normalizeAdminEmail(body?.email);
+    if(!noPasswordBody(body)||!validManualEmail(email))fail(400,'Indiquez une adresse e-mail valide.');
+    if(normalizeAdminEmail(actor.email)===email)fail(409,'Cette adresse correspond à votre propre compte.');
+    await limitAuthentication(env,`manual-admin-add:${actor.sub}`);
+    const path=await manualRequestPath(email);
+    for(let attempt=0;attempt<8;attempt++) {
+      const [previous,checks]=await Promise.all([db.get(path),adminActorChecks(db,env,actor)]),old=previous?.data;
+      if(old&&['invited','pending','approved'].includes(old.status))
+        return {ok:true,already:true,status:old.status};
+      const now=Date.now(),record={requestId:crypto.randomUUID(),email,status:'invited',createdBy:actor.sub,createdAt:now};
+      try {await db.commit([...checks,db.write(path,record,precondition(previous))]);return {ok:true,already:false,status:'invited'};}
+      catch(e){if(!conflict(e))throw e;}
+    }
+    fail(409,'La demande a changé. Actualisez la liste.');
+  }
+  async function listManualAdminRequests(db,after='') {
+    // Le curseur est le hash de l’adresse (nom du document), jamais l’adresse
+    // elle-même. Seuls les dossiers encore ouverts sont lus, par pages bornées.
+    if(after&&!/^[A-Za-z0-9_-]{43}$/.test(after))fail(400,'Curseur de demandes invalide.');
+    const rows=await db.page('pulseAdminAccessRequests',{field:'status',op:'IN',value:['invited','pending'],limit:51,after});
+    const page=rows.slice(0,50);
+    return {requests:page.map(x=>x.data).filter(x=>['invited','pending'].includes(x.status)&&
+      validManualEmail(normalizeAdminEmail(x.email))&&SAFE_ID.test(x.requestId||''))
+      .map(x=>({requestId:x.requestId,email:x.email,status:x.status,createdAt:x.createdAt,
+        ...(x.status==='pending'&&ADMIN_ID.test(x.claimantUid||'')?{claimantUid:x.claimantUid,claimedAt:x.claimedAt}:{})}))
+      .sort((a,b)=>(a.status==='pending'?0:1)-(b.status==='pending'?0:1)||b.createdAt-a.createdAt),
+      next:rows.length>50?page.at(-1).id:null};
+  }
+  async function checkManualAdminRequest(req,env,db,body) {
+    const email=normalizeAdminEmail(body?.email);
+    if(!noPasswordBody(body)||!validManualEmail(email))fail(400,'Indiquez une adresse e-mail valide.');
+    const raw=req.headers.get('cf-connecting-ip')||'unknown',address=raw.length<=80?raw:'unknown';
+    await limitAuthentication(env,`manual-admin-check:${await digestBase64(address)}`);
+    const request=await db.get(await manualRequestPath(email));
+    return {allowed:!!request&&['invited','pending','approved'].includes(request.data.status)};
+  }
+  async function claimManualAdminRequest(req,env,db,body) {
+    if(!noPasswordBody(body))fail(400,'Demande invalide.');
+    let user;try {user=await verify(env,authHeader(req));}catch{fail(401,'Reconnectez-vous avec l’adresse et le mot de passe du compte.');}
+    const email=normalizeAdminEmail(user.email);
+    if(!ADMIN_ID.test(user.sub||'')||user.sub===env.ADMIN_UID||user.role==='seller'||
+       user.firebase?.sign_in_provider!=='password'||!validManualEmail(email)||!recentAdminAuthentication(user))
+      fail(403,'Reconnectez-vous avec l’adresse et le mot de passe du compte.');
+    await limitAuthentication(env,`manual-admin-claim:${user.sub}`);
+    const path=await manualRequestPath(email),adminPath=`pulseAdmins/${user.sub}`,accessPath=`pulseAccess/${user.sub}`;
+    for(let attempt=0;attempt<8;attempt++) {
+      const [request,grant,access]=await Promise.all([db.get(path),db.get(adminPath),db.get(accessPath)]),r=request?.data;
+      if(!r||r.email!==email||!['invited','pending','approved'].includes(r.status))
+        fail(403,'Cette adresse n’a pas été ajoutée ou la demande a été annulée. Contactez un administrateur.');
+      if(r.status==='approved') {
+        const digest=await digestBase64(`manual-admin-email:${email}`);
+        if(r.claimantUid===user.sub&&grant?.data?.active&&grant.data.source===ADMIN_MANUAL_SOURCE&&grant.data.manualEmailDigest===digest)
+          return {ok:true,status:'approved'};
+        fail(409,'Cette demande ne correspond plus à ce compte. Contactez un administrateur.');
+      }
+      if(access||grant)fail(409,'Ce compte possède déjà un accès. Ses droits n’ont pas été modifiés.');
+      if(r.status==='pending') {
+        if(r.claimantUid===user.sub)return {ok:true,status:'pending'};
+        fail(409,'Une demande existe déjà pour cette adresse. Contactez un administrateur.');
+      }
+      const next={...r,status:'pending',claimantUid:user.sub,claimedAt:Date.now()};
+      try {
+        await db.commit([db.verify(adminPath,precondition(grant)),db.verify(accessPath,precondition(access)),db.write(path,next,precondition(request))]);
+        return {ok:true,status:'pending'};
+      } catch(e){if(!conflict(e))throw e;}
+    }
+    fail(409,'La demande a changé. Reconnectez-vous avec les mêmes informations.');
+  }
+  async function manualAdminRequestStatus(req,env,db,body) {
+    if(!noPasswordBody(body))fail(400,'Demande invalide.');
+    let user;try {user=await verify(env,authHeader(req));}catch{fail(401,'Session expirée. Reconnectez-vous.');}
+    const email=normalizeAdminEmail(user.email);
+    if(!ADMIN_ID.test(user.sub||'')||user.role==='seller'||user.firebase?.sign_in_provider!=='password'||!validManualEmail(email))
+      fail(403,'Session invalide. Reconnectez-vous.');
+    const request=await db.get(await manualRequestPath(email)),r=request?.data;
+    if(!r||r.email!==email||r.claimantUid!==user.sub||!['pending','approved'].includes(r.status))
+      fail(403,'Cette demande n’est plus disponible. Contactez un administrateur.');
+    if(r.status==='approved')await checkAdminGrant(user,await db.get(`pulseAdmins/${user.sub}`));
+    return {ok:true,status:r.status};
+  }
+  async function decideManualAdminRequest(env,db,actor,body,approve) {
+    const email=normalizeAdminEmail(body?.email),requestId=body?.requestId,claimantUid=body?.claimantUid||'';
+    if(!noPasswordBody(body)||!validManualEmail(email)||!SAFE_ID.test(requestId||'')||
+       (claimantUid&&!ADMIN_ID.test(claimantUid))||body?.confirmed!==true||
+       (approve&&(body?.identityVerified!==true||!claimantUid)))fail(400,'Confirmez la demande et la vérification de l’identité.');
+    const path=await manualRequestPath(email);
+    for(let attempt=0;attempt<8;attempt++) {
+      const [request,checks]=await Promise.all([db.get(path),adminActorChecks(db,env,actor)]),r=request?.data;
+      if(!r||r.email!==email||r.requestId!==requestId)fail(409,'Cette demande a changé. Actualisez la liste.');
+      if(!approve) {
+        if(r.status==='cancelled')return {ok:true,already:true};
+        if(!['invited','pending'].includes(r.status)||(r.status==='pending'&&r.claimantUid!==claimantUid))
+          fail(409,'Cette demande a changé. Actualisez la liste.');
+        const cancelled={...r,status:'cancelled',cancelledAt:Date.now(),cancelledBy:actor.sub};
+        try {await db.commit([...checks,db.write(path,cancelled,precondition(request))]);return {ok:true,already:false};}
+        catch(e){if(!conflict(e))throw e;}
+        continue;
+      }
+      if(r.claimantUid!==claimantUid||claimantUid===env.ADMIN_UID||claimantUid===actor.sub)
+        fail(409,'Cette demande ne correspond plus au compte présenté. Actualisez la liste.');
+      const adminPath=`pulseAdmins/${claimantUid}`,accessPath=`pulseAccess/${claimantUid}`;
+      const [grant,access]=await Promise.all([db.get(adminPath),db.get(accessPath)]);
+      const digest=await digestBase64(`manual-admin-email:${email}`);
+      if(r.status==='approved') {
+        if(grant?.data?.active&&grant.data.source===ADMIN_MANUAL_SOURCE&&grant.data.manualEmailDigest===digest)return {ok:true,already:true};
+        fail(409,'Cette demande a déjà été traitée.');
+      }
+      if(r.status!=='pending'||access||grant)fail(409,'Ce compte ou cette demande a changé ; aucun nouveau droit n’a été ajouté.');
+      const now=Date.now(),next={...r,status:'approved',approvedAt:now,approvedBy:actor.sub};
+      const newGrant={active:true,source:ADMIN_MANUAL_SOURCE,requiresVerifiedEmail:false,manualEmailDigest:digest,
+        createdAt:new Date(now).toISOString(),createdBy:actor.sub,identityVerifiedManually:true};
+      try {
+        await db.commit([...checks,db.verify(accessPath,precondition(access)),db.write(adminPath,newGrant,{exists:false}),db.write(path,next,precondition(request))]);
+        return {ok:true,already:false};
+      } catch(e){if(!conflict(e))throw e;}
+    }
+    fail(409,'La demande a changé. Actualisez la liste.');
   }
   async function enrollmentCodePath(code) {
     return `pulseAdminCodes/${await digestBase64(`admin-code-v1:${code}`)}`;
@@ -509,6 +643,71 @@ export function createWorker(deps={}) {
       } catch(error){if(!conflict(error))throw error;}
     }
     fail(409,'Création modifiée simultanément. Réessayez avec les mêmes identifiants.');
+  }
+  // Nettoyage strictement ciblé de l'ancien parcours direct : l'adresse est
+  // saisie par l'administrateur dans l'application, jamais devinée. Le compte
+  // Firebase n'est pas supprimé ici ; il faut son propre mot de passe ou la
+  // console Firebase. Les autres droits et sessions ne sont pas touchés.
+  async function oldTestAccountSnapshot(env,db,actor,email) {
+    const digest=await digestBase64(`direct-admin-email:${email}`);
+    const [matches,reservation]=await Promise.all([
+      db.query('pulseAdmins','directEmailDigest','EQUAL',digest,2),
+      db.get(await directReservationPath(actor,email)),
+    ]);
+    if(matches.length>1)fail(409,'Plusieurs droits correspondent : vérification manuelle nécessaire. Rien n’a été modifié.');
+    const grant=matches[0]||null,r=reservation?.data;
+    if(grant&&(grant.data.source!==ADMIN_DIRECT_SOURCE||grant.data.createdBy!==actor.sub||!ADMIN_ID.test(grant.id||'')))
+      fail(409,'Ce droit ne correspond pas à une création directe par votre compte. Rien n’a été modifié.');
+    if(reservation&&r.createdBy!==actor.sub)fail(409,'Cette ancienne demande ne correspond pas à votre compte.');
+    const uid=grant?.id||(['completed','revoked'].includes(r?.status)&&ADMIN_ID.test(r.targetUid||'')?r.targetUid:'');
+    if(grant&&r?.targetUid&&r.targetUid!==grant.id)fail(409,'Les identifiants ne correspondent pas. Rien n’a été modifié.');
+    if(uid&&(uid===env.ADMIN_UID||uid===actor.sub))fail(403,'Votre compte administrateur ne peut pas être supprimé ici.');
+    const [access,byUid]=uid?await Promise.all([db.get(`pulseAccess/${uid}`),db.get(`pulseAdmins/${uid}`)]):[null,null];
+    if(access)fail(409,'Ce compte est lié à un profil vendeur. Rien n’a été modifié.');
+    if(byUid&&(!grant||byUid.updateTime!==grant.updateTime))fail(409,'Ce compte possède un autre droit administrateur. Rien n’a été modifié.');
+    return {grant,reservation,uid,access};
+  }
+  async function inspectOldTestAccount(env,db,actor,body) {
+    const email=normalizeAdminEmail(body?.email);
+    if(!noPasswordBody(body)||!validManualEmail(email))fail(400,'Indiquez l’adresse exacte du compte de test.');
+    await limitAuthentication(env,`old-admin-test:${actor.sub}`);
+    const {grant,reservation,uid}=await oldTestAccountSnapshot(env,db,actor,email);
+    return {found:!!(grant||reservation),email,uid,grantActive:grant?.data?.active===true,
+      reservationStatus:reservation?.data?.status||'',createdAt:grant?.data?.createdAt||null};
+  }
+  async function revokeOldTestAccount(env,db,actor,body) {
+    const email=normalizeAdminEmail(body?.email),expectedUid=body?.uid||'';
+    if(!noPasswordBody(body)||!validManualEmail(email)||(expectedUid&&!ADMIN_ID.test(expectedUid))||body?.confirmed!==true)
+      fail(400,'Confirmez le compte de test exact.');
+    for(let attempt=0;attempt<8;attempt++) {
+      const [{grant,reservation,uid,access},checks]=await Promise.all([oldTestAccountSnapshot(env,db,actor,email),adminActorChecks(db,env,actor)]);
+      if(uid!==expectedUid||(!grant&&!reservation))fail(409,'Le compte ou la demande a changé. Recherchez l’adresse à nouveau.');
+      const writes=[...checks];
+      if(uid){writes.push(db.verify(`pulseAccess/${uid}`,precondition(access)));if(!grant)writes.push(db.verify(`pulseAdmins/${uid}`,{exists:false}));}
+      if(grant&&grant.data.active!==false)writes.push(db.write(`pulseAdmins/${uid}`,{...grant.data,active:false,revokedAt:new Date().toISOString(),revokedReason:'test-cleanup'},precondition(grant)));
+      if(reservation&&reservation.data.status!=='revoked')writes.push(db.write(await directReservationPath(actor,email),{...reservation.data,status:'revoked',revokedAt:Date.now()},precondition(reservation)));
+      if(!writes.length||(!grant&&reservation?.data.status==='revoked'))return {ok:true,uid,already:true};
+      try {await db.commit(writes);return {ok:true,uid,already:false};}
+      catch(e){if(!conflict(e))throw e;}
+    }
+    fail(409,'Le compte a changé. Recherchez l’adresse à nouveau.');
+  }
+  async function authorizeOldTestDeletion(env,db,actor,body) {
+    const email=normalizeAdminEmail(body?.email),uid=body?.uid,token=body?.userToken;
+    if(!noPasswordBody(body)||!validManualEmail(email)||!ADMIN_ID.test(uid||'')||typeof token!=='string'||token.length<20||token.length>8192||body?.confirmed!==true)
+      fail(400,'Vérifiez le compte de test.');
+    let target;try{target=await verify(env,token);}catch{fail(401,'La session du compte de test a expiré.');}
+    if(target.sub!==uid||normalizeAdminEmail(target.email)!==email||target.role==='seller'||target.firebase?.sign_in_provider!=='password'||!recentAdminAuthentication(target))
+      fail(403,'Le compte connecté ne correspond pas au compte de test vérifié.');
+    const [{grant,reservation,uid:found},checks]=await Promise.all([oldTestAccountSnapshot(env,db,actor,email),adminActorChecks(db,env,actor)]);
+    if(found!==uid||(!grant&&!reservation)||grant?.data?.active===true||(reservation&&reservation.data.status!=='revoked'))
+      fail(409,'Retirez d’abord les droits et vérifiez l’ancien compte.');
+    // Vérifie les préconditions juste avant le geste Firebase. Les deux
+    // systèmes ne permettent cependant pas une suppression transactionnelle.
+    const verifies=[...checks,db.verify(`pulseAccess/${uid}`,{exists:false}),db.verify(`pulseAdmins/${uid}`,precondition(grant))];
+    if(reservation)verifies.push(db.verify(await directReservationPath(actor,email),precondition(reservation)));
+    try {await db.commit(verifies);}catch(e){if(conflict(e))fail(409,'Le compte a changé. Recherchez-le à nouveau.');throw e;}
+    return {ok:true};
   }
   async function administratorAccountStatus(req,env,db) {
     const user=await admin(req,env,db,{allowPasswordChange:true});
@@ -1493,6 +1692,9 @@ export function createWorker(deps={}) {
       if(request.data.fingerprint!==fingerprint)fail(409,'Cet identifiant de correction a déjà été utilisé.');
       return {ok:true,added:Number(request.data.count)||quantity,duplicate:true};
     }
+    // Les anciens marqueurs restent rejouables sans rien écrire, mais une
+    // nouvelle correction concerne uniquement le jour précisément sélectionné.
+    if(period!=='day'||saleDate!==anchor)fail(400,'Choisissez une seule journée pour cette correction.');
     const person=c.data.sellers.find(s=>Number(s.id)===Number(sellerId)&&sellerStoreId(s)===storeId&&!s.deletingJob);
     const store=c.data.stores.find(s=>s.id===storeId),service=c.data.services.find(s=>Number(s.id)===Number(serviceId));
     const department=departmentsForStore(c.data,storeId,{activeOnly:false}).find(d=>d.id===departmentId);
@@ -1542,6 +1744,7 @@ export function createWorker(deps={}) {
       if(request.data.fingerprint!==fingerprint)fail(409,'Cet identifiant de correction a déjà été utilisé.');
       return {ok:true,deleted:Number(request.data.count)||saleIds.length,duplicate:true};
     }
+    if(period!=='day')fail(400,'Choisissez une seule journée pour cette correction.');
     const person=c.data.sellers.find(s=>Number(s.id)===Number(sellerId)&&sellerStoreId(s)===storeId&&!s.deletingJob);
     const store=c.data.stores.find(s=>s.id===storeId);
     if(!validStore(c.data,storeId)||!person||person.name!==expectedSellerName||store?.name!==expectedStoreName)
@@ -1758,11 +1961,21 @@ export function createWorker(deps={}) {
     if(method==='DELETE'&&sale)return deleteSale(req,env,db,sale[1]);
     if((method==='POST'||method==='DELETE')&&path==='/api/push/subscribe')return tokenSubscribe(req,env,db,await readBody(req),method);
     if(method==='POST'&&path==='/api/auth/admin-invitations/accept')return acceptAdministratorInvitation(req,env,db,await readBody(req));
+    if(method==='POST'&&path==='/api/auth/admin-access/check')return checkManualAdminRequest(req,env,db,await readBody(req));
+    if(method==='POST'&&path==='/api/auth/admin-access/claim')return claimManualAdminRequest(req,env,db,await readBody(req));
+    if(method==='POST'&&path==='/api/auth/admin-access/status')return manualAdminRequestStatus(req,env,db,await readBody(req));
     if(method==='POST'&&path==='/api/auth/admin-account-status')return administratorAccountStatus(req,env,db);
     if(method==='POST'&&path==='/api/auth/admin-code/prepare')return prepareAdminCode(req,env,db,await readBody(req));
     if(method==='POST'&&path==='/api/auth/admin-code/complete')return completeAdminCode(req,env,db,await readBody(req));
     if(path.startsWith('/api/admin/')) {
       const administrator=await admin(req,env,db);
+      if(method==='GET'&&path==='/api/admin/access-requests')return listManualAdminRequests(db,url.searchParams.get('after')||'');
+      if(method==='POST'&&path==='/api/admin/access-requests')return addManualAdminRequest(env,db,administrator,await readBody(req));
+      if(method==='POST'&&path==='/api/admin/access-requests/approve')return decideManualAdminRequest(env,db,administrator,await readBody(req),true);
+      if(method==='POST'&&path==='/api/admin/access-requests/cancel')return decideManualAdminRequest(env,db,administrator,await readBody(req),false);
+      if(method==='POST'&&path==='/api/admin/old-test/inspect')return inspectOldTestAccount(env,db,administrator,await readBody(req));
+      if(method==='POST'&&path==='/api/admin/old-test/revoke')return revokeOldTestAccount(env,db,administrator,await readBody(req));
+      if(method==='POST'&&path==='/api/admin/old-test/authorize-delete')return authorizeOldTestDeletion(env,db,administrator,await readBody(req));
       if(method==='POST'&&path==='/api/admin/enrollment-code')return issueAdminCode(env,db,administrator,await readBody(req));
       if(method==='POST'&&path==='/api/admin/enrollment-code/cancel')return cancelAdminCode(env,db,administrator,await readBody(req));
       if(method==='POST'&&path==='/api/admin/direct-account/start')return beginDirectAdministrator(env,db,administrator,await readBody(req));

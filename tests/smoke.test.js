@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import Database from 'better-sqlite3';
+import {saleAdditionFingerprintInput,saleCorrectionFingerprintInput} from '../src/sale-history.js';
 import { LEGACY_STORE_ID } from '../src/catalog.js';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'fnac-pulse-test-'));
@@ -445,8 +446,9 @@ test('SQLite : historique par vendeur et période, correction précise, confirma
     const query=`/api/admin/sales/history?storeId=${store.id}&sellerId=${one.id}&period=month&anchor=2026-10-29`;
     assert.equal((await request(query)).status,401);
     assert.deepEqual((await request(query,'GET',undefined,token)).value.sales.map(s=>s.id),['old-seller-sale-2','old-seller-sale-1']);
-    const correction={storeId:store.id,sellerId:one.id,period:'month',anchor:'2026-10-29',saleIds:['old-seller-sale-1'],requestId:'sqlite-correction-0001',confirmation:'SUPPRIMER',expectedSellerName:one.name,expectedStoreName:store.name};
+    const correction={storeId:store.id,sellerId:one.id,period:'day',anchor:'2026-10-29',saleIds:['old-seller-sale-1'],requestId:'sqlite-correction-0001',confirmation:'SUPPRIMER',expectedSellerName:one.name,expectedStoreName:store.name};
     assert.equal((await request('/api/admin/sales/correct','POST',correction)).status,401);
+    for(const period of ['week','month'])assert.equal((await request('/api/admin/sales/correct','POST',{...correction,period},token)).status,400);
     assert.equal((await request('/api/admin/sales/correct','POST',{...correction,saleIds:['old-seller-sale-1','old-other-seller1']},token)).status,409);
     assert.equal(db.prepare('SELECT deleted_at FROM sales WHERE id=?').get('old-seller-sale-1').deleted_at,null);
     assert.equal((await request('/api/admin/sales/correct','POST',correction,token)).value.deleted,1);
@@ -470,8 +472,9 @@ test('SQLite : ajout historique atomique, département et service archivés, rej
     db.prepare('INSERT INTO departments(store_id,id,name,active,sort_order) VALUES (?,?,?,?,?)').run(store.id,'editorial','Ancien département',0,1);
     db.prepare('UPDATE sellers SET active=0 WHERE id=?').run(seller.id);db.prepare('UPDATE services SET active=0 WHERE id=?').run(service.id);
     const goal=db.prepare('SELECT * FROM seller_goals').get();
-    const body={storeId:store.id,sellerId:seller.id,period:'month',anchor:'2026-10-29',saleDate:'2026-10-13',serviceId:service.id,departmentId:'editorial',quantity:3,requestId:'sqlite-history-add-0001',confirmation:'AJOUTER',expectedSellerName:seller.name,expectedStoreName:store.name,expectedServiceName:service.name,expectedDepartmentName:'Ancien département'};
+    const body={storeId:store.id,sellerId:seller.id,period:'day',anchor:'2026-10-13',saleDate:'2026-10-13',serviceId:service.id,departmentId:'editorial',quantity:3,requestId:'sqlite-history-add-0001',confirmation:'AJOUTER',expectedSellerName:seller.name,expectedStoreName:store.name,expectedServiceName:service.name,expectedDepartmentName:'Ancien département'};
     const route='/api/admin/sales/add-correction';assert.equal((await request(route,'POST',body)).status,401);
+    for(const period of ['week','month'])assert.equal((await request(route,'POST',{...body,period},token)).status,400);
     for(const invalid of [{saleDate:''},{saleDate:'2026-11-01'},{saleDate:'2026-02-30'},{saleDate:'2999-01-01'},{quantity:0},{quantity:21},{quantity:1.5},{confirmation:''}])
       assert.equal((await request(route,'POST',{...body,...invalid},token)).status,400,JSON.stringify(invalid));
     for(const changed of [{storeId:other.id},{sellerId:99999},{serviceId:99999},{departmentId:'missing'},{expectedDepartmentName:'Incorrect'},{expectedServiceName:'Incorrect'}])
@@ -483,10 +486,36 @@ test('SQLite : ajout historique atomique, département et service archivés, rej
     assert.deepEqual(db.prepare('SELECT * FROM seller_goals').get(),goal);assert.equal(db.prepare('SELECT count(*) AS n FROM sales WHERE store_id=?').get(other.id).n,0);
     assert.equal((await request(route,'POST',{...body,quantity:2},token)).status,409);
     const query=`/api/admin/sales/history?storeId=${store.id}&sellerId=${seller.id}&period=month&anchor=2026-10-29`,list=(await request(query,'GET',undefined,token)).value.sales;assert.equal(list.length,3);
-    const correction={storeId:store.id,sellerId:seller.id,period:'month',anchor:'2026-10-29',saleIds:[list[0].id],requestId:'sqlite-added-remove-001',confirmation:'SUPPRIMER',expectedSellerName:seller.name,expectedStoreName:store.name};
+    const correction={storeId:store.id,sellerId:seller.id,period:'day',anchor:'2026-10-13',saleIds:[list[0].id],requestId:'sqlite-added-remove-001',confirmation:'SUPPRIMER',expectedSellerName:seller.name,expectedStoreName:store.name};
     assert.equal((await request('/api/admin/sales/correct','POST',correction,token)).value.deleted,1);assert.equal(db.prepare('SELECT count(*) AS n FROM sales WHERE deleted_at IS NULL').get().n,2);
     db.prepare('INSERT INTO store_service_removals(store_id,service_id) VALUES (?,?)').run(store.id,service.id);
     assert.equal((await request(route,'POST',{...body,requestId:'sqlite-history-removed'},token)).status,409);
     assert.equal((await request(route,'POST',body,token)).value.duplicate,true);assert.equal(db.prepare('SELECT count(*) AS n FROM sales').get().n,3);
+  } finally {db?.close();await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
+});
+
+test('SQLite : anciens marqueurs semaine et mois rejouables sans écriture',async()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'fnac-legacy-history-')),port=await freePort(),url=`http://127.0.0.1:${port}`,server=await start(port,folder);let db;
+  const request=async(route,method='GET',body,token)=>{const r=await fetch(url+route,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,value:await r.json()};};
+  try {
+    const base=(await request('/api/bootstrap')).value,store=base.stores.find(s=>s.id===LEGACY_STORE_ID),seller=base.sellers.find(s=>s.id===1),service=base.services.find(s=>s.id===1);
+    const token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).value.token;
+    db=new Database(path.join(folder,'pulse.sqlite'));
+    db.prepare('INSERT INTO sales(id,store_id,seller_id,service_id,business_date,created_at,source,department_id) VALUES (?,?,?,?,?,?,?,?)').run('preserved-sale',store.id,seller.id,1,'2026-10-13','2026-10-13T12:00:00Z','sale','tech');
+    const hash=value=>crypto.createHash('sha256').update(value).digest('base64url');
+    for(const period of ['week','month']) {
+      const addition={storeId:store.id,sellerId:seller.id,period,anchor:'2026-10-15',saleDate:'2026-10-13',serviceId:1,departmentId:'tech',quantity:2,requestId:`sqlite-legacy-add-${period}`,confirmation:'AJOUTER',expectedSellerName:seller.name,expectedStoreName:store.name,expectedServiceName:service.name,expectedDepartmentName:'Produits Techniques'};
+      const removal={storeId:store.id,sellerId:seller.id,period,anchor:'2026-10-15',saleIds:['preserved-sale'],requestId:`sqlite-legacy-remove-${period}`,confirmation:'SUPPRIMER',expectedSellerName:seller.name,expectedStoreName:store.name};
+      db.prepare('INSERT INTO sale_addition_requests VALUES (?,?,?,?)').run(addition.requestId,hash(saleAdditionFingerprintInput(addition)),2,1);
+      db.prepare('INSERT INTO sale_correction_requests VALUES (?,?,?,?)').run(removal.requestId,hash(saleCorrectionFingerprintInput(removal)),1,1);
+      const before=db.prepare('SELECT * FROM sales').all();
+      assert.deepEqual((await request('/api/admin/sales/add-correction','POST',addition,token)).value,{ok:true,added:2,duplicate:true});
+      assert.deepEqual((await request('/api/admin/sales/correct','POST',removal,token)).value,{ok:true,deleted:1,duplicate:true});
+      assert.equal((await request('/api/admin/sales/add-correction','POST',{...addition,quantity:3},token)).status,409);
+      assert.equal((await request('/api/admin/sales/correct','POST',{...removal,saleIds:['another-sale']},token)).status,409);
+      assert.equal((await request('/api/admin/sales/add-correction','POST',{...addition,requestId:`sqlite-new-add-${period}`},token)).status,400);
+      assert.equal((await request('/api/admin/sales/correct','POST',{...removal,requestId:`sqlite-new-remove-${period}`},token)).status,400);
+      assert.deepEqual(db.prepare('SELECT * FROM sales').all(),before,'aucune vente modifiée');
+    }
   } finally {db?.close();await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
 });

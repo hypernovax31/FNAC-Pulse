@@ -737,6 +737,7 @@ app.post('/api/admin/sales/add-correction',requireAdmin,(req,res)=>{
   const result=db.transaction(()=>{
     const existing=db.prepare('SELECT * FROM sale_addition_requests WHERE request_id=?').get(requestId);
     if(existing)return existing.fingerprint===fingerprint?{ok:true,added:existing.count,duplicate:true}:{error:'Cet identifiant de correction a déjà été utilisé.'};
+    if(period!=='day'||saleDate!==anchor)return {error:'Choisissez une seule journée pour cette correction.',status:400};
     const store=activeStore(storeId),person=db.prepare('SELECT * FROM sellers WHERE id=? AND store_id=?').get(Number(sellerId),storeId);
     const service=db.prepare(`SELECT * FROM services WHERE id=? AND NOT EXISTS
       (SELECT 1 FROM store_service_removals WHERE store_id=? AND service_id=services.id)`).get(Number(serviceId),storeId);
@@ -750,7 +751,7 @@ app.post('/api/admin/sales/add-correction',requireAdmin,(req,res)=>{
     db.prepare('INSERT INTO sale_addition_requests(request_id,fingerprint,count,created_at) VALUES (?,?,?,?)').run(requestId,fingerprint,quantity,Date.now());
     return {ok:true,added:quantity,duplicate:false};
   })();
-  if(result.error)return failure(res,result.error,409);
+  if(result.error)return failure(res,result.error,result.status||409);
   if(!result.duplicate)broadcast(storeId,{kind:'adjustment'});
   res.json(result);
 });
@@ -766,6 +767,7 @@ app.post('/api/admin/sales/correct',requireAdmin,(req,res)=>{
   const result=db.transaction(()=>{
     const existing=db.prepare('SELECT * FROM sale_correction_requests WHERE request_id=?').get(requestId);
     if(existing)return existing.fingerprint===fingerprint?{ok:true,deleted:existing.count,duplicate:true}:{error:'Cet identifiant de correction a déjà été utilisé.'};
+    if(period!=='day')return {error:'Choisissez une seule journée pour cette correction.',status:400};
     const store=activeStore(storeId),person=db.prepare('SELECT * FROM sellers WHERE id=? AND store_id=?').get(Number(sellerId),storeId);
     if(!store||!person||person.name!==expectedSellerName||store.name!==expectedStoreName)return {error:'Le vendeur ou le magasin a changé. Vérifiez votre sélection.'};
     const find=db.prepare('SELECT * FROM sales WHERE id=? AND store_id=?'),removed=db.prepare('SELECT 1 FROM store_service_removals WHERE store_id=? AND service_id=?');
@@ -778,7 +780,7 @@ app.post('/api/admin/sales/correct',requireAdmin,(req,res)=>{
     db.prepare('INSERT INTO sale_correction_requests(request_id,fingerprint,count,created_at) VALUES (?,?,?,?)').run(requestId,fingerprint,rows.length,Date.now());
     return {ok:true,deleted:rows.length};
   })();
-  if(result.error)return failure(res,result.error,409);
+  if(result.error)return failure(res,result.error,result.status||409);
   if(!result.duplicate)broadcast(storeId,{kind:'adjustment'});
   res.json(result);
 });

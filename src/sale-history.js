@@ -23,8 +23,8 @@ export function saleHistoryRange(period,anchor,today) {
   const end=new Date(start);end.setUTCMonth(end.getUTCMonth()+1);end.setUTCDate(0);
   return {start:asIso(start),end:asIso(end)};
 }
-// Une vente ajoutée reste rattachée à un jour précis, déjà écoulé ou aujourd'hui,
-// même lorsque l'administrateur consulte une semaine ou un mois entiers.
+// La validation historique semaine/mois reste utilisée avant la recherche des
+// anciens marqueurs idempotents. Toute nouvelle correction exige ensuite day.
 export function validAdditionDate(period,anchor,saleDate,today) {
   const range=saleHistoryRange(period,anchor,today);
   return !!range&&!!saleHistoryRange('day',saleDate,today)&&saleDate>=range.start&&saleDate<=range.end;

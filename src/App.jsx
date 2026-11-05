@@ -281,7 +281,7 @@ function ServiceCard({service,index,count,session,pending,onAdd,onRemove}) {
   const iconKey=serviceIconKey(service),Icon=icons[iconKey]||MoreHorizontal,countId=`service-count-${service.id}`;
   return <article className={`service-card${pending?' is-pending':''}`}>
     <button type="button" className="service-add" onClick={()=>onAdd(service)} disabled={pending} aria-busy={!!pending} aria-label={`Ajouter une vente ${service.name}`} aria-describedby={countId}>
-      <span className="service-card-top"><span className={`service-icon ${iconColors[index%iconColors.length]}`} data-service-icon={iconKey} aria-hidden="true"><Icon size={20} strokeWidth={1.8}/></span><span className="service-add-symbol" aria-hidden="true"><Plus size={19} strokeWidth={2.4}/></span></span>
+      <span className="service-card-top"><span className={`service-icon ${iconColors[index%iconColors.length]}`} data-service-icon={iconKey} aria-hidden="true"><Icon size={20} strokeWidth={1.8}/></span></span>
       <strong className="service-card-name">{service.name}</strong><span className="service-add-label"><Plus size={13} strokeWidth={2.7} aria-hidden="true"/>{pending?'Un instant…':'Ajouter'}</span>
     </button>
     <div className="service-card-footer"><span id={countId}>{session?`${count} aujourd’hui`:'Profil à choisir'}</span><button type="button" className="minus-button" onClick={()=>onRemove(service)} disabled={pending||!session||count<=0} title={!session?'Choisissez votre profil':count<=0?'Aucune vente à retirer':`Retirer une vente ${service.name}`} aria-label={`Retirer une vente ${service.name}`} aria-describedby={countId}><Minus size={19} strokeWidth={2.5} aria-hidden="true"/></button></div>

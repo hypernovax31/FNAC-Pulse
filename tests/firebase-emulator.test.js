@@ -508,7 +508,7 @@ test('Émulateur Firestore : historique paginé et correction atomique des vente
   let result=await call(url);assert.equal(result.status,200);assert(result.json.next);const rows=[...result.json.sales];
   result=await call(`${url}&afterDate=${result.json.next.date}&afterId=${result.json.next.id}`);assert.equal(result.status,200);rows.push(...result.json.sales);
   assert.deepEqual(rows.map(x=>x.id).sort(),['a-firebase-retained','a-firebase-selected']);
-  const body={storeId:store,sellerId:1,period:'month',anchor:'2026-10-29',saleIds:['a-firebase-selected'],requestId:'firebase-history-correction-001',confirmation:'SUPPRIMER',expectedSellerName:sellerName,expectedStoreName:storeName};
+  const body={storeId:store,sellerId:1,period:'day',anchor:'2026-10-29',saleIds:['a-firebase-selected'],requestId:'firebase-history-correction-001',confirmation:'SUPPRIMER',expectedSellerName:sellerName,expectedStoreName:storeName};
   assert.equal((await call('/api/admin/sales/correct','POST',{...body,saleIds:['a-firebase-selected','a-firebase-other']})).status,409);
   assert.equal((await db.get(`${collection}/a-firebase-selected`)).data.deletedAt,null);
   assert.equal((await call('/api/admin/sales/correct','POST',body)).json.deleted,1);
@@ -962,7 +962,7 @@ test('Émulateur Firestore : ajout historique atomique, rejeu simultané et dép
   seller.active=false;catalog.sellerFlags.s1=false;service.active=false;
   catalog.departmentsByStore={[store]:[{id:'tech',name:'Produits Techniques',active:true},{id:'editorial',name:'Ancien département',active:false}]};
   await db.commit([db.write('pulse/catalog',catalog),db.write('pulseGoals/fixture-add-owner',{goals:{s1:{day:4,week:12,month:32}}})]);
-  const body={storeId:store,sellerId:1,period:'month',anchor:'2026-10-29',saleDate:'2026-10-13',serviceId:1,departmentId:'editorial',quantity:3,requestId:'firebase-history-add-0001',confirmation:'AJOUTER',expectedSellerName:seller.name,expectedStoreName:catalog.stores.find(s=>s.id===store).name,expectedServiceName:service.name,expectedDepartmentName:'Ancien département'};
+  const body={storeId:store,sellerId:1,period:'day',anchor:'2026-10-13',saleDate:'2026-10-13',serviceId:1,departmentId:'editorial',quantity:3,requestId:'firebase-history-add-0001',confirmation:'AJOUTER',expectedSellerName:seller.name,expectedStoreName:catalog.stores.find(s=>s.id===store).name,expectedServiceName:service.name,expectedDepartmentName:'Ancien département'};
   const route='/api/admin/sales/add-correction';assert.equal((await call(route,'POST',body,'')).status,401);
   assert.equal((await call(route,'POST',{...body,saleDate:'2026-11-01'})).status,400);
   const [one,two]=await Promise.all([call(route,'POST',body),call(route,'POST',body)]);assert.equal(one.status,200);assert.equal(two.status,200);assert.deepEqual([one.json.duplicate,two.json.duplicate].sort(),[false,true]);
@@ -970,8 +970,97 @@ test('Émulateur Firestore : ajout historique atomique, rejeu simultané et dép
   for(const row of rows){assert.equal(row.data.sellerId,1);assert.equal(row.data.serviceId,1);assert.equal(row.data.departmentId,'editorial');assert.equal(row.data.businessDate,'2026-10-13');assert.equal(row.data.source,'adjustment');assert(!row.data.createdAt.startsWith('2026-10-13'));}
   assert.equal((await call(route,'POST',{...body,quantity:2})).status,409);assert.equal((await call(route,'POST',body)).json.duplicate,true);
   const history=(await call(`/api/admin/sales/history?storeId=${store}&sellerId=1&period=month&anchor=2026-10-29`)).json;assert.equal(history.sales.length,3);
-  const correction={storeId:store,sellerId:1,period:'month',anchor:'2026-10-29',saleIds:[history.sales[0].id],requestId:'firebase-added-remove-001',confirmation:'SUPPRIMER',expectedSellerName:seller.name,expectedStoreName:body.expectedStoreName};
+  const correction={storeId:store,sellerId:1,period:'day',anchor:'2026-10-13',saleIds:[history.sales[0].id],requestId:'firebase-added-remove-001',confirmation:'SUPPRIMER',expectedSellerName:seller.name,expectedStoreName:body.expectedStoreName};
   assert.equal((await call('/api/admin/sales/correct','POST',correction)).json.deleted,1);assert.equal((await db.query(`pulseStores/${store}/sales`)).filter(row=>!row.data.deletedAt).length,2);
   assert.deepEqual((await db.get('pulseGoals/fixture-add-owner')).data,{goals:{s1:{day:4,week:12,month:32}}});
   assert.equal((await db.query('pulseOutbox')).length,0);assert.equal(queued.length,0);assert.equal(sent.length,0);assert.equal(waits.length,0);
+});
+
+test('Émulateurs Firebase : première connexion sans courriel, validation manuelle et nettoyage du seul compte de test',{skip:!enabled},async()=>{
+  const project='demo-fnac',port=9099,stamp=Date.now(),generated=`${process.cwd()}/node_modules/.fnac-pulse-tests/manual-${process.pid}-${stamp}.mjs`;
+  await mkdir(`${process.cwd()}/node_modules/.fnac-pulse-tests`,{recursive:true});
+  await build({entryPoints:['src/cloud.js'],outfile:generated,bundle:true,platform:'node',format:'esm',external:['firebase/*'],
+    define:{'import.meta.env':JSON.stringify({VITE_BACKEND:'cloud',MODE:'test'})},plugins:[{name:'manual-emulators-only',setup(b){
+      b.onResolve({filter:/^\.\/firebase-config$/},()=>({path:'config',namespace:'test-config'}));
+      b.onLoad({filter:/.*/,namespace:'test-config'},()=>({contents:`export const firebaseConfig=${JSON.stringify({apiKey:'demo-key',projectId:project,authDomain:'demo-fnac.firebaseapp.com',appId:'1:1:web:demo'})};`,loader:'js'}));
+      b.onResolve({filter:/^firebase\/auth$/},args=>args.namespace==='test-auth'?{path:'firebase/auth',external:true}:{path:'auth',namespace:'test-auth'});
+      b.onLoad({filter:/.*/,namespace:'test-auth'},()=>({contents:`import * as auth from 'firebase/auth'; export * from 'firebase/auth';
+        const seen=new WeakSet(); export function getAuth(app){const result=auth.getAuth(app);if(!seen.has(result)){auth.connectAuthEmulator(result,'http://127.0.0.1:${port}',{disableWarnings:true});seen.add(result);}return result;}
+        export async function setPersistence(a,p){return auth.setPersistence(a,p===auth.browserSessionPersistence?auth.inMemoryPersistence:p);}` ,loader:'js'}));
+    }}]});
+  const before=new Set(getApps().map(a=>a.name)),cloud=await import(pathToFileURL(generated).href);
+  const adminAuth=getAuth(getApp('fnac-pulse-admin')),sellerAuth=getAuth(getApp());
+  const db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'});
+  const rootEmail=`manual-root-${stamp}@example.test`,targetEmail=`manual-new-${stamp}@example.test`,testEmail=`manual-old-test-${stamp}@example.test`;
+  const rootPassword='Root-password-2026!',personal='Personal-password-2026!',testPassword='Test-password-2026!';
+  const root=(await createUserWithEmailAndPassword(adminAuth,rootEmail,rootPassword)).user,rootUid=root.uid,rootToken=await root.getIdToken(true),sellerUid=`seller-manual-${stamp}`;
+  await signInWithCustomToken(sellerAuth,fakeCustomToken({},sellerUid,{role:'seller',storeId:'store-test',sellerId:1,sellerKey:'s1',accessVersion:'kept'}));
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>JSON.parse(Buffer.from(t.split('.')[1],'base64url').toString())});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:rootUid,PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  const call=async(path,method,body,token)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body!==undefined?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,json:await r.json()};};
+  const seen=[];
+  const api=async(path,options={})=>{
+    seen.push({path,body:options.body});
+    const token=options.token===cloud.ADMIN_SESSION?await adminAuth.currentUser.getIdToken():options.token||'';
+    const result=await call(path,options.method||'GET',options.body,token);
+    if(result.status>=400)throw Object.assign(Error(result.json.error||'Erreur'),{status:result.status});return result.json;
+  };
+  let testApp;
+  try {
+    assert.equal((await call('/api/admin/access-requests','POST',{email:targetEmail},rootToken)).status,200);
+    const created=await cloud.registerAdminForApproval(api,{email:targetEmail,password:personal});assert.equal(created.status,'pending');
+    assert.equal(adminAuth.currentUser.email,targetEmail);assert.equal(adminAuth.currentUser.emailVerified,false);assert.equal(sellerAuth.currentUser.uid,sellerUid);
+    const candidateUid=adminAuth.currentUser.uid,candidateToken=await adminAuth.currentUser.getIdToken(true);
+    assert.equal((await call('/api/admin/all','GET',undefined,candidateToken)).status,403);assert.equal(await db.get(`pulseAdmins/${candidateUid}`),null);
+    const item=(await call('/api/admin/access-requests','GET',undefined,rootToken)).json.requests.find(x=>x.email===targetEmail);
+    assert.equal(item.claimantUid,candidateUid);
+    const approval={email:targetEmail,requestId:item.requestId,claimantUid:candidateUid,confirmed:true,identityVerified:true};
+    assert.equal((await call('/api/admin/access-requests/approve','POST',approval,rootToken)).status,200);
+    assert.equal((await call('/api/admin/all','GET',undefined,candidateToken)).status,200);
+    assert.equal((await api('/api/auth/admin-access/status',{method:'POST',token:cloud.ADMIN_SESSION,body:{}})).status,'approved');
+    const codes=(await (await fetch(`http://127.0.0.1:${port}/emulator/v1/projects/${project}/oobCodes`)).json()).oobCodes||[];
+    assert(!codes.some(x=>x.email===targetEmail));assert(!JSON.stringify(seen).includes(personal));
+    await cloud.adminLogin(rootEmail,rootPassword);assert.equal(adminAuth.currentUser.uid,rootUid);
+    testApp=initializeApp({apiKey:'demo-key',projectId:project,appId:'1:1:web:demo'},`cleanup-fixture-${stamp}`);
+    const testAuth=getAuth(testApp);connectAuthEmulator(testAuth,`http://127.0.0.1:${port}`,{disableWarnings:true});
+    const testUser=(await createUserWithEmailAndPassword(testAuth,testEmail,testPassword)).user,testUid=testUser.uid;
+    const digest=await digestBase64(`direct-admin-email:${testEmail}`),reservation=`pulseAdminDirectRequests/${await digestBase64(`direct-admin-request:${rootUid}:${testEmail}`)}`;
+    await db.commit([db.write(`pulseAdmins/${testUid}`,{active:true,source:'direct-v1',createdBy:rootUid,directEmailDigest:digest,passwordChangeRequired:true}),
+      db.write(reservation,{createdBy:rootUid,status:'completed',requestId:'emulator-test-001',targetUid:testUid})]);
+    const inspected=await api('/api/admin/old-test/inspect',{method:'POST',token:cloud.ADMIN_SESSION,body:{email:testEmail}});assert.equal(inspected.uid,testUid);
+    assert.equal((await api('/api/admin/old-test/revoke',{method:'POST',token:cloud.ADMIN_SESSION,body:{email:testEmail,uid:testUid,confirmed:true}})).ok,true);
+    assert.equal((await db.get(`pulseAdmins/${testUid}`)).data.active,false);
+    await cloud.deleteTestFirebaseAccount(api,{email:testEmail,password:testPassword,uid:testUid});
+    await assert.rejects(signInWithEmailAndPassword(testAuth,testEmail,testPassword));
+    assert.equal(adminAuth.currentUser.uid,rootUid);assert.equal(sellerAuth.currentUser.uid,sellerUid);assert.equal((await db.get(`pulseAdmins/${candidateUid}`)).data.active,true);
+    assert(!getApps().some(a=>a.name.startsWith('fnac-pulse-test-cleanup-')));assert(!JSON.stringify(seen).includes(testPassword));
+  } finally {
+    if(testApp)await deleteApp(testApp);
+    for(const app of getApps())if(!before.has(app.name))await deleteApp(app);
+    await unlink(generated).catch(()=>{});
+  }
+});
+
+test('Émulateur Firestore : pagination des demandes ouvertes par statut et curseur', {skip:!enabled},async()=>{
+  const project='demo-fnac',db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'}),stamp=Date.now();
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'pagination-admin'})});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:'pagination-admin'},ctx={waitUntil(){}};
+  const call=async(path)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{headers:{authorization:'Bearer test'}}),env,ctx);return {status:r.status,body:await r.json()};};
+  const paths=[],expected=new Set();
+  try {
+    for(let i=0;i<56;i++){
+      const email=`page-${stamp}-${i}@example.test`,id=await digestBase64(`manual-admin-request:${email}`),requestId=`paging-test-${stamp}-${i}`,status=i%2?'pending':'invited';
+      paths.push(`pulseAdminAccessRequests/${id}`);expected.add(requestId);
+      await db.commit([db.write(paths.at(-1),{email,status,requestId,createdAt:stamp,...(status==='pending'?{claimantUid:`candidate-${i}`}:{})},{exists:false})]);
+    }
+    let next='',seen=[];
+    do {
+      const result=await call(`/api/admin/access-requests${next?`?after=${next}`:''}`);
+      assert.equal(result.status,200,JSON.stringify(result.body));assert(result.body.requests.length<=50);
+      seen.push(...result.body.requests);next=result.body.next;
+      assert(seen.length<300,'pagination bornée');
+    } while(next);
+    assert([...expected].every(id=>seen.some(item=>item.requestId===id)));
+    assert.equal(seen.filter(item=>expected.has(item.requestId)).length,56);
+  } finally {if(paths.length)await db.commit(paths.map(path=>db.delete(path)));}
 });

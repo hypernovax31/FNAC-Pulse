@@ -1,5 +1,5 @@
 import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, setPersistence, browserSessionPersistence, inMemoryPersistence, EmailAuthProvider, reauthenticateWithCredential, updatePassword, verifyBeforeUpdateEmail, sendEmailVerification, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset, checkActionCode, applyActionCode, reload } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, createUserWithEmailAndPassword, deleteUser, signOut, setPersistence, browserSessionPersistence, inMemoryPersistence, EmailAuthProvider, reauthenticateWithCredential, updatePassword, verifyBeforeUpdateEmail, sendEmailVerification, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset, checkActionCode, applyActionCode, reload } from 'firebase/auth';
 import { getFirestore, doc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { getMessaging, getToken, deleteToken, isSupported } from 'firebase/messaging';
 import { firebaseConfig } from './firebase-config';
@@ -95,6 +95,48 @@ export async function adminLogin(email,password) {
   return ADMIN_SESSION;
 }
 export async function adminLogout() {await signOut(adminAuth);}
+// Un nouvel utilisateur crée lui-même son compte Firebase. Le Worker ne voit
+// jamais le mot de passe : il ne reçoit qu’un jeton Firebase déjà signé.
+export async function claimAdminAccess(api) {
+  const body={};let result;
+  try {result=await api('/api/auth/admin-access/claim',{method:'POST',token:ADMIN_SESSION,body});}
+  catch(error) {
+    if(error?.status&&error.status<500&&error.status!==408&&error.status!==429)throw error;
+    try {result=await api('/api/auth/admin-access/claim',{method:'POST',token:ADMIN_SESSION,body});}
+    catch {throw new Error('La demande n’est pas confirmée. Reconnectez-vous avec la même adresse et le même mot de passe.');}
+  }
+  if(!result?.ok||!['pending','approved'].includes(result.status))throw new Error('La demande n’est pas confirmée. Reconnectez-vous avec les mêmes informations.');
+  return result;
+}
+export async function registerAdminForApproval(api,{email,password}) {
+  const address=String(email||'').trim().toLowerCase();
+  if(!address||address.length>254||! /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(address))throw new Error('Indiquez une adresse e-mail valide.');
+  if(typeof password!=='string'||password.length<12||password.length>128)throw new Error('Choisissez un mot de passe de 12 à 128 caractères.');
+  const check=await api('/api/auth/admin-access/check',{method:'POST',body:{email:address}});
+  if(!check?.allowed)throw new Error('Cette adresse n’a pas été ajoutée. Demandez à un administrateur de l’ajouter avant de continuer.');
+  try {
+    await setPersistence(adminAuth,browserSessionPersistence);
+    try {await createUserWithEmailAndPassword(adminAuth,address,password);}
+    catch(error) {
+      if(error?.code==='auth/email-already-in-use') {
+        // La création a peut-être abouti malgré une réponse perdue. Une
+        // connexion avec ce même mot de passe prouve l’accès au compte, sans
+        // accorder aucun droit avant la validation humaine.
+        try {await signInWithEmailAndPassword(adminAuth,address,password);}
+        catch {throw new Error('Cette adresse possède déjà un compte. Connectez-vous avec son mot de passe actuel ; aucun accès n’a été ajouté.');}
+      } else if(error?.code==='auth/invalid-email')throw new Error('Indiquez une adresse e-mail valide.');
+      else if(error?.code==='auth/weak-password')throw new Error('Firebase a refusé ce mot de passe. Choisissez-en un plus robuste.');
+      else if(error?.code==='auth/too-many-requests')throw new Error('Trop de tentatives. Réessayez plus tard.');
+      else throw new Error('La création n’est pas confirmée. Si nécessaire, reconnectez-vous avec la même adresse et le même mot de passe.');
+    }
+    return await claimAdminAccess(api);
+  } catch(error) {
+    // Pas de suppression automatique : Firebase et Firestore ne sont pas
+    // atomiques, et le compte existant peut appartenir à l’utilisateur.
+    await signOut(adminAuth).catch(()=>{});
+    throw error;
+  }
+}
 async function adminUser() {
   await adminAuth.authStateReady();const user=adminAuth.currentUser;
   if(!user?.email)throw new Error('Session administrateur expirée.');
@@ -112,6 +154,28 @@ async function reauthenticateAdmin(currentPassword) {
 export async function adminAccountEmail({refresh=false}={}) {
   const user=await adminUser();if(refresh)await reload(user);
   return user.email||'';
+}
+// La connexion de test est isolée en mémoire : elle ne remplace ni la session
+// vendeur ni celle de l’administrateur qui effectue le nettoyage. L'UID doit
+// être celui identifié par le Worker, et le mot de passe reste chez Firebase.
+export async function deleteTestFirebaseAccount(api,{email,password,uid}) {
+  const address=String(email||'').trim().toLowerCase();
+  if(!address||!password||!uid)throw new Error('Indiquez le mot de passe du compte de test identifié.');
+  const temporary=initializeApp(firebaseConfig,`fnac-pulse-test-cleanup-${secureRandomText()}`),temporaryAuth=getAuth(temporary);
+  try {
+    await setPersistence(temporaryAuth,inMemoryPersistence);
+    let user;
+    try {user=(await signInWithEmailAndPassword(temporaryAuth,address,password)).user;}
+    catch {throw new Error('Connexion au compte de test impossible. Ses droits restent retirés ; vérifiez le mot de passe ou utilisez la console Firebase.');}
+    if(user.uid!==uid||String(user.email||'').trim().toLowerCase()!==address)
+      throw new Error('Ce compte ne correspond pas à l’identifiant vérifié. Aucun compte Firebase n’a été supprimé.');
+    const userToken=await user.getIdToken(true);
+    const authorized=await api('/api/admin/old-test/authorize-delete',{method:'POST',token:ADMIN_SESSION,body:{email:address,uid,userToken,confirmed:true}});
+    if(!authorized?.ok)throw new Error('La suppression de ce compte n’est pas autorisée.');
+    try {await deleteUser(user);}
+    catch {throw new Error('La suppression Firebase n’est pas confirmée. Vérifiez ce compte dans la console Firebase avant de réessayer.');}
+    return {deleted:true};
+  } finally {await signOut(temporaryAuth).catch(()=>{});await deleteApp(temporary).catch(()=>{});}
 }
 export async function changeAdminPassword(currentPassword,newPassword) {
   if(newPassword.length<12||newPassword.length>128)throw new Error('Le mot de passe doit comporter de 12 à 128 caractères.');

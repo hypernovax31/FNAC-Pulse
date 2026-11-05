@@ -12,7 +12,7 @@ const bundled=await build({entryPoints:['src/App.jsx'],bundle:true,platform:'nod
   b.onResolve({filter:/^\.\/cloud$/},()=>({path:'cloud',namespace:'mock'}));
   b.onLoad({filter:/^api$/,namespace:'mock'},()=>({contents:`export const api=(...x)=>globalThis.__startupTest.api(...x);export const uid=()=>"test-id";export const dateLabel=()=>"date";export const timeLabel=()=>"heure";export const kmBetween=(a,b,c,d)=>Math.abs(a-c)+Math.abs(b-d);`,loader:'js'}));
   b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`
-    export const CLOUD=true,ADMIN_SESSION='admin';
+    export const claimAdminAccess=(...x)=>globalThis.__directLogin?.claim?.(...x),registerAdminForApproval=(...x)=>globalThis.__directLogin?.manualRegister?.(...x),deleteTestFirebaseAccount=()=>{}; export const CLOUD=true,ADMIN_SESSION='admin';
     export const observeVendor=fn=>globalThis.__startupTest.observe(fn);
     export const listenStore=(...args)=>globalThis.__startupTest.listen(...args);
     export const prepareFcm=options=>globalThis.__startupTest.prepare(options);

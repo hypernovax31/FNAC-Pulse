@@ -11,7 +11,7 @@ const out=await build({entryPoints:['src/Admin.jsx'],bundle:true,platform:'node'
   b.onResolve({filter:/^\.\/cloud$/},()=>({path:'cloud',namespace:'mock'}));
   b.onLoad({filter:/^api$/,namespace:'mock'},()=>({contents:`export const api=(...x)=>globalThis.__directLogin.api(...x);export const uid=()=>"test-uid";export const dateLabel=x=>x;export const timeLabel=x=>x;`,loader:'js'}));
   b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`
-    export const CLOUD=true,ADMIN_SESSION='admin-session';
+    export const claimAdminAccess=(...x)=>globalThis.__directLogin?.claim?.(...x),registerAdminForApproval=(...x)=>globalThis.__directLogin?.manualRegister?.(...x),deleteTestFirebaseAccount=()=>{}; export const CLOUD=true,ADMIN_SESSION='admin-session';
     export const adminLogin=(...x)=>globalThis.__directLogin.login(...x),adminLogout=()=>globalThis.__directLogin.logout(),changeAdminPassword=(...x)=>globalThis.__directLogin.change(...x);
     export const adminAccountEmail=async()=>"nouveau@example.test",createDirectAdministrator=()=>{},resendAdminVerification=()=>{};
     export const createAdminEnrollmentCode=()=>{},cancelAdminEnrollmentCode=()=>{},registerAdminWithCode=(...x)=>globalThis.__directLogin.register?.(...x),changeFirstCodeAdminPassword=(...x)=>globalThis.__directLogin.codeChange?.(...x);
@@ -92,5 +92,55 @@ test('Parcours code à distance : aucun accès avant le mot de passe personnel',
     assert.deepEqual(calls.find(x=>x[0]==='codeChange').slice(1),['Personnel-test-2026!']);
     assert.deepEqual(calls.filter(x=>x[0]==='login').map(x=>x[2]),['Personnel-test-2026!']);
     assert.equal(values.get('pulse-admin-token'),'admin-session');assert(calls.some(x=>x[0]==='api'&&x[1]==='/api/admin/all'));
+  } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
+});
+
+test('Nouvelle première connexion : mot de passe personnel, aucun droit avant validation humaine',async()=>{
+  const names=['document','window','sessionStorage','__directLogin'],old=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)]));
+  const values=new Map(),calls=[],put=(n,value)=>Object.defineProperty(globalThis,n,{configurable:true,writable:true,value});let tree,approved=false;
+  put('document',{body:{style:{overflow:''}},activeElement:null,addEventListener(){},removeEventListener(){}});put('window',{confirm:()=>true});
+  put('sessionStorage',{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)});
+  put('__directLogin',{
+    async manualRegister(_api,data){calls.push(['register',data]);return {status:'pending'};},
+    async logout(){calls.push(['logout']);},async login(){throw Error('unexpected');},async change(){},
+    async api(path){calls.push(['api',path]);
+      if(path==='/api/auth/admin-access/status')return {ok:true,status:approved?'approved':'pending'};
+      if(path==='/api/admin/all')return {sellers:[],services:[],serviceOrders:{},departmentsByStore:{}};
+      return {ok:true};
+    },
+  });
+  const button=caption=>tree.root.findAllByType('button').find(x=>text(x).includes(caption));
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
+    await act(async()=>button('Première connexion').props.onClick());
+    assert.match(text(tree.toJSON()),/Aucun e-mail n’est envoyé/);assert.doesNotMatch(text(tree.toJSON()),/code|mot de passe provisoire/);
+    const f=()=>tree.root.findByType('form'),fields=()=>f().findAllByType('input');
+    await set(fields()[0],'candidate@example.test');await set(fields()[1],'Personnel-test-2026!');await set(fields()[2],'Personnel-test-2026!');
+    await act(async()=>{f().props.onSubmit({preventDefault(){}});await tick();await tick();});
+    assert.deepEqual(calls.find(x=>x[0]==='register')[1],{email:'candidate@example.test',password:'Personnel-test-2026!'});
+    assert.match(text(tree.toJSON()),/Demande en attente/);assert.match(text(tree.toJSON()),/Montrez cet écran/);assert.equal(values.has('pulse-admin-token'),false);
+    assert.equal(calls.filter(x=>x[1]==='/api/admin/all').length,0);
+    await act(async()=>{button('Vérifier la validation').props.onClick();await tick();});assert.match(text(tree.toJSON()),/attend toujours/);
+    assert.equal(values.has('pulse-admin-token'),false);approved=true;
+    await act(async()=>{button('Vérifier la validation').props.onClick();await tick();await tick();});
+    assert.equal(values.get('pulse-admin-token'),'admin-session');assert(calls.some(x=>x[1]==='/api/admin/all'));
+  } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
+});
+
+test('Compte existant : se connecter avec son propre mot de passe transmet seulement une demande en attente',async()=>{
+  const names=['document','window','sessionStorage','__directLogin'],old=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)]));
+  const values=new Map(),calls=[],put=(n,value)=>Object.defineProperty(globalThis,n,{configurable:true,writable:true,value});let tree;
+  put('document',{body:{style:{overflow:''}},activeElement:null,addEventListener(){},removeEventListener(){}});put('window',{confirm:()=>true});
+  put('sessionStorage',{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)});
+  put('__directLogin',{
+    async login(email,password){calls.push(['login',email,password]);return 'admin-session';},async logout(){},async change(){},
+    async claim(){calls.push(['claim']);return {ok:true,status:'pending'};},
+    async api(path){if(path==='/api/auth/admin-account-status')throw Object.assign(Error('Accès administrateur refusé.'),{status:403});throw Error('aucune donnée admin avant validation');},
+  });
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
+    await set(tree.root.findByProps({id:'admin-email'}),'ancien@example.test');await set(tree.root.findByProps({id:'admin-password'}),'Ancien-password-test!');
+    await act(async()=>{tree.root.findAllByType('form')[0].props.onSubmit({preventDefault(){}});await tick();await tick();});
+    assert(calls.some(x=>x[0]==='claim'));assert.equal(values.has('pulse-admin-token'),false);assert.match(text(tree.toJSON()),/Demande en attente/);
   } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
 });

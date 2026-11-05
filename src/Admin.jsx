@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, LockKeyhole, ArrowRight, Plus, Check, Pencil, Archive, RotateCcw, LogOut, ShieldCheck, Store, Info, ArrowUp, ArrowDown, Trash2 } from 'lucide-react';
 import { api } from './api';
-import { CLOUD, ADMIN_SESSION, adminLogin, adminLogout, resendAdminVerification } from './cloud';
+import { CLOUD, ADMIN_SESSION, adminLogin, adminLogout, claimAdminAccess, resendAdminVerification } from './cloud';
 import { AdminAccounts } from './AdminAccounts';
+import { AdminRegistration } from './AdminRegistration';
 import { AdminFirstPassword } from './AdminFirstPassword';
 import { AdminCodeRegistration } from './AdminCodeRegistration';
 import { DirectoryImport } from './DirectoryImport';
@@ -71,7 +72,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [password,setPassword]=useState('');
   const [email,setEmail]=useState('');
   const [firstPassword,setFirstPassword]=useState(false),[firstTemporary,setFirstTemporary]=useState(''),[firstBusy,setFirstBusy]=useState(false),[codeRegistration,setCodeRegistration]=useState(false);
-  const [accountPending,setAccountPending]=useState(false);
+  const [manualRegistration,setManualRegistration]=useState(false),[approvalWaiting,setApprovalWaiting]=useState(false);
   const [error,setError]=useState('');
   const [notice,setNotice]=useState('');
   const [busy,setBusy]=useState(false);
@@ -84,10 +85,6 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [tab,setTab]=useState(()=>adminStore?'sales':'stores');
   const [adminSeller,setAdminSeller]=useState(session?.sellerId&&session.storeId===adminStore?String(session.sellerId):'');
   const [allLoaded,setAllLoaded]=useState(false);
-  const [counts,setCounts]=useState({});
-  const [countsFor,setCountsFor]=useState('');
-  const [countsLoading,setCountsLoading]=useState(false);
-  const [countsRevision,setCountsRevision]=useState(0);
   const [adminGoals,setAdminGoals]=useState(null);
   const [adminWorkdays,setAdminWorkdays]=useState(null);
   const [goalsFor,setGoalsFor]=useState('');
@@ -117,14 +114,6 @@ export default function Admin({onClose,data,session,onChanged}) {
   useEffect(()=>{
     if(allLoaded&&adminSeller&&!sellersForStore(all.sellers,adminStore).some(s=>String(s.id)===String(adminSeller)))setAdminSeller('');
   },[all,allLoaded,adminStore,adminSeller]);
-  useEffect(()=>{
-    if(!token||!adminStore||!adminSeller||tab!=='sales') return;
-    let cancelled=false;setCountsFor('');setCountsLoading(true);
-    api(`/api/admin/counts?storeId=${encodeURIComponent(adminStore)}&sellerId=${encodeURIComponent(adminSeller)}`,{token}).then(result=>{
-      if(!cancelled){setCounts(Object.fromEntries(result.counts.map(item=>[item.serviceId,item.count])));setCountsFor(`${adminStore}:${adminSeller}`);}
-    }).catch(e=>{if(!cancelled)setError(e.message)}).finally(()=>{if(!cancelled)setCountsLoading(false)});
-    return ()=>{cancelled=true};
-  },[token,adminStore,adminSeller,tab,countsRevision]);
 
   function applyAdminGoals(result) {
     setAdminGoals(result.goals);setAdminWorkdays(normalizeWorkdays(result.workdays));
@@ -170,7 +159,14 @@ export default function Admin({onClose,data,session,onChanged}) {
         auth=await adminLogin(email,password);
         try {
           if(acceptInvitation)await api('/api/auth/admin-invitations/accept',{method:'POST',token:auth,body:{confirmed:true}});
-          let status=await api('/api/auth/admin-account-status',{method:'POST',token:auth,body:{}});
+          let status;
+          try {status=await api('/api/auth/admin-account-status',{method:'POST',token:auth,body:{}});}
+          catch(statusError) {
+            if(acceptInvitation||statusError.status!==403||/Confirmez/.test(statusError.message))throw statusError;
+            const claim=await claimAdminAccess(api);
+            if(claim.status==='pending'){setEmail(email.trim().toLowerCase());setPassword('');setApprovalWaiting(true);return;}
+            status=await api('/api/auth/admin-account-status',{method:'POST',token:auth,body:{}});
+          }
           if(status.passwordChangeRequired){setFirstTemporary(status.method==='code'?'':password);setFirstPassword(status.method==='code'?'code':'direct');setPassword('');return;}
           if(status.reauthenticate) {
             // Les jetons Firebase ont une précision d'une seconde. Attendre un
@@ -183,7 +179,6 @@ export default function Admin({onClose,data,session,onChanged}) {
           await api('/api/admin/all',{token:auth});
         }catch(e){
           await adminLogout();
-          if(!acceptInvitation&&e.status===403&&!/Confirmez/.test(e.message))throw new Error(`${e.message} Si vous êtes invité, utilisez « Accepter mon invitation ».`);
           throw e;
         }
       } else {const result=await api('/api/admin/login',{method:'POST',body:{password}});auth=result.token;}
@@ -191,6 +186,27 @@ export default function Admin({onClose,data,session,onChanged}) {
       if(acceptInvitation)setNotice('Invitation acceptée. Vous disposez maintenant des droits administrateur.');
     }
     catch(e){setError(e.message);} finally{setBusy(false);}
+  }
+  async function manualRegistered(address) {
+    setEmail(address);setPassword('');setError('');setNotice('');setManualRegistration(false);setApprovalWaiting(true);
+  }
+  async function verifyApproval() {
+    if(busy)return;
+    setBusy(true);setError('');setNotice('');
+    try {
+      const status=await api('/api/auth/admin-access/status',{method:'POST',token:ADMIN_SESSION,body:{}});
+      if(status.status==='pending'){setNotice('Votre demande attend toujours la validation d’un administrateur.');return;}
+      if(status.status!=='approved')throw new Error('La validation ne peut pas encore être confirmée.');
+      await api('/api/admin/all',{token:ADMIN_SESSION});
+      sessionStorage.setItem('pulse-admin-token',ADMIN_SESSION);setApprovalWaiting(false);setToken(ADMIN_SESSION);
+      setNotice('Votre accès administrateur est validé.');
+    } catch(e){setError(e.message||'Impossible de vérifier la validation. Réessayez.');}
+    finally{setBusy(false);}
+  }
+  async function leaveApproval(close=false) {
+    try{await adminLogout();}catch{}
+    setApprovalWaiting(false);setError('');setNotice('');setPassword('');
+    if(close)onClose();
   }
   async function codeRegistered(address) {
     const status=await api('/api/auth/admin-account-status',{method:'POST',token:ADMIN_SESSION,body:{}});
@@ -235,15 +251,11 @@ export default function Admin({onClose,data,session,onChanged}) {
     try {await work();if(success)setNotice(success);await loadAll();onChanged();}
     catch(e){setError(e.message);} finally{setBusy(false);}
   }
-  function closeAdministration(){
-    if(accountPending&&busy)return;
-    if(accountPending&&!window.confirm('Une invitation est en cours. Si vous quittez, son mot de passe provisoire ne sera plus disponible ici. Quitter quand même ?'))return;
-    onClose();
-  }
-  function switchTab(next){if(accountPending)return;if(next!==tab)setServiceDeleteReady(false);if(next==='stores')setStoreDraft(adminStore);setTab(next);setCountsFor('');setError('');setNotice('');setEditing(null);setName('');setExpandedSeller(null);setServiceDeleteRequest(null);}
+  function closeAdministration(){onClose();}
+  function switchTab(next){if(next!==tab)setServiceDeleteReady(false);if(next==='stores')setStoreDraft(adminStore);setTab(next);setError('');setNotice('');setEditing(null);setName('');setExpandedSeller(null);setServiceDeleteRequest(null);}
   function changeStore(value){
     if(!isSelectableStore(data.stores.find(s=>s.id===value)))return;
-    setAdminStore(value);setStoreDraft(value);rememberStore(value);setAdminSeller('');setCounts({});setCountsFor('');setEditing(null);setNewSellerDepartment('');setExpandedSeller(null);setServiceDeleteRequest(null);setServiceDeleteReady(false);setError('');setNotice('');
+    setAdminStore(value);setStoreDraft(value);rememberStore(value);setAdminSeller('');setEditing(null);setNewSellerDepartment('');setExpandedSeller(null);setServiceDeleteRequest(null);setServiceDeleteReady(false);setError('');setNotice('');
   }
   const activeSellers=sellersForStore(all.sellers,adminStore);
   const storeSellers=sellersForStore(all.sellers,adminStore,{activeOnly:false});
@@ -275,6 +287,22 @@ export default function Admin({onClose,data,session,onChanged}) {
     <AdminCodeRegistration onRegistered={codeRegistered} onCancel={cancelCodeRegistration} onBusy={setFirstBusy}/>
   </Modal>;
 
+  if(manualRegistration&&!token) return <Modal title="Première connexion" subtitle="Créez votre compte administrateur." onClose={()=>{if(!firstBusy){setManualRegistration(false);onClose();}}}>
+    <AdminRegistration initialEmail={email} onRegistered={manualRegistered} onCancel={()=>{setManualRegistration(false);setError('');setNotice('');}} onBusy={setFirstBusy}/>
+  </Modal>;
+
+  if(approvalWaiting&&!token) return <Modal title="Demande en attente" subtitle="Votre accès doit être validé." onClose={()=>leaveApproval(true)}>
+    <div className="admin-waiting">
+      <div className="admin-account-current"><ShieldCheck size={18}/><div><strong>Demande en attente</strong><p>{email}</p></div></div>
+      <p>Montrez cet écran à un administrateur, qui vérifiera votre identité par un autre moyen avant de valider votre accès. Votre adresse n’est pas vérifiée automatiquement.</p>
+      <p>Vous n’avez pas encore accès à l’administration. Aucun e-mail ne sera envoyé.</p>
+      {error&&<div className="form-error" role="alert">{error}</div>}
+      {notice&&<div className="admin-alert success" role="status">{notice}</div>}
+      <button type="button" className="primary-button full-button" disabled={busy} onClick={verifyApproval}>{busy?'Vérification…':'Vérifier la validation'} <ArrowRight size={16}/></button>
+      <button type="button" className="text-button admin-first-retry" disabled={busy} onClick={()=>leaveApproval(false)}>Retour à la connexion</button>
+    </div>
+  </Modal>;
+
   if(!token) return <Modal title="Espace administrateur" subtitle="Un accès réservé pour gérer votre espace." onClose={onClose}>
     <div className="admin-login-illustration"><div className="admin-lock"><LockKeyhole size={24}/></div><div><strong>Gardez la main sur votre équipe.</strong><p>Gérez les vendeurs, les services et les ventes du jour.</p></div></div>
     <form onSubmit={login} className="admin-login-form">
@@ -289,7 +317,7 @@ export default function Admin({onClose,data,session,onChanged}) {
         catch(e){setError(e.message);}finally{setBusy(false);}
       }}>Renvoyer le lien de confirmation</button>}
       <button className="primary-button full-button" type="submit" disabled={busy}>{busy?'Connexion…':'Se connecter'} <ArrowRight size={16}/></button>
-      {CLOUD&&<p className="admin-direct-login-help">Vous êtes invité ? Utilisez l’adresse et le mot de passe provisoire reçus par e-mail.</p>}
+      {CLOUD&&<button type="button" className="outline-button full-button admin-registration-button" disabled={busy} onClick={()=>{setError('');setNotice('');setManualRegistration(true);}}>Première connexion · Créer mon compte</button>}
       {CLOUD&&<details className="admin-legacy-invitations"><summary>Anciennes invitations</summary>
         <div className="admin-invitation-accept"><strong>Invitation avec un code</strong><p>Utilisez cette option uniquement pour un code reçu précédemment.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>{setError('');setNotice('');setCodeRegistration(true);}}>Créer mon accès avec un code</button></div>
         <div className="admin-invitation-accept"><strong>Invitation avec un lien</strong><p>Choisissez votre mot de passe grâce au lien reçu, puis renseignez votre e-mail et votre mot de passe ci-dessus. En acceptant, vous disposerez des droits sur tous les magasins.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>login(null,true)}>Accepter mon invitation</button></div>
@@ -300,26 +328,15 @@ export default function Admin({onClose,data,session,onChanged}) {
   </Modal>;
 
   return <Modal title="Administration" subtitle={adminStoreDisplay?`Magasin sélectionné : ${adminStoreDisplay}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={closeAdministration} wide fixedTabs>
-    <AdminTabs tab={tab} onSelect={switchTab} disabled={busy||accountPending}/>
+    <AdminTabs tab={tab} onSelect={switchTab} disabled={busy}/>
     <div key={tab} className="admin-scroll-content">
     {error&&<div className="admin-alert error" role="alert">{error}</div>}
     {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
     <div className="admin-body">
       {needsStore&&!adminStore&&<div className="empty-admin">Choisissez d’abord le magasin dans l’onglet <button type="button" className="admin-inline-link" onClick={()=>switchTab('stores')}>Magasins</button>.</div>}
       {tab==='sales'&&adminStore&&<>
-        <SalesHistoryPanel key={`history:${adminStore}`} storeId={adminStore} storeName={adminStoreName} sellers={storeSellers} services={all.services} additionServices={orderedServices} departments={storeDepartments} today={data.today} token={token} disabled={busy||!allLoaded} onBusy={setBusy} onReload={()=>{loadAll();onChanged();}} onUpdate={()=>{setCountsRevision(value=>value+1);onChanged();}}/>
-        <details className="admin-legacy-adjust"><summary>Modifier les totaux du jour</summary>
-        <div className="admin-section-heading"><div><h3>Ventes du jour</h3><p>Modifiez un total pour corriger une saisie. Les changements sont visibles immédiatement.</p></div></div>
-        <div className="admin-selects admin-selects-single">
-          <label><span className="form-label">Vendeur</span><select className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>setAdminSeller(e.target.value)}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
-        </div>
-        {adminStore&&adminSeller ? countsFor===`${adminStore}:${adminSeller}` ? <div className="admin-counts">
-          <div className="table-head"><span>SERVICE</span><span>VENTES AUJOURD’HUI</span></div>
-          {activeServices.map(s=><div className="admin-count-row" key={s.id}><strong>{s.name}</strong><div><input type="number" min="0" max={CLOUD?100:999} aria-label={`Nombre de ventes ${s.name}`} value={counts[s.id]??0} onChange={e=>setCounts(c=>({...c,[s.id]:e.target.value}))}/><button disabled={busy} className="small-outline-button" onClick={()=>run(async()=>{const n=Number(counts[s.id]??0);if(!Number.isInteger(n)||n<0||n>(CLOUD?100:999))throw new Error(`La quantité doit être comprise entre 0 et ${CLOUD?100:999}.`);await api('/api/admin/adjust',{method:'POST',token,body:{storeId:adminStore,sellerId:Number(adminSeller),serviceId:s.id,count:n}})},'Total mis à jour.')}>Enregistrer</button></div></div>)}
-        </div>:<div className="empty-admin">{countsLoading?'Chargement des ventes…':'Ventes indisponibles. Réessayez en changeant de sélection.'}</div>:<div className="empty-admin">Sélectionnez un magasin et un vendeur pour modifier les ventes.</div>}
-        <div className="admin-note"><Info size={15}/> Les corrections ne déclenchent pas de notification de vente.</div>
-        </details>
-        <SalesResetPanel key={`reset:${adminStore}`} storeId={adminStore} storeName={adminStoreName} token={token} disabled={busy} onUpdate={()=>{setCountsRevision(value=>value+1);onChanged();}}/>
+        <SalesHistoryPanel key={`history:${adminStore}`} storeId={adminStore} storeName={adminStoreName} sellers={storeSellers} services={all.services} additionServices={orderedServices} departments={storeDepartments} today={data.today} token={token} disabled={busy||!allLoaded} onBusy={setBusy} onReload={()=>{loadAll();onChanged();}} onUpdate={onChanged}/>
+        <SalesResetPanel key={`reset:${adminStore}`} storeId={adminStore} storeName={adminStoreName} token={token} disabled={busy} onUpdate={onChanged}/>
       </>}
       {tab==='goals'&&adminStore&&<>
         <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Définissez les objectifs par service. Les jours travaillés se règlent dans chaque fiche de l’onglet Vendeurs.</p></div></div>
@@ -411,7 +428,7 @@ export default function Admin({onClose,data,session,onChanged}) {
         <div className="admin-note"><ShieldCheck size={15}/> Tant qu’aucun PIN n’a été créé après une réinitialisation, la première personne à sélectionner ce profil peut le définir. L’administrateur ne voit pas le PIN.</div>
       </div>}
       {tab==='sellers'&&adminStore&&<SellerDeletePanel key={adminStore} storeId={adminStore} storeName={adminStoreName} sellers={storeSellers} departments={storeDepartments} token={token} disabled={busy||!allLoaded} onUpdate={()=>{loadAll();onChanged();}}/>}
-      {tab==='security'&&(CLOUD?<AdminAccounts onLogout={logout} onBusy={setBusy} onPending={setAccountPending}/>:<>
+      {tab==='security'&&(CLOUD?<AdminAccounts onLogout={logout} onBusy={setBusy}/>:<>
         <div className="admin-section-heading"><div><h3>Mot de passe administrateur</h3><p>La gestion de plusieurs comptes est disponible dans la version en ligne. Choisissez un mot de passe d’au moins 12 caractères.</p></div></div>
         <form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{await api('/api/admin/password',{method:'POST',token,body:{currentPassword:oldPass,newPassword:newPass}});setOldPass('');setNewPass('');},'Mot de passe mis à jour.')}}>
           <label><span className="form-label">Mot de passe actuel</span><input className="text-input" type="password" required value={oldPass} onChange={e=>setOldPass(e.target.value)}/></label>

@@ -4,6 +4,7 @@ import {createWorker} from '../worker/index.js';
 import {digestBase64,pinMac} from '../worker/firebase.js';
 import {pinProof} from '../src/pin.js';
 import {summarize,periodStarts,earliestDate,parisToday} from '../src/cloud-stats.js';
+import {saleAdditionFingerprintInput,saleCorrectionFingerprintInput} from '../src/sale-history.js';
 import {LEGACY_STORE_ID,sellersForStore,orderServices} from '../src/catalog.js';
 import {createSaleAnnouncer} from '../src/live-sales.js';
 import legacyLocations from '../server/locations.json' with {type:'json'};
@@ -24,7 +25,7 @@ class MemoryDb {
   async query(path,field,op,value,limit=1000){return [...this.docs].filter(([k])=>k.startsWith(path+'/')&&!k.slice(path.length+1).includes('/')).map(([,v])=>structuredClone(v)).filter(x=>!field||(op==='EQUAL'?x.data[field]===value:x.data[field]>=value)).slice(0,limit);}
   async page(path,{field,op='EQUAL',value,limit=20,after=''}={}) {
     return [...this.docs].filter(([k])=>k.startsWith(path+'/')&&!k.slice(path.length+1).includes('/'))
-      .map(([,v])=>structuredClone(v)).filter(x=>(!field||(op==='EQUAL'?x.data[field]===value:x.data[field]>=value))&&x.id>after)
+      .map(([,v])=>structuredClone(v)).filter(x=>(!field||(op==='EQUAL'?x.data[field]===value:op==='IN'?value.includes(x.data[field]):x.data[field]>=value))&&x.id>after)
       .sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0).slice(0,limit);
   }
   async salesPeriodPage(path,{start,end,limit=200,afterDate='',afterId=''}={}) {
@@ -1578,8 +1579,9 @@ test('Historique admin : périodes passées, pagination, corrections individuell
   const month=[];let next=null;do {const result=(await req(query('month','2026-10-29',next?`&afterDate=${next.date}&afterId=${next.id}`:''))).body;month.push(...result.sales);next=result.next;}while(next);
   assert.deepEqual(month.map(s=>s.id).sort(),['a-target-01','a-target-02']);
   const day=(await req(query('day','2026-09-30'))).body;assert.deepEqual(day.sales.map(s=>s.id),['a-previous-1']);
-  const body={storeId:store,sellerId:1,period:'month',anchor:'2026-10-29',saleIds:['a-target-01'],requestId:'correction-test-0001',confirmation:'SUPPRIMER',expectedSellerName:seller.name,expectedStoreName:storeName};
+  const body={storeId:store,sellerId:1,period:'day',anchor:'2026-10-29',saleIds:['a-target-01'],requestId:'correction-test-0001',confirmation:'SUPPRIMER',expectedSellerName:seller.name,expectedStoreName:storeName};
   assert.equal((await req('/api/admin/sales/correct','POST',body,'')).status,401);
+  for(const period of ['week','month'])assert.equal((await req('/api/admin/sales/correct','POST',{...body,period})).status,400);
   assert.equal((await req('/api/admin/sales/correct','POST',{...body,confirmation:''})).status,400);
   assert.equal((await req('/api/admin/sales/correct','POST',{...body,saleIds:['a-target-01','a-target-01']})).status,400);
   assert.equal((await req('/api/admin/sales/correct','POST',{...body,saleIds:Array.from({length:21},(_,i)=>`sale-${i}`)})).status,400);
@@ -1595,7 +1597,7 @@ test('Historique admin : périodes passées, pagination, corrections individuell
   assert.equal((await req('/api/admin/sales/correct','POST',body)).body.duplicate,true);
   assert.equal((await req('/api/admin/sales/correct','POST',{...body,saleIds:['a-target-02']})).status,409);
   const before=(await db.get(`pulseStores/${store}/sales/a-target-02`)).data;
-  const race={...body,saleIds:['a-target-02'],requestId:'correction-race-0001'};
+  const race={...body,anchor:'2026-10-30',saleIds:['a-target-02'],requestId:'correction-race-0001'};
   const commit=db.commit.bind(db);let raced=false;
   db.commit=async writes=>{if(!raced&&writes.some(w=>w.path==='pulseSalesCorrections/correction-race-0001')){raced=true;await commit([db.write(`pulseStores/${store}/sales/a-target-02`,{...before,serviceId:3})]);}return commit(writes);};
   assert.equal((await req('/api/admin/sales/correct','POST',race)).status,409);
@@ -2076,8 +2078,9 @@ test('Cloud : ajout historique ciblé, confirmé, idempotent, sans notification 
   await db.commit([db.write('pulse/catalog',catalog),db.write(`pulseGoals/${store}-1`,{targets:{s1:10}}),db.write('pulseAccess/existing-session',access),db.write('pulseStatus/existing-session',status),
     db.write(`pulseStores/${other}/sales/other-sale`,{id:'other-sale',storeId:other,sellerId:1,serviceId:1,businessDate:'2026-10-27',departmentId:'tech',source:'sale'})]);
   const url='/api/admin/sales/add-correction';
-  const body={storeId:store,sellerId:1,period:'week',anchor:'2026-10-29',saleDate:'2026-10-27',serviceId:1,departmentId:'editorial',quantity:3,requestId:'history-add-test-0001',confirmation:'AJOUTER',expectedSellerName:seller.name,expectedStoreName:storeName,expectedServiceName:service.name,expectedDepartmentName:'Ancien département'};
+  const body={storeId:store,sellerId:1,period:'day',anchor:'2026-10-27',saleDate:'2026-10-27',serviceId:1,departmentId:'editorial',quantity:3,requestId:'history-add-test-0001',confirmation:'AJOUTER',expectedSellerName:seller.name,expectedStoreName:storeName,expectedServiceName:service.name,expectedDepartmentName:'Ancien département'};
   assert.equal((await req(url,'POST',body,'')).status,401);assert.equal((await req(url,'POST',body,'seller')).status,403);
+  for(const period of ['week','month'])assert.equal((await req(url,'POST',{...body,period})).status,400);
   for(const invalid of [{saleDate:''},{saleDate:'2026-11-02'},{saleDate:'2026-02-30'},{saleDate:'2999-01-01'},{quantity:0},{quantity:21},{quantity:1.5},{quantity:'2'},{confirmation:''},{requestId:'short'}])
     assert.equal((await req(url,'POST',{...body,...invalid})).status,400,JSON.stringify(invalid));
   for(const changed of [{storeId:other},{sellerId:999999},{serviceId:999999},{departmentId:'unknown'},{expectedStoreName:'Incorrect'},{expectedSellerName:'Incorrect'},{expectedServiceName:'Incorrect'},{expectedDepartmentName:'Incorrect'}])
@@ -2095,7 +2098,7 @@ test('Cloud : ajout historique ciblé, confirmé, idempotent, sans notification 
   assert.equal((await db.get(`pulseStores/${other}/sales/other-sale`)).data.deletedAt,undefined);
   assert.equal((await req(url,'POST',{...body,quantity:2})).status,409);
   const history=(await req(`/api/admin/sales/history?storeId=${store}&sellerId=1&period=week&anchor=2026-10-29`)).body;assert.equal(history.sales.length,3);
-  const correction={storeId:store,sellerId:1,period:'week',anchor:'2026-10-29',saleIds:[history.sales[0].id],requestId:'history-added-remove-0001',confirmation:'SUPPRIMER',expectedSellerName:seller.name,expectedStoreName:storeName};
+  const correction={storeId:store,sellerId:1,period:'day',anchor:'2026-10-27',saleIds:[history.sales[0].id],requestId:'history-added-remove-0001',confirmation:'SUPPRIMER',expectedSellerName:seller.name,expectedStoreName:storeName};
   assert.equal((await req('/api/admin/sales/correct','POST',correction)).body.deleted,1);
   sales=await db.query(`pulseStores/${store}/sales`);assert.equal(sales.filter(x=>!x.data.deletedAt).length,2);
   catalog.serviceRemovalsByStore={[store]:[1]};await db.commit([db.write('pulse/catalog',catalog)]);
@@ -2110,7 +2113,7 @@ test('Cloud : ajout refusé sans écriture si reset, suppression ou catalogue ch
     const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator'},ctx={waitUntil(){}};
     const req=async(path,method='GET',body,token='admin')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
     await req('/api/bootstrap','GET',undefined,'');const catalog=(await db.get('pulse/catalog')).data;
-    const body={storeId:store,sellerId:1,period:'month',anchor:'2026-10-29',saleDate:'2026-10-28',serviceId:1,departmentId:'tech',quantity:2,
+    const body={storeId:store,sellerId:1,period:'day',anchor:'2026-10-28',saleDate:'2026-10-28',serviceId:1,departmentId:'tech',quantity:2,
       requestId:`history-add-race-${kind}`,confirmation:'AJOUTER',expectedSellerName:catalog.sellers.find(s=>s.id===1).name,expectedStoreName:catalog.stores.find(s=>s.id===store).name,expectedServiceName:catalog.services.find(s=>s.id===1).name,expectedDepartmentName:'Produits Techniques'};
     const target={reset:`pulseSalesResets/${store}`,generation:`pulseStores/${store}/sales/~sales-reset~`,'seller-delete':`pulseSellerDeletes/${store}`,'service-delete':`pulseServiceDeletes/${store}`,catalog:'pulse/catalog',guard:`pulseStores/${store}/private/revision`}[kind];
     const data=kind==='catalog'?{...catalog,nextServiceId:catalog.nextServiceId+1}:kind==='generation'?{generation:'reset-racing'}:kind==='guard'?{revision:'other-racing-write'}:{status:'running'};
@@ -2120,4 +2123,161 @@ test('Cloud : ajout refusé sans écriture si reset, suppression ou catalogue ch
     assert.equal(await db.get(`pulseSalesCorrectionAdds/${body.requestId}`),null,kind);
     assert.equal((await db.query(`pulseStores/${store}/sales`)).filter(x=>x.id!=='~sales-reset~').length,0,kind);
   }
+});
+
+test('Administrateurs : adresse seule, compte authentifié, vérification humaine et approbation atomique',async()=>{
+  const db=new MemoryDb(),now=Math.floor(Date.now()/1000),ids=new Map();
+  const identity=(sub,email,extra={})=>({sub,email,auth_time:now,email_verified:false,firebase:{sign_in_provider:'password'},...extra});
+  const root='root-admin-token-fixture-001',candidate='manual-candidate-token-0001',other='manual-other-token-0000001',seller='manual-seller-token-0000001';
+  ids.set(root,identity('root-admin','root@example.test'));ids.set(candidate,identity('candidate-uid','candidate@example.test'));
+  ids.set(other,identity('attacker-uid','candidate@example.test'));ids.set(seller,identity('seller-uid','seller@example.test'));
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!ids.has(t))throw Error('signature');return ids.get(t);}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'root-admin',ALLOWED_ORIGIN:'https://example.test',PIN_PEPPER:Buffer.alloc(32,2).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  const req=async(path,{body,token,method=body?'POST':'GET',origin='https://example.test'}={})=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{origin,...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  const add='/api/admin/access-requests',claim='/api/auth/admin-access/claim',status='/api/auth/admin-access/status',approve='/api/admin/access-requests/approve';
+  await req('/api/bootstrap');const catalogBefore=(await db.get('pulse/catalog')).data;
+  await db.commit([db.write('pulseAccess/seller-uid',{active:true,version:'kept'}),db.write('pulseAdmins/other-existing',{active:true,email:'kept'})]);
+  assert.equal((await req(add,{body:{email:'candidate@example.test'}})).status,401);
+  assert.equal((await req(add,{token:candidate,body:{email:'candidate@example.test'}})).status,403);
+  assert.equal((await req(add,{token:root,body:{email:'candidate@example.test',password:'must-never-be-sent'}})).status,400);
+  assert.equal((await req(add,{token:root,body:{email:'candidate@example.test'},origin:'https://evil.test'})).status,403);
+  assert.equal((await req('/api/auth/admin-access/check',{body:{email:'candidate@example.test'}})).body.allowed,false);
+  assert.equal((await req(add,{token:root,body:{email:' Candidate@example.test '}})).body.status,'invited');
+  assert.equal((await req(add,{token:root,body:{email:'candidate@example.test'}})).body.already,true);
+  assert.equal((await req('/api/auth/admin-access/check',{body:{email:'candidate@example.test'}})).body.allowed,true);
+  assert.equal((await req('/api/admin/all',{token:candidate})).status,403);assert.equal(await db.get('pulseAdmins/candidate-uid'),null);
+  assert.equal((await req(claim,{body:{},token:'fake-token'})).status,401);
+  const c=await req(claim,{body:{},token:candidate});assert.deepEqual(c.body,{ok:true,status:'pending'});
+  assert.deepEqual((await req(claim,{body:{},token:candidate})).body,{ok:true,status:'pending'});
+  assert.equal((await req(claim,{body:{},token:other})).status,409);
+  assert.equal((await req(status,{body:{},token:other})).status,403);
+  assert.equal((await req('/api/admin/all',{token:candidate})).status,403);
+  const list=(await req(add,{token:root})).body.requests;assert.equal(list.length,1);assert.equal(list[0].email,'candidate@example.test');assert.equal(list[0].claimantUid,'candidate-uid');
+  const body={email:list[0].email,requestId:list[0].requestId,claimantUid:list[0].claimantUid,confirmed:true,identityVerified:true};
+  assert.equal((await req(approve,{token:root,body:{...body,identityVerified:false}})).status,400);
+  assert.equal((await req(approve,{token:root,body:{...body,claimantUid:'attacker-uid'}})).status,409);
+  assert.equal((await req(approve,{token:candidate,body})).status,403);
+  const [first,second]=await Promise.all([req(approve,{token:root,body}),req(approve,{token:root,body})]);
+  assert.deepEqual([first.status,second.status],[200,200]);assert.deepEqual([first.body.already,second.body.already].sort(),[false,true]);
+  const grant=(await db.get('pulseAdmins/candidate-uid')).data;assert.equal(grant.active,true);assert.equal(grant.identityVerifiedManually,true);assert.equal(grant.requiresVerifiedEmail,false);
+  assert.equal((await req('/api/admin/all',{token:candidate})).status,200);assert.equal((await req(status,{body:{},token:candidate})).body.status,'approved');
+  ids.set('changed-address-token-00001',identity('candidate-uid','changed@example.test',{email_verified:true}));
+  assert.equal((await req('/api/admin/all',{token:'changed-address-token-00001'})).status,403,'le droit reste lié à l’adresse approuvée même si une autre est vérifiée');
+  ids.set('wrong-provider-token-000001',identity('candidate-uid','candidate@example.test',{firebase:{sign_in_provider:'custom'}}));
+  assert.equal((await req('/api/admin/all',{token:'wrong-provider-token-000001'})).status,403);
+  assert.deepEqual((await db.get('pulse/catalog')).data,catalogBefore);assert.equal((await db.get('pulseAccess/seller-uid')).data.version,'kept');assert.equal((await db.get('pulseAdmins/other-existing')).data.email,'kept');
+});
+
+test('Demandes admin : concurrence, annulation et comptes existants ne reçoivent jamais de droits implicites',async()=>{
+  const db=new MemoryDb(),now=Math.floor(Date.now()/1000),ids=new Map();
+  const id=(sub,email,more={})=>({sub,email,auth_time:now,email_verified:false,firebase:{sign_in_provider:'password'},...more});
+  ids.set('root-token-000000000000001',id('root','root@example.test'));
+  ids.set('person-one-token-0000000001',id('person-one','shared@example.test'));
+  ids.set('person-two-token-0000000001',id('person-two','shared@example.test'));
+  ids.set('old-admin-token-0000000001',id('old-admin','old@example.test'));
+  ids.set('old-seller-token-000000001',id('old-seller','seller@example.test'));
+  ids.set('stale-token-00000000000001',id('stale','stale@example.test',{auth_time:now-3600}));
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!ids.has(t))throw Error('invalid');return ids.get(t);}});
+  const env={ADMIN_UID:'root',FIREBASE_PROJECT_ID:'demo-fnac',PIN_PEPPER:Buffer.alloc(32,2).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  const call=async(path,token,body,method=body?'POST':'GET')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,json:await r.json()};};
+  const root='root-token-000000000000001',add='/api/admin/access-requests',claim='/api/auth/admin-access/claim';
+  for(const email of ['shared@example.test','old@example.test','seller@example.test','stale@example.test'])assert.equal((await call(add,root,{email})).status,200);
+  await db.commit([db.write('pulseAdmins/old-admin',{active:false,keep:'not promoted'}),db.write('pulseAccess/old-seller',{active:true,keep:'seller'})]);
+  assert.equal((await call(claim,'old-admin-token-0000000001',{})).status,409);assert.equal((await call(claim,'old-seller-token-000000001',{})).status,409);
+  assert.equal((await call(claim,'stale-token-00000000000001',{})).status,403);
+  const pair=await Promise.all([call(claim,'person-one-token-0000000001',{}),call(claim,'person-two-token-0000000001',{})]);
+  assert.deepEqual(pair.map(x=>x.status).sort(),[200,409]);
+  const list=(await call(add,root)).json.requests,item=list.find(x=>x.email==='shared@example.test');
+  assert(['person-one','person-two'].includes(item.claimantUid));assert.equal(await db.get(`pulseAdmins/${item.claimantUid}`),null);
+  const cancel={email:item.email,requestId:item.requestId,claimantUid:item.claimantUid,confirmed:true};
+  assert.equal((await call('/api/admin/access-requests/cancel',root,cancel)).status,200);
+  assert.equal((await call('/api/admin/access-requests/cancel',root,cancel)).json.already,true);
+  assert.equal((await call('/api/admin/access-requests/approve',root,{...cancel,identityVerified:true})).status,409);
+  assert.equal((await call('/api/auth/admin-access/status',item.claimantUid==='person-one'?'person-one-token-0000000001':'person-two-token-0000000001',{})).status,403);
+  assert.equal((await db.get('pulseAdmins/old-admin')).data.keep,'not promoted');assert.equal((await db.get('pulseAccess/old-seller')).data.keep,'seller');
+});
+
+test('Demandes admin : révocation simultanée du validateur empêche toute attribution',async()=>{
+  const db=new MemoryDb(),now=Math.floor(Date.now()/1000),id=(sub,email)=>({sub,email,auth_time:now,email_verified:false,firebase:{sign_in_provider:'password'}});
+  const ids=new Map([['root-token',id('root','root@example.test')],['approver-token',id('approver','approver@example.test')],['candidate-token',id('candidate','candidate@example.test')]]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!ids.has(t))throw Error();return ids.get(t);}});
+  const env={ADMIN_UID:'root',PIN_PEPPER:Buffer.alloc(32,2).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  const call=async(path,token,body)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method:body?'POST':'GET',headers:{authorization:`Bearer ${token}`,...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,json:await r.json()};};
+  const digest=await digestBase64('manual-admin-email:approver@example.test');
+  await db.commit([db.write('pulseAdmins/approver',{active:true,source:'manual-approval-v1',manualEmailDigest:digest,requiresVerifiedEmail:false})]);
+  await call('/api/admin/access-requests','root-token',{email:'candidate@example.test'});await call('/api/auth/admin-access/claim','candidate-token',{});
+  const item=(await call('/api/admin/access-requests','root-token')).json.requests[0];
+  const commit=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{if(!raced&&writes.some(w=>w.path==='pulseAdmins/candidate')){raced=true;await commit([db.write('pulseAdmins/approver',{active:false})]);}return commit(writes);};
+  const body={email:item.email,requestId:item.requestId,claimantUid:item.claimantUid,confirmed:true,identityVerified:true};
+  assert.equal((await call('/api/admin/access-requests/approve','approver-token',body)).status,403);assert(raced);assert.equal(await db.get('pulseAdmins/candidate'),null);
+});
+
+test('Ancien compte de test : recherche, révocation et autorisation ciblées sans supprimer un autre compte',async()=>{
+  const db=new MemoryDb(),now=Math.floor(Date.now()/1000),root='root-token-test-00000000001',target='target-token-test-000000001';
+  const identities=new Map([[root,{sub:'root',email:'root@example.test',auth_time:now,firebase:{sign_in_provider:'password'}}],
+    [target,{sub:'old-test-uid',email:'test@example.test',auth_time:now,firebase:{sign_in_provider:'password'}}]]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!identities.has(t))throw Error();return identities.get(t);}});
+  const env={ADMIN_UID:'root',PIN_PEPPER:Buffer.alloc(32,2).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  const call=async(path,token,body)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify(body)}),env,ctx);return {status:r.status,json:await r.json()};};
+  const digest=await digestBase64('direct-admin-email:test@example.test');
+  const reservation=`pulseAdminDirectRequests/${await digestBase64('direct-admin-request:root:test@example.test')}`;
+  await db.commit([db.write('pulseAdmins/old-test-uid',{active:true,source:'direct-v1',createdBy:'root',directEmailDigest:digest,passwordChangeRequired:true}),
+    db.write(reservation,{createdBy:'root',status:'completed',requestId:'old-request-001',targetUid:'old-test-uid'}),
+    db.write('pulseAdmins/someone-else',{active:true,keep:'not touched'}),db.write('pulseAccess/seller-else',{active:true,keep:'not touched'})]);
+  const inspect='/api/admin/old-test/inspect',revoke='/api/admin/old-test/revoke',authorize='/api/admin/old-test/authorize-delete';
+  assert.equal((await call(inspect,target,{email:'test@example.test'})).status,403);
+  const found=await call(inspect,root,{email:'TEST@example.test'});assert.equal(found.json.uid,'old-test-uid');assert.equal(found.json.grantActive,true);
+  assert.equal((await call(revoke,root,{email:'test@example.test',uid:'someone-else',confirmed:true})).status,409);
+  assert.equal((await call(revoke,root,{email:'test@example.test',uid:'old-test-uid',confirmed:false})).status,400);
+  assert.equal((await call(authorize,root,{email:'test@example.test',uid:'old-test-uid',userToken:target,confirmed:true})).status,409);
+  const body={email:'test@example.test',uid:'old-test-uid',confirmed:true};assert.equal((await call(revoke,root,body)).status,200);
+  assert.equal((await db.get('pulseAdmins/old-test-uid')).data.active,false);assert.equal((await db.get(reservation)).data.status,'revoked');
+  assert.equal((await call(revoke,root,body)).status,200);
+  assert.equal((await call(authorize,root,{...body,userToken:target})).json.ok,true);
+  assert.equal((await call(authorize,root,{...body,userToken:root})).status,403);
+  assert.equal((await db.get('pulseAdmins/someone-else')).data.keep,'not touched');assert.equal((await db.get('pulseAccess/seller-else')).data.keep,'not touched');
+  assert.equal((await call(inspect,root,{email:'missing@example.test'})).json.found,false);
+});
+
+test('Cloud : anciens marqueurs semaine et mois rejouables sans écriture, aucune nouvelle correction multi-jours',async()=>{
+  const db=new MemoryDb(),store=LEGACY_STORE_ID;
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'administrator'})});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator'},ctx={waitUntil(){}};
+  const req=async(path,body)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method:body?'POST':'GET',headers:{authorization:'Bearer admin',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  await req('/api/bootstrap');
+  const catalog=(await db.get('pulse/catalog')).data,seller=catalog.sellers.find(s=>s.id===1),service=catalog.services.find(s=>s.id===1),storeName=catalog.stores.find(s=>s.id===store).name;
+  await db.commit([db.write(`pulseStores/${store}/sales/preserved-sale`,{id:'preserved-sale',storeId:store,sellerId:1,serviceId:1,businessDate:'2026-10-13',deletedAt:null}),db.write('pulseOutbox/preserved-sale',{status:'pending'})]);
+  for(const period of ['week','month']) {
+    const addition={storeId:store,sellerId:1,period,anchor:'2026-10-15',saleDate:'2026-10-13',serviceId:1,departmentId:'tech',quantity:2,requestId:`legacy-add-${period}-0001`,confirmation:'AJOUTER',expectedSellerName:seller.name,expectedStoreName:storeName,expectedServiceName:service.name,expectedDepartmentName:'Produits Techniques'};
+    const removal={storeId:store,sellerId:1,period,anchor:'2026-10-15',saleIds:['preserved-sale'],requestId:`legacy-remove-${period}-01`,confirmation:'SUPPRIMER',expectedSellerName:seller.name,expectedStoreName:storeName};
+    await db.commit([
+      db.write(`pulseSalesCorrectionAdds/${addition.requestId}`,{fingerprint:await digestBase64(saleAdditionFingerprintInput(addition)),count:2,createdAt:1}),
+      db.write(`pulseSalesCorrections/${removal.requestId}`,{fingerprint:await digestBase64(saleCorrectionFingerprintInput(removal)),count:1,createdAt:1}),
+    ]);
+    const before=structuredClone([...db.docs]);
+    assert.deepEqual((await req('/api/admin/sales/add-correction',addition)),{status:200,body:{ok:true,added:2,duplicate:true}});
+    assert.deepEqual((await req('/api/admin/sales/correct',removal)),{status:200,body:{ok:true,deleted:1,duplicate:true}});
+    assert.equal((await req('/api/admin/sales/add-correction',{...addition,quantity:3})).status,409);
+    assert.equal((await req('/api/admin/sales/correct',{...removal,saleIds:['another-sale']})).status,409);
+    assert.equal((await req('/api/admin/sales/add-correction',{...addition,requestId:`new-add-${period}-0001`})).status,400);
+    assert.equal((await req('/api/admin/sales/correct',{...removal,requestId:`new-remove-${period}-0001`})).status,400);
+    assert.deepEqual([...db.docs],before,'aucune écriture, vente ou notification modifiée');
+  }
+});
+
+test('Demandes administrateur : pages bornées sans masquer les dossiers ouverts ni exposer les dossiers clos',async()=>{
+  const db=new MemoryDb(),worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'administrator'})});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator'},ctx={waitUntil(){}};
+  const req=async path=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{headers:{authorization:'Bearer admin'}}),env,ctx);return {status:r.status,body:await r.json()};};
+  const writes=[];
+  for(let i=0;i<70;i++) {
+    const email=`pagination-${i}@example.test`,id=await digestBase64(`manual-admin-request:${email}`),status=i<56?(i%2?'pending':'invited'):'approved';
+    writes.push(db.write(`pulseAdminAccessRequests/${id}`,{email,status,requestId:`request-page-${String(i).padStart(4,'0')}`,createdAt:i,...(status==='pending'?{claimantUid:`candidate-${i}`}:{})}));
+  }
+  await db.commit(writes);
+  const one=await req('/api/admin/access-requests');assert.equal(one.status,200);assert.equal(one.body.requests.length,50);assert.match(one.body.next,/^[A-Za-z0-9_-]{43}$/);
+  const two=await req(`/api/admin/access-requests?after=${one.body.next}`);assert.equal(two.status,200);assert.equal(two.body.requests.length,6);assert.equal(two.body.next,null);
+  const all=[...one.body.requests,...two.body.requests];assert.equal(new Set(all.map(x=>x.requestId)).size,56);assert(all.every(x=>['invited','pending'].includes(x.status)));
+  assert.equal((await req('/api/admin/access-requests?after=../invalid')).status,400);
 });
