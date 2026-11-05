@@ -14,6 +14,7 @@ import { SELLER_DELETE_CONFIRMATION } from '../src/seller-delete.js';
 import { SERVICE_DELETE_CONFIRMATION } from '../src/service-delete.js';
 import { MAX_SALE_CORRECTION, SALE_CORRECTION_CONFIRMATION, saleHistoryRange, saleCorrectionFingerprintInput } from '../src/sale-history.js';
 import { cleanSellerName, sameSellerName, validSellerName } from '../src/seller-registration.js';
+import { createAdminCode, formatAdminCode, normalizeAdminCode } from '../src/admin-code.js';
 
 const SELLERS=['Morgan','Anthony','Cedric','Philippe','Fabien','Florent','Eric','Tamera','Ikram','Selenia','Johan','Alice'];
 const SERVICES=[['DMax','play'],['Assu Téléph','phone'],['Assu Multim','devices'],['Garantie','shield'],['FVD','package'],['FNAC +','badge'],['TRC','repeat'],['Reprise','refresh'],['Canal +','tv'],['Free','wifi'],['Autre','other']];
@@ -34,7 +35,10 @@ const ADMIN_INVITATION_MS=7*24*60*60*1000;
 // seul un compte Firebase né après cette réservation peut bénéficier de
 // l'exception de confirmation d'adresse consentie par l'administrateur.
 const ADMIN_DIRECT_MS=7*24*60*60*1000;
+const ADMIN_CODE_TTL_MS=24*60*60*1000;
+const ADMIN_CODE_RESUME_MS=7*24*60*60*1000;
 const ADMIN_DIRECT_SOURCE='direct-v1';
+const ADMIN_CODE_METHOD='code-v1';
 const normalizeAdminEmail=value=>typeof value==='string'?value.trim().toLowerCase():'';
 const validAdminEmail=value=>value.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 // Diagnostics anonymes : aucun jeton, identifiant ou texte utilisateur dans les journaux.
@@ -331,6 +335,119 @@ export function createWorker(deps={}) {
     const now=Math.floor(Date.now()/1000);
     return Number.isFinite(payload?.auth_time)&&payload.auth_time>=now-ADMIN_RECENT_SECONDS&&payload.auth_time<=now+10;
   }
+  async function enrollmentCodePath(code) {
+    return `pulseAdminCodes/${await digestBase64(`admin-code-v1:${code}`)}`;
+  }
+  async function limitEnrollment(req,env,code='') {
+    const raw=req.headers.get('cf-connecting-ip')||'unknown',address=raw.length<=80?raw:'unknown';
+    await limitAuthentication(env,`admin-code-ip:${await digestBase64(address)}`);
+    if(code)await limitAuthentication(env,`admin-code:${await digestBase64(code)}`);
+  }
+  async function activeCodeIssuer(db,env,issuerId) {
+    if(issuerId===env.ADMIN_UID)return null;
+    if(!ADMIN_ID.test(issuerId||''))fail(403,'Code invalide ou expiré.');
+    const path=`pulseAdmins/${issuerId}`,doc=await db.get(path);
+    if(!doc?.data?.active||(doc.data.source===ADMIN_DIRECT_SOURCE&&doc.data.passwordChangeRequired!==false))
+      fail(403,'Code invalide ou expiré.');
+    return {path,doc};
+  }
+  async function issueAdminCode(env,db,actor,body) {
+    if(body?.confirmed!==true||body?.password!==undefined||body?.currentPassword!==undefined)
+      fail(400,'Confirmez la création du code administrateur.');
+    // Le choix explicite est d'utiliser la session déjà ouverte, sans demander
+    // une nouvelle fois le mot de passe de l'administrateur.
+    await limitAuthentication(env,`admin-code-issue:${actor.sub}`);
+    for(let attempt=0;attempt<5;attempt++) {
+      const code=createAdminCode(),path=await enrollmentCodePath(code),now=Date.now();
+      const record={status:'pending',createdBy:actor.sub,createdAt:now,expiresAt:now+ADMIN_CODE_TTL_MS};
+      try {await db.commit([db.write(path,record,{exists:false})]);return {ok:true,code:formatAdminCode(code),expiresAt:record.expiresAt};}
+      catch(error){if(!conflict(error))throw error;}
+    }
+    fail(503,'Création du code impossible. Réessayez.');
+  }
+  async function cancelAdminCode(env,db,actor,body) {
+    const code=normalizeAdminCode(body?.code);if(!code)fail(400,'Code invalide.');
+    const path=await enrollmentCodePath(code);
+    for(let attempt=0;attempt<8;attempt++) {
+      const item=await db.get(path),r=item?.data;
+      if(!r||r.createdBy!==actor.sub)fail(403,'Code invalide ou indisponible.');
+      if(r.status==='revoked')return {ok:true,already:true};
+      if(r.status==='completed')fail(409,'Ce code a déjà été utilisé : son annulation ne retire pas les droits du compte créé.');
+      if(!['pending','reserved'].includes(r.status))fail(409,'Ce code ne peut plus être annulé.');
+      try {await db.commit([db.write(path,{...r,status:'revoked',revokedAt:Date.now()},precondition(item))]);return {ok:true,already:false};}
+      catch(error){if(!conflict(error))throw error;}
+    }
+    fail(409,'Code modifié simultanément. Réessayez.');
+  }
+  async function prepareAdminCode(req,env,db,body) {
+    const code=normalizeAdminCode(body?.code),email=normalizeAdminEmail(body?.email);
+    await limitEnrollment(req,env,code);
+    if(!code||!validAdminEmail(email)||body?.confirmed!==true||body?.password!==undefined||body?.currentPassword!==undefined)
+      fail(400,'Vérifiez le code et l’adresse e-mail, puis confirmez les droits.');
+    const path=await enrollmentCodePath(code),emailDigest=await digestBase64(`direct-admin-email:${email}`);
+    for(let attempt=0;attempt<8;attempt++) {
+      const item=await db.get(path),r=item?.data,now=Date.now();
+      if(!r||!Number.isFinite(r.expiresAt))fail(403,'Code invalide ou expiré.');
+      if(r.status==='pending') {
+        if(r.expiresAt<=now)fail(403,'Code invalide ou expiré.');
+        const issuer=await activeCodeIssuer(db,env,r.createdBy);
+        const reserved={...r,status:'reserved',emailDigest,reservedAt:now,resumeUntil:now+ADMIN_CODE_RESUME_MS};
+        try {
+          await db.commit([...(issuer?[db.verify(issuer.path,precondition(issuer.doc))]:[]),db.write(path,reserved,precondition(item))]);
+          return {ok:true,resume:false};
+        } catch(error){if(!conflict(error))throw error;}
+        continue;
+      }
+      if((r.status==='reserved'||r.status==='completed')&&r.emailDigest===emailDigest&&Number.isFinite(r.resumeUntil)&&r.resumeUntil>now) {
+        if(r.status==='reserved')await activeCodeIssuer(db,env,r.createdBy);
+        return {ok:true,resume:true};
+      }
+      fail(403,'Code invalide, expiré ou déjà utilisé pour une autre adresse.');
+    }
+    fail(409,'Code modifié simultanément. Réessayez.');
+  }
+  async function completeAdminCode(req,env,db,body) {
+    const code=normalizeAdminCode(body?.code);await limitEnrollment(req,env,code);
+    if(!code||body?.password!==undefined||body?.currentPassword!==undefined)fail(400,'Code invalide.');
+    const token=authHeader(req);let target;
+    try{target=await verify(env,token);}catch{fail(401,'Session du nouveau compte expirée. Reprenez avec votre code.');}
+    const email=normalizeAdminEmail(target.email);
+    if(!ADMIN_ID.test(target.sub||'')||target.sub===env.ADMIN_UID||target.role==='seller'||
+       target.firebase?.sign_in_provider!=='password'||!validAdminEmail(email)||!recentAdminAuthentication(target))
+      fail(403,'Connectez le nouveau compte avec son adresse et son mot de passe provisoire.');
+    const path=await enrollmentCodePath(code),adminPath=`pulseAdmins/${target.sub}`,accessPath=`pulseAccess/${target.sub}`;
+    const emailDigest=await digestBase64(`direct-admin-email:${email}`);
+    for(let attempt=0;attempt<8;attempt++) {
+      const [request,access,existing]=await Promise.all([db.get(path),db.get(accessPath),db.get(adminPath)]),r=request?.data,now=Date.now();
+      if(!r||r.emailDigest!==emailDigest||!Number.isFinite(r.resumeUntil)||r.resumeUntil<=now)
+        fail(403,'Code invalide ou expiré.');
+      if(r.status==='completed') {
+        if(r.targetUid===target.sub&&existing?.data?.active&&existing.data.provisionMethod===ADMIN_CODE_METHOD)return {ok:true,already:true};
+        fail(403,'Code déjà utilisé.');
+      }
+      if(r.status!=='reserved'||!Number.isFinite(r.reservedAt)||!Number.isFinite(r.expiresAt)||r.reservedAt>=r.expiresAt)
+        fail(403,'Code invalide ou expiré.');
+      if(target.sub===r.createdBy)fail(409,'Utilisez un compte différent du créateur du code.');
+      const issuer=await activeCodeIssuer(db,env,r.createdBy);
+      if(access)fail(409,'Utilisez un compte distinct du profil vendeur.');
+      if(existing)fail(409,'Ce compte possède déjà des droits ; aucune protection n’a été changée.');
+      let account;try{account=await lookupAccount(env,token);}catch{fail(503,'Vérification Firebase indisponible. Le compte est peut-être créé, mais ses droits ne sont pas confirmés. Reprenez avec les mêmes informations.');}
+      if(account?.localId!==target.sub||normalizeAdminEmail(account.email)!==email||account.disabled===true||
+         !Number.isFinite(account.createdAt)||account.createdAt<=r.reservedAt||account.createdAt>Date.now()+10000||
+         !Number.isFinite(account.passwordUpdatedAt)||account.passwordUpdatedAt<=0)
+        fail(409,'Cette adresse possède déjà un compte ou ses informations ne peuvent pas être vérifiées. Aucun nouveau droit n’a été attribué.');
+      const grant={active:true,createdBy:r.createdBy,createdAt:new Date().toISOString(),source:ADMIN_DIRECT_SOURCE,provisionMethod:ADMIN_CODE_METHOD,
+        requiresVerifiedEmail:false,directEmailDigest:emailDigest,passwordChangeRequired:true,
+        initialPasswordUpdatedAt:account.passwordUpdatedAt,firebaseCreatedAt:account.createdAt};
+      const completed={...r,status:'completed',targetUid:target.sub,completedAt:now};
+      try {
+        await db.commit([...(issuer?[db.verify(issuer.path,precondition(issuer.doc))]:[]),db.verify(accessPath,precondition(access)),
+          db.write(adminPath,grant,{exists:false}),db.write(path,completed,precondition(request))]);
+        return {ok:true,already:false};
+      } catch(error){if(!conflict(error))throw error;}
+    }
+    fail(409,'Code modifié simultanément. Reprenez avec les mêmes informations.');
+  }
   async function directReservationPath(actor,email) {
     return `pulseAdminDirectRequests/${await digestBase64(`direct-admin-request:${actor.sub}:${email}`)}`;
   }
@@ -411,7 +528,7 @@ export function createWorker(deps={}) {
       if(account?.localId!==user.sub||normalizeAdminEmail(account.email)!==normalizeAdminEmail(user.email)||account.disabled===true||
          account.createdAt!==g.firebaseCreatedAt||!Number.isFinite(account.passwordUpdatedAt))
         fail(403,'Vérification du compte administrateur impossible.');
-      if(account.passwordUpdatedAt<=g.initialPasswordUpdatedAt)return {passwordChangeRequired:true};
+      if(account.passwordUpdatedAt<=g.initialPasswordUpdatedAt)return {passwordChangeRequired:true,...(g.provisionMethod===ADMIN_CODE_METHOD?{method:'code'}:{})};
       try {
         await db.commit([db.write(path,{...g,passwordChangeRequired:false,passwordChangedAt:account.passwordUpdatedAt},precondition(grant))]);
         return {passwordChangeRequired:false,...(user.auth_time<=Math.floor(account.passwordUpdatedAt/1000)?{reauthenticate:true}:{})};
@@ -1593,8 +1710,12 @@ export function createWorker(deps={}) {
     if((method==='POST'||method==='DELETE')&&path==='/api/push/subscribe')return tokenSubscribe(req,env,db,await readBody(req),method);
     if(method==='POST'&&path==='/api/auth/admin-invitations/accept')return acceptAdministratorInvitation(req,env,db,await readBody(req));
     if(method==='POST'&&path==='/api/auth/admin-account-status')return administratorAccountStatus(req,env,db);
+    if(method==='POST'&&path==='/api/auth/admin-code/prepare')return prepareAdminCode(req,env,db,await readBody(req));
+    if(method==='POST'&&path==='/api/auth/admin-code/complete')return completeAdminCode(req,env,db,await readBody(req));
     if(path.startsWith('/api/admin/')) {
       const administrator=await admin(req,env,db);
+      if(method==='POST'&&path==='/api/admin/enrollment-code')return issueAdminCode(env,db,administrator,await readBody(req));
+      if(method==='POST'&&path==='/api/admin/enrollment-code/cancel')return cancelAdminCode(env,db,administrator,await readBody(req));
       if(method==='POST'&&path==='/api/admin/direct-account/start')return beginDirectAdministrator(env,db,administrator,await readBody(req));
       if(method==='POST'&&path==='/api/admin/direct-account/complete')return completeDirectAdministrator(env,db,administrator,await readBody(req));
       if(method==='POST'&&path==='/api/admin/invitations')return inviteAdministrator(env,db,administrator,await readBody(req));

@@ -1,11 +1,12 @@
 import React, {useRef,useState} from 'react';
 import {ArrowRight, ShieldCheck} from 'lucide-react';
-import {changeAdminPassword} from './cloud';
+import {changeAdminPassword, changeFirstCodeAdminPassword} from './cloud';
 
 // Le serveur ne lève le blocage qu'après avoir vérifié auprès de Firebase que
 // le mot de passe du compte a changé depuis sa création. Ce formulaire ne
 // suffit donc jamais à lui seul pour obtenir des droits.
-export function AdminFirstPassword({email,onFinish,onCancel,onBusy}) {
+export function AdminFirstPassword({email,onFinish,onCancel,onBusy,method='direct'}) {
+  const codeMethod=method==='code';
   const [form,setForm]=useState({current:'',next:'',confirm:''}),[changed,setChanged]=useState(false);
   const [busy,setBusy]=useState(false),[error,setError]=useState('');
   const running=useRef(false);
@@ -23,13 +24,14 @@ export function AdminFirstPassword({email,onFinish,onCancel,onBusy}) {
       <form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{
         if(form.next.length<12||form.next.length>128)throw new Error('Le nouveau mot de passe doit comporter de 12 à 128 caractères.');
         if(form.next!==form.confirm)throw new Error('Les nouveaux mots de passe ne correspondent pas.');
-        if(form.next===form.current)throw new Error('Choisissez un mot de passe différent du mot de passe provisoire.');
+        if(!codeMethod&&form.next===form.current)throw new Error('Choisissez un mot de passe différent du mot de passe provisoire.');
         const nextPassword=form.next;
-        await changeAdminPassword(form.current,nextPassword);
+        if(codeMethod)await changeFirstCodeAdminPassword(nextPassword);
+        else await changeAdminPassword(form.current,nextPassword);
         setForm({current:'',next:'',confirm:''});setChanged(true);
         try{await finish(nextPassword);}catch{throw new Error('Mot de passe modifié, mais l’accès n’est pas encore confirmé. Appuyez sur « Terminer » ou reconnectez-vous avec votre nouveau mot de passe.');}
       });}}>
-        <label><span className="form-label">Mot de passe provisoire</span><input className="text-input" type="password" autoComplete="current-password" required disabled={busy} value={form.current} onChange={e=>setForm(v=>({...v,current:e.target.value}))}/></label>
+        {!codeMethod&&<label><span className="form-label">Mot de passe provisoire</span><input className="text-input" type="password" autoComplete="current-password" required disabled={busy} value={form.current} onChange={e=>setForm(v=>({...v,current:e.target.value}))}/></label>}
         <label><span className="form-label">Votre nouveau mot de passe · 12 caractères minimum</span><input className="text-input" type="password" autoComplete="new-password" required minLength={12} maxLength={128} disabled={busy} value={form.next} onChange={e=>setForm(v=>({...v,next:e.target.value}))}/></label>
         <label><span className="form-label">Confirmer votre nouveau mot de passe</span><input className="text-input" type="password" autoComplete="new-password" required minLength={12} maxLength={128} disabled={busy} value={form.confirm} onChange={e=>setForm(v=>({...v,confirm:e.target.value}))}/></label>
         {error&&<div className="admin-alert error" role="alert">{error}</div>}

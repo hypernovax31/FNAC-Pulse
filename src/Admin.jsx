@@ -4,6 +4,7 @@ import { api } from './api';
 import { CLOUD, ADMIN_SESSION, adminLogin, adminLogout, resendAdminVerification } from './cloud';
 import { AdminAccounts } from './AdminAccounts';
 import { AdminFirstPassword } from './AdminFirstPassword';
+import { AdminCodeRegistration } from './AdminCodeRegistration';
 import { DirectoryImport } from './DirectoryImport';
 import { sellersForStore, orderServices, serviceRemovedForStore } from './catalog';
 import { departmentsForStore, sellerDepartmentId } from './departments';
@@ -69,7 +70,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [token,setToken]=useState(()=>sessionStorage.getItem('pulse-admin-token')||'');
   const [password,setPassword]=useState('');
   const [email,setEmail]=useState('');
-  const [firstPassword,setFirstPassword]=useState(false),[firstBusy,setFirstBusy]=useState(false);
+  const [firstPassword,setFirstPassword]=useState(false),[firstBusy,setFirstBusy]=useState(false),[codeRegistration,setCodeRegistration]=useState(false);
   const [error,setError]=useState('');
   const [notice,setNotice]=useState('');
   const [busy,setBusy]=useState(false);
@@ -169,7 +170,7 @@ export default function Admin({onClose,data,session,onChanged}) {
         try {
           if(acceptInvitation)await api('/api/auth/admin-invitations/accept',{method:'POST',token:auth,body:{confirmed:true}});
           let status=await api('/api/auth/admin-account-status',{method:'POST',token:auth,body:{}});
-          if(status.passwordChangeRequired){setFirstPassword(true);setPassword('');return;}
+          if(status.passwordChangeRequired){setFirstPassword(status.method==='code'?'code':'direct');setPassword('');return;}
           if(status.reauthenticate) {
             // Les jetons Firebase ont une précision d'une seconde. Attendre un
             // instant avant de se reconnecter avec le nouveau mot de passe.
@@ -189,6 +190,16 @@ export default function Admin({onClose,data,session,onChanged}) {
       if(acceptInvitation)setNotice('Invitation acceptée. Vous disposez maintenant des droits administrateur.');
     }
     catch(e){setError(e.message);} finally{setBusy(false);}
+  }
+  async function codeRegistered(address) {
+    const status=await api('/api/auth/admin-account-status',{method:'POST',token:ADMIN_SESSION,body:{}});
+    if(!status.passwordChangeRequired||status.method!=='code')throw new Error('La première connexion n’a pas pu être confirmée. Reprenez avec le même code et les mêmes informations.');
+    setEmail(address);setPassword('');setCodeRegistration(false);setFirstPassword('code');
+  }
+  async function cancelCodeRegistration() {
+    if(firstBusy)return;
+    try{await adminLogout();}catch{}
+    setCodeRegistration(false);setError('');
   }
   async function finishFirstPassword(newPassword) {
     let status=await api('/api/auth/admin-account-status',{method:'POST',token:ADMIN_SESSION,body:{}});
@@ -251,7 +262,11 @@ export default function Admin({onClose,data,session,onChanged}) {
   }
 
   if(firstPassword) return <Modal title="Créez votre mot de passe" subtitle="Une seule étape avant votre première connexion." onClose={()=>{if(!firstBusy){cancelFirstPassword();onClose();}}}>
-    <AdminFirstPassword email={email} onFinish={finishFirstPassword} onCancel={cancelFirstPassword} onBusy={setFirstBusy}/>
+    <AdminFirstPassword email={email} method={firstPassword} onFinish={finishFirstPassword} onCancel={cancelFirstPassword} onBusy={setFirstBusy}/>
+  </Modal>;
+
+  if(codeRegistration&&!token) return <Modal title="Créer mon accès administrateur" subtitle="Avec un code transmis en privé." onClose={()=>{if(!firstBusy){cancelCodeRegistration();onClose();}}}>
+    <AdminCodeRegistration onRegistered={codeRegistered} onCancel={cancelCodeRegistration} onBusy={setFirstBusy}/>
   </Modal>;
 
   if(!token) return <Modal title="Espace administrateur" subtitle="Un accès réservé pour gérer votre espace." onClose={onClose}>
@@ -268,7 +283,8 @@ export default function Admin({onClose,data,session,onChanged}) {
         catch(e){setError(e.message);}finally{setBusy(false);}
       }}>Renvoyer le lien de confirmation</button>}
       <button className="primary-button full-button" type="submit" disabled={busy}>{busy?'Connexion…':'Se connecter'} <ArrowRight size={16}/></button>
-      {CLOUD&&<p className="admin-direct-login-help">Accès créé par un administrateur ? Utilisez l’adresse et le mot de passe provisoire transmis en privé.</p>}
+      {CLOUD&&<div className="admin-invitation-accept"><strong>Vous avez reçu un code administrateur ?</strong><p>Créez votre accès avec le code transmis en privé.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>{setError('');setNotice('');setCodeRegistration(true);}}>Créer mon accès avec un code</button></div>}
+      {CLOUD&&<p className="admin-direct-login-help">Pour un accès créé auparavant avec un mot de passe provisoire transmis, utilisez l’adresse et ce mot de passe ci-dessus.</p>}
       {CLOUD&&<div className="admin-invitation-accept"><strong>Vous avez reçu une ancienne invitation ?</strong><p>Choisissez votre mot de passe grâce au lien reçu, puis renseignez votre e-mail et votre mot de passe ci-dessus. En acceptant, vous disposerez des droits sur tous les magasins.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>login(null,true)}>Accepter mon invitation</button></div>}
       <p className="form-footnote"><ShieldCheck size={14}/> L’accès administrateur est protégé par mot de passe.</p>
     </form>

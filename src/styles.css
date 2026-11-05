@@ -1204,6 +1204,13 @@ p,h1,h2,h3 { margin:0; }
 .admin-direct-note p { margin:4px 0 0; color:var(--muted); }
 .admin-direct-check { display:flex; align-items:flex-start; gap:10px; color:var(--ink); font-size:12px; line-height:1.5; cursor:pointer; }
 .admin-direct-check input { flex:0 0 auto; width:20px; height:20px; margin:0; accent-color:#d9a900; }
+.admin-code-display { display:grid; gap:10px; width:100%; padding:16px; border:1px solid #e8dfbf; border-radius:12px; background:#fdfbf3; color:var(--ink); }
+.admin-code-display strong { font-size:12px; }
+.admin-code-value { display:block; padding:12px; border-radius:8px; background:var(--panel); color:var(--ink); font-family:ui-monospace,monospace; font-weight:700; font-size:18px; letter-spacing:.06em; overflow-wrap:anywhere; user-select:all; }
+.admin-code-display p { margin:0; color:var(--muted); font-size:11px; line-height:1.55; }
+.admin-code-cancel { justify-self:start; color:#a04434; }
+.admin-code-registration { display:grid; gap:14px; }
+[data-theme='dark'] .admin-code-display { background:#302e22; border-color:#5c5436; }
 .admin-password-visibility { min-height:40px; padding:0 2px; }
 .admin-invite-confirm { width:100%; display:grid; gap:12px; padding:14px; border:1px solid #e8dfbf; border-radius:10px; background:#fdfbf3; }
 .admin-invite-confirm strong { color:var(--ink); font-size:12px; }

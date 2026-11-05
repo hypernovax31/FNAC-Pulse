@@ -1928,3 +1928,135 @@ test('Invitations admin : authentification récente, consentement, vérification
   assert.equal((await accept('collision')).status,409);assert.equal(await db.get('pulseAdmins/collision'),null);
   assert.deepEqual(await Promise.all(['pulse/catalog','pulseAccess/seller-unchanged','pulseStores/a/sales/old'].map(x=>db.get(x))),snapshot);
 });
+
+function enrollmentFixture() {
+  const db=new MemoryDb(),ids=new Map(),accounts=new Map(),limits=[],now=Math.floor(Date.now()/1000);
+  const identity=(sub,email,extra={})=>({sub,email,auth_time:now,email_verified:false,firebase:{sign_in_provider:'password'},...extra});
+  ids.set('root-token',identity('root','root@example.test',{auth_time:now-7200}));
+  ids.set('outsider-token',identity('outsider','outsider@example.test'));
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_e,t)=>{if(!ids.has(t))throw Error('signature');return ids.get(t);},
+    lookupFirebaseAccount:async(_e,t)=>{if(!accounts.has(t))throw Error('indisponible');return {...accounts.get(t)};}});
+  const env={ADMIN_UID:'root',FIREBASE_PROJECT_ID:'demo-fnac',ALLOWED_ORIGIN:'https://example.test',PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),
+    LOGIN_LIMITER:{async limit({key}){limits.push(key);return {success:true};}}},ctx={waitUntil(){}};
+  async function call(path,body={},token='',options={}) {
+    const res=await worker.fetch(new Request(`https://worker.test${path}`,{method:'POST',headers:{'content-type':'application/json',origin:options.origin||'https://example.test',
+      'cf-connecting-ip':options.ip||'203.0.113.1',...(token?{authorization:`Bearer ${token}`}:{})},body:JSON.stringify(body)}),env,ctx);
+    return {status:res.status,json:await res.json()};
+  }
+  const paths={issue:'/api/admin/enrollment-code',cancel:'/api/admin/enrollment-code/cancel',prepare:'/api/auth/admin-code/prepare',complete:'/api/auth/admin-code/complete',status:'/api/auth/admin-account-status'};
+  const path=async code=>`pulseAdminCodes/${await digestBase64(`admin-code-v1:${code.replace(/-/g,'')}`)}`;
+  return {db,ids,accounts,limits,env,worker,call,paths,path,identity};
+}
+
+test('Codes admin : session suffisante, secret haché, usage unique et première connexion protégée',async()=>{
+  const f=enrollmentFixture(),{db,ids,accounts,limits,call,paths,path,identity}=f;
+  assert.equal((await call(paths.issue,{confirmed:true})).status,401);
+  assert.equal((await call(paths.issue,{confirmed:true},'outsider-token')).status,403);
+  assert.equal((await call(paths.issue,{confirmed:false},'root-token')).status,400);
+  assert.equal((await call(paths.issue,{confirmed:true,password:'secret'},'root-token')).status,400);
+  assert.equal((await call(paths.issue,{confirmed:true},'root-token',{origin:'https://evil.test'})).status,403);
+  const created=await call(paths.issue,{confirmed:true},'root-token');assert.equal(created.status,200,'pas de réauthentification de la session ouverte');
+  const code=created.json.code,recordPath=await path(code),initial=(await db.get(recordPath)).data;
+  assert.match(code,/^[A-Z2-9]{4}(-[A-Z2-9]{4}){3}$/);assert.equal(initial.status,'pending');assert.equal(initial.expiresAt-initial.createdAt,24*60*60*1000);
+  const stored=JSON.stringify([...db.docs]);assert(!stored.includes(code));assert(!stored.includes(code.replace(/-/g,'')));assert(!limits.join('|').includes(code));
+  assert.equal((await call(paths.prepare,{confirmed:true,code:'MALFORME',email:'new@example.test'})).status,400);
+  assert.equal((await call(paths.prepare,{code,email:'new@example.test'})).status,400,'consentement exigé côté serveur');
+  assert.equal((await call(paths.prepare,{confirmed:true,code,email:'new@example.test',password:'123456'})).status,400);
+  const started=await call(paths.prepare,{confirmed:true,code:code.toLowerCase(),email:'  New@example.test  '});assert.deepEqual(started.json,{ok:true,resume:false});
+  assert.deepEqual((await call(paths.prepare,{confirmed:true,code,email:'NEW@example.test'})).json,{ok:true,resume:true});
+  assert.equal((await call(paths.prepare,{confirmed:true,code,email:'other@example.test'})).status,403,'une adresse seulement');
+  assert(!JSON.stringify([...db.docs]).includes('new@example.test'),'adresse conservée sous forme de hash');
+  const reserved=(await db.get(recordPath)).data,uid='code-new-admin',token='target-token',createdAt=reserved.reservedAt+10;
+  ids.set(token,identity(uid,'new@example.test'));
+  assert.equal((await call(paths.complete,{code},token)).status,503,'Firebase indisponible : pas de droit');
+  assert.equal(await db.get(`pulseAdmins/${uid}`),null);
+  accounts.set(token,{localId:uid,email:'new@example.test',disabled:false,createdAt,passwordUpdatedAt:createdAt});
+  assert.equal((await call(paths.complete,{code,password:'secret'},token)).status,400);
+  const completed=await call(paths.complete,{code},token);assert.deepEqual(completed.json,{ok:true,already:false});
+  const grant=(await db.get(`pulseAdmins/${uid}`)).data;
+  assert.equal(grant.source,'direct-v1');assert.equal(grant.provisionMethod,'code-v1');assert.equal(grant.requiresVerifiedEmail,false);assert.equal(grant.passwordChangeRequired,true);
+  assert(!JSON.stringify(grant).includes('new@example.test'));assert(!JSON.stringify(grant).includes(code));
+  assert.deepEqual((await call(paths.complete,{code},token)).json,{ok:true,already:true});
+  assert.equal((await call(paths.cancel,{code},'root-token')).status,409,'annuler ne retire pas un accès créé');
+  ids.set('same-email-other-uid',identity('another-uid','new@example.test'));
+  assert.equal((await call(paths.complete,{code},'same-email-other-uid')).status,403);
+  assert.equal((await call('/api/admin/administrators',{},token)).status,403,'aucun droit avant mot de passe personnel');
+  assert.deepEqual((await call(paths.status,{},token)).json,{passwordChangeRequired:true,method:'code'});
+  accounts.get(token).passwordUpdatedAt=createdAt+50;
+  assert.deepEqual((await call(paths.status,{},token)).json,{passwordChangeRequired:false,reauthenticate:true});
+  assert.equal((await call('/api/admin/administrators',{},token)).status,401,'ancien jeton provisoire refusé');
+  ids.set('fresh-token',identity(uid,'new@example.test',{auth_time:Math.floor((createdAt+50)/1000)+1}));
+  accounts.set('fresh-token',accounts.get(token));
+  assert.deepEqual((await call(paths.status,{},'fresh-token')).json,{passwordChangeRequired:false});
+  assert.equal((await call('/api/admin/administrators',{},'fresh-token')).status,400,'mêmes droits globaux après changement');
+  assert.equal((await call(paths.issue,{confirmed:true},'fresh-token')).status,200,'un nouvel admin peut ajouter des administrateurs');
+});
+
+test('Codes admin : refus des anciens comptes, vendeurs, révocation, expiration et limitation',async()=>{
+  const f=enrollmentFixture(),{db,ids,accounts,call,paths,path,identity}=f;
+  const issue=async()=>(await call(paths.issue,{confirmed:true},'root-token')).json.code;
+  const prep=async(code,email)=>(await call(paths.prepare,{confirmed:true,code,email}));
+  const code=await issue(),email='old@example.test';assert.equal((await prep(code,email)).status,200);
+  const record=(await db.get(await path(code))).data;
+  ids.set('old',identity('old-uid',email));accounts.set('old',{localId:'old-uid',email,createdAt:record.reservedAt-60_000,passwordUpdatedAt:record.reservedAt,disabled:false});
+  assert.equal((await call(paths.complete,{code},'old')).status,409);assert.equal(await db.get('pulseAdmins/old-uid'),null);
+  accounts.get('old').createdAt=record.reservedAt;assert.equal((await call(paths.complete,{code},'old')).status,409,'même milliseconde refusée par prudence');
+  accounts.get('old').createdAt=record.reservedAt+10;accounts.get('old').disabled=true;
+  assert.equal((await call(paths.complete,{code},'old')).status,409);accounts.get('old').disabled=false;
+  await db.commit([db.write('pulseAccess/old-uid',{active:true,version:'vendeur-conservé'})]);
+  assert.equal((await call(paths.complete,{code},'old')).status,409);assert.equal((await db.get('pulseAccess/old-uid')).data.version,'vendeur-conservé');
+  assert.equal(await db.get('pulseAdmins/old-uid'),null);
+  const expired=await issue(),expiredPath=await path(expired),expiredRecord=await db.get(expiredPath);
+  await db.commit([db.write(expiredPath,{...expiredRecord.data,expiresAt:Date.now()-1},{updateTime:expiredRecord.updateTime})]);
+  assert.equal((await prep(expired,'expired@example.test')).status,403);
+  const cancelled=await issue();assert.equal((await call(paths.cancel,{code:cancelled},'outsider-token')).status,403);
+  assert.equal((await call(paths.cancel,{code:cancelled},'root-token')).status,200);
+  assert.equal((await prep(cancelled,'cancelled@example.test')).status,403);
+  const reserved=await issue();assert.equal((await prep(reserved,'cancel2@example.test')).status,200);
+  assert.equal((await call(paths.cancel,{code:reserved},'root-token')).status,200);
+  ids.set('cancel2',identity('cancel2','cancel2@example.test'));
+  assert.equal((await call(paths.complete,{code:reserved},'cancel2')).status,403);
+  const noResume=await issue();assert.equal((await prep(noResume,'resume@example.test')).status,200);
+  const noResumePath=await path(noResume),rr=await db.get(noResumePath);
+  await db.commit([db.write(noResumePath,{...rr.data,resumeUntil:Date.now()-1},{updateTime:rr.updateTime})]);
+  assert.equal((await prep(noResume,'resume@example.test')).status,403);
+  f.env.LOGIN_LIMITER={async limit(){return {success:false}}};
+  assert.equal((await prep('ABCD-EFGH-JKLM-NPQR','new@example.test')).status,429);
+  assert.equal((await call(paths.issue,{confirmed:true},'root-token')).status,429);
+});
+
+test('Codes admin : accès atomique, conflit de vendeurs, retrait du créateur et courses',async()=>{
+  const f=enrollmentFixture(),{db,ids,accounts,call,paths,path,identity}=f;
+  const issue=async(token='root-token')=>(await call(paths.issue,{confirmed:true},token)).json.code;
+  const code=await issue(),email='race@example.test';
+  const results=await Promise.all([call(paths.prepare,{confirmed:true,code,email}),call(paths.prepare,{confirmed:true,code,email:'autre@example.test'})]);
+  assert.deepEqual(results.map(x=>x.status).sort(),[200,403]);
+  const bound=results[0].status===200?email:'autre@example.test',rec=(await db.get(await path(code))).data,uid='race-uid';
+  ids.set('race',identity(uid,bound));accounts.set('race',{localId:uid,email:bound,createdAt:rec.reservedAt+1,passwordUpdatedAt:rec.reservedAt+1,disabled:false});
+  const commit=db.commit.bind(db);let raced=true;
+  db.commit=async writes=>{
+    if(raced&&writes.some(w=>w.path===`pulseAdmins/${uid}`)){raced=false;await commit([db.write(`pulseAccess/${uid}`,{active:true,version:'conservé'})]);}
+    return commit(writes);
+  };
+  assert.equal((await call(paths.complete,{code},'race')).status,409);assert.equal(await db.get(`pulseAdmins/${uid}`),null);
+  db.commit=commit;
+  ids.set('subadmin',identity('sub-admin','sub@example.test',{email_verified:true,auth_time:Math.floor(Date.now()/1000)-5000}));
+  await db.commit([db.write('pulseAdmins/sub-admin',{active:true,requiresVerifiedEmail:true})]);
+  const nested=await issue('subadmin');assert(nested,'autre administrateur connecté depuis longtemps');
+  assert.equal((await call(paths.prepare,{confirmed:true,code:nested,email:'nested@example.test'})).status,200);
+  const nestedRecord=(await db.get(await path(nested))).data;
+  ids.set('nested-target',identity('nested-uid','nested@example.test'));
+  accounts.set('nested-target',{localId:'nested-uid',email:'nested@example.test',createdAt:nestedRecord.reservedAt+1,passwordUpdatedAt:nestedRecord.reservedAt+1,disabled:false});
+  let revoke=true;db.commit=async writes=>{
+    if(revoke&&writes.some(w=>w.path==='pulseAdmins/nested-uid')){revoke=false;await commit([db.write('pulseAdmins/sub-admin',{active:false})]);}
+    return commit(writes);
+  };
+  assert.equal((await call(paths.complete,{code:nested},'nested-target')).status,403);assert.equal(await db.get('pulseAdmins/nested-uid'),null);
+  db.commit=commit;
+  const concurrent=await issue(),cEmail='simultaneous@example.test';assert.equal((await call(paths.prepare,{confirmed:true,code:concurrent,email:cEmail})).status,200);
+  const cr=(await db.get(await path(concurrent))).data;ids.set('simultaneous',identity('simultaneous-uid',cEmail));
+  accounts.set('simultaneous',{localId:'simultaneous-uid',email:cEmail,createdAt:cr.reservedAt+1,passwordUpdatedAt:cr.reservedAt+1,disabled:false});
+  const both=await Promise.all([call(paths.complete,{code:concurrent},'simultaneous'),call(paths.complete,{code:concurrent},'simultaneous')]);
+  assert.deepEqual(both.map(x=>x.status),[200,200]);assert.deepEqual(both.map(x=>x.json.already).sort(),[false,true]);
+  assert.equal((await db.get('pulseAdmins/simultaneous-uid')).data.passwordChangeRequired,true);
+});

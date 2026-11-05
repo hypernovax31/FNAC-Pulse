@@ -15,6 +15,10 @@ const plugin={name:'admin-fixtures',setup(b){
     export const changeAdminPassword=(...x)=>globalThis.__adminTest.password(...x);
     export const inviteAdministrator=(...x)=>globalThis.__adminTest.invite(...x);
     export const createDirectAdministrator=(...x)=>globalThis.__adminTest.direct(...x);
+    export const createAdminEnrollmentCode=(...x)=>globalThis.__adminTest.code(...x);
+    export const cancelAdminEnrollmentCode=(...x)=>globalThis.__adminTest.cancelCode(...x);
+    export const changeFirstCodeAdminPassword=(...x)=>globalThis.__adminTest.firstCodePassword(...x);
+    export const registerAdminWithCode=(...x)=>globalThis.__adminTest.registerCode(...x);
     export const requestAdminEmailChange=(...x)=>globalThis.__adminTest.address(...x);
     export const inspectAdminEmailChange=(...x)=>globalThis.__adminTest.inspect(...x);
     export const confirmAdminEmailChange=(...x)=>globalThis.__adminTest.confirm(...x);
@@ -29,7 +33,7 @@ async function load(entry){
   const out=await build({entryPoints:[entry],bundle:true,platform:'node',format:'cjs',write:false,external:['react','lucide-react'],plugins:[plugin],logLevel:'silent'});
   const mod={exports:{}};new Function('module','exports','require',out.outputFiles[0].text)(mod,mod.exports,require);return mod.exports;
 }
-const {AdminAccounts}=await load('src/AdminAccounts.jsx'),{AdminFirstPassword}=await load('src/AdminFirstPassword.jsx'),{AdminInvitationHelp}=await load('src/AdminInvitationHelp.jsx'),{DirectoryImport}=await load('src/DirectoryImport.jsx'),{AdminTabs}=await load('src/AdminTabs.jsx');
+const {AdminAccounts}=await load('src/AdminAccounts.jsx'),{AdminFirstPassword}=await load('src/AdminFirstPassword.jsx'),{AdminCodeRegistration}=await load('src/AdminCodeRegistration.jsx'),{AdminInvitationHelp}=await load('src/AdminInvitationHelp.jsx'),{DirectoryImport}=await load('src/DirectoryImport.jsx'),{AdminTabs}=await load('src/AdminTabs.jsx');
 const text=node=>typeof node==='string'||typeof node==='number'?String(node):!node?'':Array.isArray(node)?node.map(text).join(''):text(node.children);
 const form=(tree,id)=>tree.root.findByProps({'aria-labelledby':id}).findAllByType('form')[0];
 const change=async(input,value)=>act(async()=>{input.props.onChange({target:{value}});await tick();});
@@ -48,6 +52,10 @@ function setup(){
     async confirm(...args){e.calls.push(['confirm',...args]);return {email:'nouvelle@example.test',refreshed:true};},
     async invite(...args){e.calls.push(['invite',args[1]]);return {alreadyAccepted:false,accountCreated:true};},
     async direct(...args){e.calls.push(['direct',args[1]]);return {already:false,accountCreated:true};},
+    async code(...args){e.calls.push(['code',...args]);return {code:'ABCD-EFGH-JKLM-NPQR',expiresAt:Date.now()+86400000};},
+    async cancelCode(...args){e.calls.push(['cancelCode',...args]);return {ok:true};},
+    async firstCodePassword(...args){e.calls.push(['firstCodePassword',...args]);},
+    async registerCode(...args){e.calls.push(['registerCode',args[1]]);return {ok:true};},
     async sendReset(...args){e.calls.push(['sendReset',...args]);},
     async inspectReset(...args){e.calls.push(['inspectReset',...args]);return {code:'reset-fictif',email:'invite@example.test'};},
     async confirmReset(...args){e.calls.push(['confirmReset',...args]);return {email:'invite@example.test'};},
@@ -68,59 +76,81 @@ test('Administration : ordre exact des onglets et accès clavier',async()=>{
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
-test('Administrateur : création directe, avertissement et confirmation explicite',async()=>{
+test('Administrateur : création du code avec session, droits explicites et sans mot de passe du créateur',async()=>{
   const e=setup(),busy=[];let tree,loggedOut=0;
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onBusy:x=>busy.push(x),onLogout:()=>loggedOut++}));await tick();});
     let content=text(tree.toJSON());
     assert.match(content,/responsable@example\.test/);assert.match(content,/Aucun e-mail ne sera envoyé/);
     assert.match(content,/contrôlant cette boîte pourrait récupérer le compte/);assert.match(content,/tous les magasins/);
-    assert.match(content,/pas celui de sa messagerie/);assert.doesNotMatch(content,/Modifier mon e-mail/);
-    assert.deepEqual(tree.root.findAllByType('section').map(x=>x.props['aria-labelledby']),['admin-create-title','admin-password-title']);
+    assert.match(content,/6 caractères maximum/);assert.doesNotMatch(content,/Modifier mon e-mail/);
     const create=()=>form(tree,'admin-create-title'),fields=()=>create().findAllByType('input');
-    assert.equal(fields().length,4);
-    await change(fields()[0],'nouveau@example.test');await change(fields()[1],'Provisoire-test-2026!');await change(fields()[2],'pas-identique-2026!');
-    await submit(create());assert.match(text(tree.toJSON()),/Confirmez que vous avez vérifié/);assert.equal(e.calls.filter(x=>x[0]==='direct').length,0);
-    await act(async()=>fields()[3].props.onChange({target:{checked:true}}));await submit(create());
-    assert.match(text(tree.toJSON()),/ne correspondent pas/);assert.equal(e.calls.filter(x=>x[0]==='direct').length,0);
-    await change(fields()[2],'Provisoire-test-2026!');
-    await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('Afficher le mot de passe provisoire')).props.onClick());
-    assert.equal(fields()[1].props.type,'text');
-    await submit(create());assert.equal(e.calls.filter(x=>x[0]==='direct').length,0,'aucune création avant le mot de passe du créateur');
-    assert.equal(fields().length,5);assert.equal(fields()[0].props.readOnly,true);assert.match(text(tree.toJSON()),/votre mot de passe administrateur actuel/);
-    await change(fields()[4],'Current-password-2026!');await submit(create());
-    assert.deepEqual(e.calls.find(x=>x[0]==='direct')[1],{email:'nouveau@example.test',password:'Provisoire-test-2026!',currentPassword:'Current-password-2026!',confirmed:true});
-    content=text(tree.toJSON());assert.match(content,/devra choisir son propre mot de passe à sa première connexion/);assert.match(content,/Aucun e-mail n’a été envoyé/);
-    assert.doesNotMatch(content,/Provisoire-test-2026!|Current-password-2026!/);assert.equal(fields().length,4);assert.equal(fields()[0].props.value,'');
+    assert.equal(fields().length,1,'seule la confirmation des droits est demandée');
+    await submit(create());assert.match(text(tree.toJSON()),/Confirmez les droits/);assert.equal(e.calls.filter(x=>x[0]==='code').length,0);
+    await act(async()=>fields()[0].props.onChange({target:{checked:true}}));await submit(create());
+    const request=e.calls.find(x=>x[0]==='code');assert.equal(request.length,2,'pas d’adresse ni de mot de passe du créateur');
+    content=text(tree.toJSON());assert.match(content,/ABCD-EFGH-JKLM-NPQR/);assert.match(content,/24 heures/);assert.match(content,/7 jours/);
+    assert.match(content,/ne sera plus affiché/);assert.match(content,/Masquer le code ne l’annule pas/);
+    await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('Annuler ce code')).props.onClick());await tick();
+    assert.equal(e.calls.filter(x=>x[0]==='cancelCode').length,1);assert.equal(e.calls.find(x=>x[0]==='cancelCode')[2],'ABCD-EFGH-JKLM-NPQR');
+    assert.match(text(tree.toJSON()),/Code annulé/);assert.doesNotMatch(text(tree.toJSON()),/ABCD-EFGH-JKLM-NPQR/);
     const pw=()=>form(tree,'admin-password-title'),pwFields=()=>pw().findAllByType('input');
     await change(pwFields()[0],'Ancien-password-2026!');await change(pwFields()[1],'Nouveau-password-2026!');await change(pwFields()[2],'Incorrect-password-2026!');await submit(pw());
     assert.match(text(tree.toJSON()),/ne correspondent pas/);assert.equal(e.calls.filter(x=>x[0]==='password').length,0);
     await change(pwFields()[2],'Nouveau-password-2026!');await submit(pw());
     assert.deepEqual(e.calls.find(x=>x[0]==='password').slice(1),['Ancien-password-2026!','Nouveau-password-2026!']);assert.match(text(tree.toJSON()),/mot de passe a été mis à jour/);
     assert(pwFields().every(x=>x.props.value===''));await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('Déconnexion administrateur')).props.onClick());assert.equal(loggedOut,1);
-    assert.deepEqual(busy,[true,false,true,false,true,false]);
+    assert.deepEqual(busy,[true,false,true,false,true,false,true,false]);
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
-test('Administrateur direct : correction, échec et double appui',async()=>{
+test('Code : échec réseau, double appui et annulation seulement après confirmation',async()=>{
   const e=setup();let tree,resolve;
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onLogout(){}}));await tick();});
     const create=()=>form(tree,'admin-create-title'),fields=()=>create().findAllByType('input');
-    await change(fields()[0],'un@example.test');await change(fields()[1],'Provisoire-test-2026!');await change(fields()[2],'Provisoire-test-2026!');
-    await act(async()=>fields()[3].props.onChange({target:{checked:true}}));await submit(create());await change(fields()[4],'ancien-secret-fictif');
-    await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('Modifier les informations')).props.onClick());
-    assert.equal(fields().length,4);assert.equal(fields()[0].props.value,'un@example.test');
-    await change(fields()[0],'autre@example.test');await submit(create());assert.equal(fields()[4].props.value,'');
-    globalThis.__adminTest.direct=async(...args)=>{e.calls.push(['direct',args[1]]);throw new Error('Mot de passe administrateur actuel incorrect.');};
-    await change(fields()[4],'incorrect-fictif');await submit(create());
-    assert.match(text(tree.toJSON()),/Mot de passe administrateur actuel incorrect/);assert.equal(fields()[4].props.value,'');assert.equal(fields()[0].props.value,'autre@example.test');
-    globalThis.__adminTest.direct=(...args)=>{e.calls.push(['direct',args[1]]);return new Promise(r=>{resolve=r;});};
-    await change(fields()[4],'mot-de-passe-fictif');
+    await act(async()=>fields()[0].props.onChange({target:{checked:true}}));
+    globalThis.__adminTest.code=async()=>{e.calls.push(['code']);throw new Error('Connexion interrompue.');};
+    await submit(create());assert.match(text(tree.toJSON()),/Connexion interrompue/);assert.equal(fields()[0].props.checked,true);
+    globalThis.__adminTest.code=()=>{e.calls.push(['code']);return new Promise(r=>{resolve=r;});};
     await act(async()=>{create().props.onSubmit({preventDefault(){}});create().props.onSubmit({preventDefault(){}});await tick();});
-    assert.equal(e.calls.filter(x=>x[0]==='direct').length,2,'un seul appel pour le double appui');assert.equal(fields()[0].props.disabled,true);
-    await act(async()=>{resolve({already:false});await tick();await tick();});
-    assert.equal(fields().length,4);assert.equal(fields()[0].props.value,'');assert.doesNotMatch(text(tree.toJSON()),/mot-de-passe-fictif|incorrect-fictif/);
+    assert.equal(e.calls.filter(x=>x[0]==='code').length,2,'un seul appel pour le double appui');assert.equal(fields()[0].props.disabled,true);
+    await act(async()=>{resolve({code:'ABCD-EFGH-JKLM-NPQR'});await tick();await tick();});
+    e.allow=false;await act(async()=>tree.root.findAllByType('button').find(x=>text(x).includes('Annuler ce code')).props.onClick());
+    assert.equal(e.calls.filter(x=>x[0]==='cancelCode').length,0);assert.match(text(tree.toJSON()),/ABCD-EFGH-JKLM-NPQR/);
+    e.allow=true;await act(async()=>{tree.root.findAllByType('button').find(x=>text(x).includes('Annuler ce code')).props.onClick();await tick();});
+    assert.equal(e.calls.filter(x=>x[0]==='cancelCode').length,1);
+  } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
+});
+
+test('Destinataire du code : adresse, provisoire de 1 à 6 caractères et consentement',async()=>{
+  const e=setup(),registered=[],busy=[];let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminCodeRegistration,{onRegistered:async email=>registered.push(email),onCancel(){},onBusy:x=>busy.push(x)}));await tick();});
+    const f=()=>tree.root.findByType('form'),inputs=()=>f().findAllByType('input');
+    assert.match(text(tree.toJSON()),/avant tout accès/);assert.match(text(tree.toJSON()),/Firebase ne vérifiera pas/);
+    await change(inputs()[0],'ABCD-EFGH-JKLM-NPQR');await change(inputs()[1],'NOUVEAU@example.test');
+    await change(inputs()[2],'1234567');assert.equal(inputs()[2].props.value,'123456','saisie limitée à six caractères');
+    await change(inputs()[2],'a');await change(inputs()[3],'b');await submit(f());
+    assert.match(text(tree.toJSON()),/Confirmez que vous contrôlez/);assert.equal(e.calls.filter(x=>x[0]==='registerCode').length,0);
+    await act(async()=>inputs()[4].props.onChange({target:{checked:true}}));await submit(f());assert.match(text(tree.toJSON()),/ne correspondent pas/);
+    await change(inputs()[3],'a');await submit(f());
+    assert.deepEqual(e.calls.find(x=>x[0]==='registerCode')[1],{code:'ABCD-EFGH-JKLM-NPQR',email:'NOUVEAU@example.test',password:'a'});
+    assert.deepEqual(registered,['nouveau@example.test']);assert.deepEqual(busy,[true,false]);
+    assert.equal(inputs()[2].props.value,'');assert.doesNotMatch(text(tree.toJSON()),/ABCD-EFGH-JKLM-NPQR/);
+  } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
+});
+
+test('Première connexion par code : mot de passe personnel imposé sans ressaisie du provisoire',async()=>{
+  const e=setup(),finished=[];let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminFirstPassword,{email:'nouveau@example.test',method:'code',onFinish:async p=>finished.push(p),onCancel(){}}));await tick();});
+    const f=()=>tree.root.findByType('form'),inputs=()=>f().findAllByType('input');assert.equal(inputs().length,2);
+    await change(inputs()[0],'Personnel-test-2026!');await change(inputs()[1],'incorrect-2026!');await submit(f());
+    assert.match(text(tree.toJSON()),/ne correspondent pas/);assert.equal(e.calls.filter(x=>x[0]==='firstCodePassword').length,0);
+    await change(inputs()[1],'Personnel-test-2026!');await submit(f());
+    assert.deepEqual(e.calls.find(x=>x[0]==='firstCodePassword').slice(1),['Personnel-test-2026!']);assert.deepEqual(finished,['Personnel-test-2026!']);
+    assert.equal(e.calls.filter(x=>x[0]==='password').length,0);
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 

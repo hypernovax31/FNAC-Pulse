@@ -10,6 +10,7 @@ import { comparePeople, orderServices, sellerStoreId, serviceRemovedForStore, se
 import { createSaleAnnouncer, createSaleSnapshotFilter, isFreshSale, isOtherSellerSale } from './live-sales';
 import { rememberPushOrigin, clearPushOrigin } from './push-origin.js';
 import { sellerDepartmentId, saleDepartmentId } from './departments';
+import { derivedAdminCodePassword, normalizeAdminCode } from './admin-code.js';
 import { salesGeneration, saleInGeneration } from './sales-reset.js';
 
 export const CLOUD=import.meta.env.VITE_BACKEND==='cloud';
@@ -268,6 +269,69 @@ function provisioningMessage(error,existing) {
     case 'auth/too-many-requests':return 'Trop de demandes. Réessayez plus tard.';
     case 'auth/operation-not-allowed':return 'La création de comptes par e-mail n’est pas autorisée dans Firebase.';
     default:return 'Création ou connexion du compte impossible. Vérifiez votre connexion et réessayez.';
+  }
+}
+// Un administrateur déjà connecté peut créer un code sans ressaisir son mot de
+// passe. La confirmation des droits reste explicite dans l'interface.
+export async function createAdminEnrollmentCode(api) {
+  await adminUser();
+  return api('/api/admin/enrollment-code',{method:'POST',body:{confirmed:true},token:ADMIN_SESSION});
+}
+export async function cancelAdminEnrollmentCode(api,code) {
+  await adminUser();
+  return api('/api/admin/enrollment-code/cancel',{method:'POST',body:{code},token:ADMIN_SESSION});
+}
+export async function registerAdminWithCode(api,{code,email,password}) {
+  const normalizedCode=normalizeAdminCode(code),address=String(email||'').trim().toLowerCase();
+  if(!normalizedCode)throw new Error('Vérifiez le code administrateur reçu.');
+  if(!address||address.length>254)throw new Error('Indiquez votre adresse e-mail.');
+  if(typeof password!=='string'||Array.from(password).length<1||Array.from(password).length>6)throw new Error('Le mot de passe provisoire doit contenir de 1 à 6 caractères maximum.');
+  // Cette clé n'est envoyée qu'à Firebase, jamais au Worker. Le code est
+  // nécessaire en plus des 6 caractères pour retrouver la clé provisoire.
+  const temporaryPassword=await derivedAdminCodePassword({code:normalizedCode,email:address,password});
+  let reservation;
+  try {reservation=await api('/api/auth/admin-code/prepare',{method:'POST',body:{code:normalizedCode,email:address,confirmed:true}});}
+  catch(error){if(error?.status&&error.status<500)throw error;throw new Error('Préparation non confirmée. Réessayez avec le même code, la même adresse et le même mot de passe provisoire.');}
+  if(!reservation?.ok)throw new Error('Préparation non confirmée. Réessayez avec les mêmes informations.');
+  const temporary=initializeApp(firebaseConfig,`fnac-pulse-code-admin-${secureRandomText()}`),temporaryAuth=getAuth(temporary);
+  let completed;
+  try {
+    await setPersistence(temporaryAuth,inMemoryPersistence);
+    let user;
+    try {user=(await createUserWithEmailAndPassword(temporaryAuth,address,temporaryPassword)).user;}
+    catch(error) {
+      if(error?.code==='auth/email-already-in-use'&&reservation.resume===true) {
+        try {user=(await signInWithEmailAndPassword(temporaryAuth,address,temporaryPassword)).user;}
+        catch {throw new Error('Impossible de reprendre : vérifiez le code, l’adresse et le mot de passe provisoire. Aucun ancien compte ne reçoit de nouveaux droits.');}
+      } else if(error?.code==='auth/email-already-in-use') {
+        throw new Error('Cette adresse possède déjà un compte. Aucun ancien compte ne sera promu : demandez un nouveau code et utilisez une nouvelle adresse.');
+      } else if(error?.code==='auth/invalid-email') {
+        throw new Error('Indiquez une adresse e-mail valide.');
+      } else if(error?.code==='auth/weak-password') {
+        throw new Error('La politique Firebase a refusé la création sécurisée. Aucun droit n’a été attribué ; contactez le responsable de l’application.');
+      } else {
+        throw new Error('Création Firebase non confirmée. Si la connexion a été interrompue, reprenez avec le même code, la même adresse et le même mot de passe provisoire.');
+      }
+    }
+    let userToken;
+    try{userToken=await user.getIdToken(true);}catch{throw new Error('Le compte est peut-être créé, mais ses droits ne sont pas confirmés. Reprenez avec les mêmes informations.');}
+    try {completed=await api('/api/auth/admin-code/complete',{method:'POST',body:{code:normalizedCode},token:userToken});}
+    catch(error){if(error?.status&&error.status<500)throw error;throw new Error('Le compte est peut-être créé, mais ses droits ne sont pas confirmés. Reprenez avec le même code, la même adresse et le même mot de passe provisoire.');}
+    if(!completed?.ok)throw new Error('Le compte est peut-être créé, mais ses droits ne sont pas confirmés. Reprenez avec les mêmes informations.');
+  } finally {await signOut(temporaryAuth).catch(()=>{});await deleteApp(temporary).catch(()=>{});}
+  try {await adminLogin(address,temporaryPassword);}
+  catch {throw new Error('Le compte est peut-être prêt mais sa connexion n’a pas été confirmée. Reprenez avec le même code, la même adresse et le même mot de passe provisoire.');}
+  return completed;
+}
+// La session vient d'être créée avec le code et le mot de passe provisoire : pas besoin
+// de redemander la clé Firebase calculée ni le mot de passe provisoire à l'écran.
+export async function changeFirstCodeAdminPassword(nextPassword) {
+  if(typeof nextPassword!=='string'||nextPassword.length<12||nextPassword.length>128)throw new Error('Le mot de passe doit comporter de 12 à 128 caractères.');
+  const user=await adminUser();
+  try {await updatePassword(user,nextPassword);}
+  catch(e) {
+    if(e?.code==='auth/requires-recent-login')throw new Error('La session a expiré. Déconnectez-vous puis reprenez avec le code et les mêmes informations.');
+    throw new Error('Modification non confirmée. Si nécessaire, reconnectez-vous avec le nouveau mot de passe ; sinon reprenez avec le code et les mêmes informations.');
   }
 }
 // Création directe explicitement demandée : ni invitation, ni e-mail. La
