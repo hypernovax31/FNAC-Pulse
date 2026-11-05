@@ -12,7 +12,7 @@ import { SALES_RESET_CONFIRMATION, salesGeneration, saleInGeneration } from '../
 import { GOALS_RESET_CONFIRMATION } from '../src/goals-reset.js';
 import { SELLER_DELETE_CONFIRMATION } from '../src/seller-delete.js';
 import { SERVICE_DELETE_CONFIRMATION } from '../src/service-delete.js';
-import { MAX_SALE_CORRECTION, SALE_CORRECTION_CONFIRMATION, saleHistoryRange, saleCorrectionFingerprintInput } from '../src/sale-history.js';
+import { MAX_SALE_CORRECTION, SALE_CORRECTION_CONFIRMATION, SALE_ADDITION_CONFIRMATION, saleHistoryRange, validAdditionDate, saleCorrectionFingerprintInput, saleAdditionFingerprintInput } from '../src/sale-history.js';
 import { cleanSellerName, sameSellerName, validSellerName } from '../src/seller-registration.js';
 import { createAdminCode, formatAdminCode, normalizeAdminCode } from '../src/admin-code.js';
 
@@ -1471,6 +1471,55 @@ export function createWorker(deps={}) {
     if(last&&!SALE_DOC_ID.test(last.id))fail(409,'Une vente de cet historique nécessite une vérification.');
     return {sales,next:rows.length===pageSize?{date:last.data.businessDate,id:last.id}:null,range};
   }
+  // Ajout administratif d'une ou plusieurs ventes à une date précise. Aucun
+  // message FCM/outbox n'est créé : il s'agit d'une correction, pas d'une vente
+  // en direct. Le marqueur privé rend une réponse perdue sans double ajout.
+  async function addAdminSales(db,body) {
+    const {storeId,sellerId,period,anchor,saleDate,serviceId,departmentId,quantity,requestId,confirmation,
+      expectedSellerName,expectedStoreName,expectedServiceName,expectedDepartmentName}=body;
+    const currentDate=today();
+    if(typeof storeId!=='string'||!STORE_ID.test(storeId)||!isId(sellerId)||!isId(serviceId)||typeof departmentId!=='string'||!STORE_ID.test(departmentId)||
+       !validAdditionDate(period,anchor,saleDate,currentDate)||!Number.isInteger(quantity)||quantity<1||quantity>MAX_SALE_CORRECTION||
+       typeof requestId!=='string'||!SAFE_ID.test(requestId)||confirmation!==SALE_ADDITION_CONFIRMATION||
+       [expectedSellerName,expectedStoreName,expectedServiceName,expectedDepartmentName].some(name=>typeof name!=='string'||!name))
+      fail(400,'Vérifiez la date, le service, le département, la quantité et la confirmation.');
+    const fingerprint=await digestBase64(saleAdditionFingerprintInput({storeId,sellerId,period,anchor,saleDate,serviceId,departmentId,quantity}));
+    const requestPath=`pulseSalesCorrectionAdds/${requestId}`;
+    const [request,c,marker,guard,reset,sellerDeletion,serviceDeletion]=await Promise.all([
+      db.get(requestPath),catalog(db),db.get(salesMarkerPath(storeId)),db.get(guardPath(storeId)),
+      db.get(salesResetPath(storeId)),db.get(sellerDeletePath(storeId)),db.get(serviceDeletePath(storeId)),
+    ]);
+    if(request) {
+      if(request.data.fingerprint!==fingerprint)fail(409,'Cet identifiant de correction a déjà été utilisé.');
+      return {ok:true,added:Number(request.data.count)||quantity,duplicate:true};
+    }
+    const person=c.data.sellers.find(s=>Number(s.id)===Number(sellerId)&&sellerStoreId(s)===storeId&&!s.deletingJob);
+    const store=c.data.stores.find(s=>s.id===storeId),service=c.data.services.find(s=>Number(s.id)===Number(serviceId));
+    const department=departmentsForStore(c.data,storeId,{activeOnly:false}).find(d=>d.id===departmentId);
+    if(!validStore(c.data,storeId)||!person||!service||serviceRemovedForStore(c.data,storeId,serviceId)||!department||
+       person.name!==expectedSellerName||store?.name!==expectedStoreName||service.name!==expectedServiceName||department.name!==expectedDepartmentName)
+      fail(409,'Le vendeur, le service, le département ou le magasin a changé. Vérifiez votre sélection.');
+    if(reset?.data.status==='running'||sellerDeletion?.data.status==='running'||serviceDeletion?.data.status==='running')
+      fail(409,'Une suppression ou réinitialisation est en cours dans ce magasin. Attendez sa fin.');
+    const generation=salesGeneration(marker?.data),createdAt=new Date().toISOString(),ownerUid=await sellerUid(storeId,Number(sellerId));
+    const writes=[db.verify('pulse/catalog',precondition(c)),db.verify(salesMarkerPath(storeId),precondition(marker)),
+      db.verify(salesResetPath(storeId),precondition(reset)),db.verify(sellerDeletePath(storeId),precondition(sellerDeletion)),
+      db.verify(serviceDeletePath(storeId),precondition(serviceDeletion)),db.write(guardPath(storeId),{revision:crypto.randomUUID()},precondition(guard))];
+    for(let i=0;i<quantity;i++) {
+      const id=crypto.randomUUID();
+      writes.push(db.write(docPath(storeId,id),{id,storeId,sellerId:Number(sellerId),departmentId,serviceId:Number(serviceId),
+        createdAt,businessDate:saleDate,deletedAt:null,source:'adjustment',clientId:'',ownerUid,generation},{exists:false}));
+    }
+    writes.push(db.write(requestPath,{fingerprint,count:quantity,createdAt:Date.now()},{exists:false}));
+    try {await db.commit(writes);}
+    catch(error) {
+      if(!conflict(error))throw error;
+      const existing=await db.get(requestPath);
+      if(existing?.data.fingerprint===fingerprint)return {ok:true,added:Number(existing.data.count)||quantity,duplicate:true};
+      fail(409,'Les ventes ou le magasin ont changé. Rechargez la liste avant de recommencer.');
+    }
+    return {ok:true,added:quantity,duplicate:false};
+  }
   // La confirmation, l'ensemble précis des identifiants et son empreinte sont
   // vérifiés avant une écriture atomique. Une réponse perdue peut être rejouée
   // sans répéter la correction ni effacer d'autres ventes.
@@ -1747,6 +1796,7 @@ export function createWorker(deps={}) {
       if(method==='GET'&&path==='/api/admin/sales/reset')return readSalesReset(db,url.searchParams.get('storeId'));
       if(method==='POST'&&path==='/api/admin/sales/reset')return startSalesReset(db,env,await readBody(req));
       if(method==='GET'&&path==='/api/admin/sales/history')return adminSalesHistory(db,Object.fromEntries(url.searchParams));
+      if(method==='POST'&&path==='/api/admin/sales/add-correction')return addAdminSales(db,await readBody(req));
       if(method==='POST'&&path==='/api/admin/sales/correct')return correctAdminSales(db,await readBody(req));
       if(method==='POST'&&path==='/api/admin/stores')return addStore(db,await readBody(req));
       if(method==='POST'&&path==='/api/admin/adjust')return adjust(db,await readBody(req));

@@ -30,3 +30,13 @@ test('Zoom : champs de 16 px sur appareils tactiles, double appui contrôlé et 
   assert.match(viewport,/width=device-width/);
   assert.doesNotMatch(viewport,/user-scalable\s*=\s*(?:no|0)|maximum-scale\s*=\s*1(?:\D|$)/i);
 });
+
+test('Correction mobile : grilles rétrécissables, champs de date et confirmations tactiles',()=>{
+  assert.match(css,/\.history-filters\s*\{[^}]*grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\)/);
+  assert.match(css,/\.history-add-form\s*\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(css,/\.history-filters \.text-input,\.history-add-form \.text-input,\.history-service-filter \.text-input\s*\{[^}]*min-width:0;\s*max-width:100%/);
+  assert.match(css,/\.history-filters,\.history-add-form\s*\{\s*grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(css,/\.history-add-button,\.history-confirm-add-button\s*\{[^}]*min-height:44px/);
+  assert.match(css,/\.history-delete,\.history-confirm-delete\s*\{[^}]*min-height:44px/);
+  assert.match(css,/\[data-theme='dark'\] \.history-confirm-add\s*\{/);
+});

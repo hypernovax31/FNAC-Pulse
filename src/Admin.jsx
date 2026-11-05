@@ -299,6 +299,8 @@ export default function Admin({onClose,data,session,onChanged}) {
     <div className="admin-body">
       {needsStore&&!adminStore&&<div className="empty-admin">Choisissez d’abord le magasin dans l’onglet <button type="button" className="admin-inline-link" onClick={()=>switchTab('stores')}>Magasins</button>.</div>}
       {tab==='sales'&&adminStore&&<>
+        <SalesHistoryPanel key={`history:${adminStore}`} storeId={adminStore} storeName={adminStoreName} sellers={storeSellers} services={all.services} additionServices={orderedServices} departments={storeDepartments} today={data.today} token={token} disabled={busy||!allLoaded} onBusy={setBusy} onReload={()=>{loadAll();onChanged();}} onUpdate={()=>{setCountsRevision(value=>value+1);onChanged();}}/>
+        <details className="admin-legacy-adjust"><summary>Modifier les totaux du jour</summary>
         <div className="admin-section-heading"><div><h3>Ventes du jour</h3><p>Modifiez un total pour corriger une saisie. Les changements sont visibles immédiatement.</p></div></div>
         <div className="admin-selects admin-selects-single">
           <label><span className="form-label">Vendeur</span><select className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>setAdminSeller(e.target.value)}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
@@ -308,7 +310,7 @@ export default function Admin({onClose,data,session,onChanged}) {
           {activeServices.map(s=><div className="admin-count-row" key={s.id}><strong>{s.name}</strong><div><input type="number" min="0" max={CLOUD?100:999} aria-label={`Nombre de ventes ${s.name}`} value={counts[s.id]??0} onChange={e=>setCounts(c=>({...c,[s.id]:e.target.value}))}/><button disabled={busy} className="small-outline-button" onClick={()=>run(async()=>{const n=Number(counts[s.id]??0);if(!Number.isInteger(n)||n<0||n>(CLOUD?100:999))throw new Error(`La quantité doit être comprise entre 0 et ${CLOUD?100:999}.`);await api('/api/admin/adjust',{method:'POST',token,body:{storeId:adminStore,sellerId:Number(adminSeller),serviceId:s.id,count:n}})},'Total mis à jour.')}>Enregistrer</button></div></div>)}
         </div>:<div className="empty-admin">{countsLoading?'Chargement des ventes…':'Ventes indisponibles. Réessayez en changeant de sélection.'}</div>:<div className="empty-admin">Sélectionnez un magasin et un vendeur pour modifier les ventes.</div>}
         <div className="admin-note"><Info size={15}/> Les corrections ne déclenchent pas de notification de vente.</div>
-        <SalesHistoryPanel key={`history:${adminStore}`} storeId={adminStore} storeName={adminStoreName} sellers={storeSellers} services={all.services} departments={storeDepartments} today={data.today} token={token} disabled={busy||!allLoaded} onBusy={setBusy} onReload={()=>{loadAll();onChanged();}} onUpdate={()=>{setCountsRevision(value=>value+1);onChanged();}}/>
+        </details>
         <SalesResetPanel key={`reset:${adminStore}`} storeId={adminStore} storeName={adminStoreName} token={token} disabled={busy} onUpdate={()=>{setCountsRevision(value=>value+1);onChanged();}}/>
       </>}
       {tab==='goals'&&adminStore&&<>

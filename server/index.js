@@ -16,7 +16,7 @@ import { localPushTargets } from './push-targets.js';
 import { DEFAULT_DEPARTMENTS, TECH_DEPARTMENT_ID, departmentsForStore, sellerDepartmentId } from '../src/departments.js';
 import { summaryGoals } from '../src/summary-goals.js';
 import { SALES_RESET_CONFIRMATION } from '../src/sales-reset.js';
-import { MAX_SALE_CORRECTION, SALE_CORRECTION_CONFIRMATION, saleHistoryRange, saleCorrectionFingerprintInput } from '../src/sale-history.js';
+import { MAX_SALE_CORRECTION, SALE_CORRECTION_CONFIRMATION, SALE_ADDITION_CONFIRMATION, saleHistoryRange, validAdditionDate, saleCorrectionFingerprintInput, saleAdditionFingerprintInput } from '../src/sale-history.js';
 import { summarize, earliestDate } from '../src/cloud-stats.js';
 import { DIRECTORY_VERSION, REGIONAL_CHOICES_VERSION, mergeStoreDirectory, mergeRegionalChoices } from '../src/store-directory.js';
 import directorySnapshot from './fnac-directory.json' with {type:'json'};
@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS sales_reset_requests (
 );
 CREATE INDEX IF NOT EXISTS sales_reset_store ON sales_reset_requests(store_id, completed_at);
 CREATE TABLE IF NOT EXISTS sale_correction_requests (
+  request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, count INTEGER NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sale_addition_requests (
   request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, count INTEGER NOT NULL, created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS goals_reset_requests (
@@ -721,6 +724,35 @@ app.get('/api/admin/sales/history',requireAdmin,(req,res)=>{
     .all(storeId,Number(sellerId),range.start,range.end,afterDate,afterDate,afterDate,afterId);
   const last=rows.at(-1);
   res.json({sales:rows,next:rows.length===200?{date:last.businessDate,id:last.id}:null,range});
+});
+app.post('/api/admin/sales/add-correction',requireAdmin,(req,res)=>{
+  const {storeId,sellerId,period,anchor,saleDate,serviceId,departmentId,quantity,requestId,confirmation,
+    expectedSellerName,expectedStoreName,expectedServiceName,expectedDepartmentName}=req.body||{};
+  if(typeof storeId!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(storeId)||!isId(sellerId)||!isId(serviceId)||
+     typeof departmentId!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(departmentId)||!validAdditionDate(period,anchor,saleDate,parisToday())||
+     !Number.isInteger(quantity)||quantity<1||quantity>MAX_SALE_CORRECTION||typeof requestId!=='string'||!/^[A-Za-z0-9_-]{8,80}$/.test(requestId)||
+     confirmation!==SALE_ADDITION_CONFIRMATION||[expectedSellerName,expectedStoreName,expectedServiceName,expectedDepartmentName].some(x=>typeof x!=='string'||!x))
+    return failure(res,'Vérifiez la date, le service, le département, la quantité et la confirmation.');
+  const fingerprint=crypto.createHash('sha256').update(saleAdditionFingerprintInput({storeId,sellerId,period,anchor,saleDate,serviceId,departmentId,quantity})).digest('base64url');
+  const result=db.transaction(()=>{
+    const existing=db.prepare('SELECT * FROM sale_addition_requests WHERE request_id=?').get(requestId);
+    if(existing)return existing.fingerprint===fingerprint?{ok:true,added:existing.count,duplicate:true}:{error:'Cet identifiant de correction a déjà été utilisé.'};
+    const store=activeStore(storeId),person=db.prepare('SELECT * FROM sellers WHERE id=? AND store_id=?').get(Number(sellerId),storeId);
+    const service=db.prepare(`SELECT * FROM services WHERE id=? AND NOT EXISTS
+      (SELECT 1 FROM store_service_removals WHERE store_id=? AND service_id=services.id)`).get(Number(serviceId),storeId);
+    const department=localDepartments(storeId,false).find(d=>d.id===departmentId);
+    if(!store||!person||!service||!department||person.name!==expectedSellerName||store.name!==expectedStoreName||
+       service.name!==expectedServiceName||department.name!==expectedDepartmentName)
+      return {error:'Le vendeur, le service, le département ou le magasin a changé. Vérifiez votre sélection.'};
+    const insert=db.prepare('INSERT INTO sales(id,store_id,seller_id,service_id,business_date,created_at,source,department_id) VALUES (?,?,?,?,?,?,?,?)');
+    const createdAt=new Date().toISOString();
+    for(let i=0;i<quantity;i++)insert.run(crypto.randomUUID(),storeId,Number(sellerId),Number(serviceId),saleDate,createdAt,'adjustment',departmentId);
+    db.prepare('INSERT INTO sale_addition_requests(request_id,fingerprint,count,created_at) VALUES (?,?,?,?)').run(requestId,fingerprint,quantity,Date.now());
+    return {ok:true,added:quantity,duplicate:false};
+  })();
+  if(result.error)return failure(res,result.error,409);
+  if(!result.duplicate)broadcast(storeId,{kind:'adjustment'});
+  res.json(result);
 });
 app.post('/api/admin/sales/correct',requireAdmin,(req,res)=>{
   const {storeId,sellerId,period,anchor,saleIds,requestId,confirmation,expectedSellerName,expectedStoreName}=req.body||{};

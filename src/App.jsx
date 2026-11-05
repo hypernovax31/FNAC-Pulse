@@ -219,12 +219,12 @@ function WelcomePanel({data,onSubmit,deviceProfile,startupLocation,onForgetProfi
     <SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'nouvel-appareil'} data={data} initialProfile={deviceProfile} startupLocation={startupLocation} onSubmit={onSubmit} onForgetProfile={onForgetProfile} onRefreshProfile={onRefreshProfile}/>
   </section>;
 }
+const NAV_ITEMS=[['today',CalendarDays,'Aujourd’hui'],['objectifs',Target,'Objectifs'],['services',Zap,'Services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Bilan']];
 function Sidebar({onNavigate,onAdmin,onSession,onInstall,showInstall,activeNav}) {
-  const items=[['today',CalendarDays,'Aujourd’hui'],['objectifs',Target,'Objectifs'],['services',Zap,'Mes services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Récapitulatifs']];
   return <aside className="sidebar">
     <div className="sidebar-brand"><Brand/></div>
     <div className="sidebar-group-label">VOTRE ESPACE</div>
-    <nav className="side-nav" aria-label="Navigation principale">{items.map(([id,Icon,label])=><button key={id} className={`side-link ${activeNav===id?'is-active':''}`} onClick={()=>onNavigate(id)}><Icon size={18} strokeWidth={1.8}/><span>{label}</span>{activeNav===id&&<span className="nav-active-dot"/>}</button>)}</nav>
+    <nav className="side-nav" aria-label="Navigation principale">{NAV_ITEMS.map(([id,Icon,label])=><button type="button" key={id} className={`side-link ${activeNav===id?'is-active':''}`} aria-current={activeNav===id?'location':undefined} onClick={()=>onNavigate(id)}><Icon size={18} strokeWidth={1.8} aria-hidden="true"/><span>{label}</span>{activeNav===id&&<span className="nav-active-dot"/>}</button>)}</nav>
     <div className="sidebar-separator"/>
     <div className="sidebar-group-label">MON COMPTE</div>
     <nav className="side-nav"><button className="side-link" onClick={onSession}><UsersRound size={18} strokeWidth={1.8}/><span>Équipe & magasin</span></button><button className="side-link" onClick={onAdmin}><Settings2 size={18} strokeWidth={1.8}/><span>Administration</span></button></nav>
@@ -282,9 +282,9 @@ function ServiceCard({service,index,count,session,pending,onAdd,onRemove}) {
   return <article className={`service-card${pending?' is-pending':''}`}>
     <button type="button" className="service-add" onClick={()=>onAdd(service)} disabled={pending} aria-busy={!!pending} aria-label={`Ajouter une vente ${service.name}`} aria-describedby={countId}>
       <span className="service-card-top"><span className={`service-icon ${iconColors[index%iconColors.length]}`} data-service-icon={iconKey} aria-hidden="true"><Icon size={20} strokeWidth={1.8}/></span><span className="service-add-symbol" aria-hidden="true"><Plus size={19} strokeWidth={2.4}/></span></span>
-      <strong className="service-card-name">{service.name}</strong><span className="service-add-label">{pending?'Un instant…':'Ajouter une vente'}</span>
+      <strong className="service-card-name">{service.name}</strong><span className="service-add-label"><Plus size={13} strokeWidth={2.7} aria-hidden="true"/>{pending?'Un instant…':'Ajouter'}</span>
     </button>
-    <div className="service-card-footer"><span id={countId}>{session?`${count} aujourd’hui`:'Profil à choisir'}</span>{session&&count>0&&<button type="button" className="minus-button" onClick={()=>onRemove(service)} disabled={pending} title={`Retirer une vente ${service.name}`} aria-label={`Retirer une vente ${service.name}`}><Minus size={18} aria-hidden="true"/></button>}</div>
+    <div className="service-card-footer"><span id={countId}>{session?`${count} aujourd’hui`:'Profil à choisir'}</span><button type="button" className="minus-button" onClick={()=>onRemove(service)} disabled={pending||!session||count<=0} title={!session?'Choisissez votre profil':count<=0?'Aucune vente à retirer':`Retirer une vente ${service.name}`} aria-label={`Retirer une vente ${service.name}`} aria-describedby={countId}><Minus size={19} strokeWidth={2.5} aria-hidden="true"/></button></div>
   </article>;
 }
 function Ranking({leaders,hasSession}) {
@@ -332,8 +332,7 @@ function Summary({stats,hasSession,storeId,departments,goals,goalsLoading,goalsE
   </section>;
 }
 function MobileNav({onNavigate,active}) {
-  const items=[['today',CalendarDays,'Aujourd’hui'],['objectifs',Target,'Objectifs'],['services',Zap,'Services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Bilan']];
-  return <nav className="mobile-nav" aria-label="Navigation mobile">{items.map(([id,Icon,name])=><button type="button" key={id} onClick={()=>onNavigate(id)} className={active===id?'active':''} aria-current={active===id?'location':undefined}><Icon size={19} aria-hidden="true"/><span>{name}</span></button>)}</nav>;
+  return <nav className="mobile-nav" aria-label="Navigation mobile">{NAV_ITEMS.map(([id,Icon,name])=><button type="button" key={id} onClick={()=>onNavigate(id)} className={active===id?'active':''} aria-current={active===id?'location':undefined}><Icon size={19} aria-hidden="true"/><span>{name}</span></button>)}</nav>;
 }
 function urlBase64ToUint8Array(base64) {const padding='='.repeat((4-base64.length%4)%4);const raw=atob((base64+padding).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
 function readNotificationPermission() {return typeof Notification==='undefined'?'unsupported':Notification.permission;}
@@ -347,7 +346,7 @@ function Toast({notice,onClose,icon}) {
   </div>;
 }
 
-export { Header, DateChip, ActivityCard, Summary, MobileNav, TodayOverview, TodayDetails, ServiceCard };
+export { Header, Sidebar, DateChip, ActivityCard, Summary, MobileNav, TodayOverview, TodayDetails, ServiceCard };
 export default function App() {
   const [session,setSession]=useState(()=>CLOUD?null:getSession());
   const [deviceProfile,setDeviceProfile]=useState(()=>CLOUD?readDeviceProfile(undefined,getSession()):null);

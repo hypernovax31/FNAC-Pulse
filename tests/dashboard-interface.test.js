@@ -9,7 +9,7 @@ import {build} from 'esbuild';
 const require=createRequire(import.meta.url);
 const bundled=await build({entryPoints:['src/App.jsx'],bundle:true,platform:'node',format:'cjs',external:['react','lucide-react'],write:false,logLevel:'silent',define:{'import.meta.env':JSON.stringify({BASE_URL:'/',VITE_BACKEND:'local'})}});
 const module={exports:{}};new Function('module','exports','require',bundled.outputFiles[0].text)(module,module.exports,require);
-const {Header,DateChip,ActivityCard,Summary,MobileNav,TodayOverview,TodayDetails,ServiceCard,default:App}=module.exports;
+const {Header,Sidebar,DateChip,ActivityCard,Summary,MobileNav,TodayOverview,TodayDetails,ServiceCard,default:App}=module.exports;
 const render=(component,props={})=>renderToStaticMarkup(React.createElement(component,props));
 
 test('En-tête : son séparé, cloche barrée et aucun point vert de direct',()=>{
@@ -57,14 +57,21 @@ test('Services : la grande zone ajoute, le retrait est distinct et les états re
     assert.equal(tree.root.findByProps({'aria-label':`Ajouter une vente ${service.name}`}).props['aria-busy'],true);
     assert.match(render(ServiceCard,{...props,pending:true}),/Un instant…/);
     await act(async()=>tree.update(React.createElement(ServiceCard,{...props,session:null,count:0})));
-    assert.equal(tree.root.findAllByType('button').length,1);assert.match(render(ServiceCard,{...props,session:null,count:0}),/Profil à choisir/);
+    assert.equal(tree.root.findAllByType('button').length,2);assert.equal(tree.root.findByProps({'aria-label':`Retirer une vente ${service.name}`}).props.disabled,true);
+    assert.match(render(ServiceCard,{...props,session:null,count:0}),/Profil à choisir/);
+    await act(async()=>tree.update(React.createElement(ServiceCard,{...props,count:0})));
+    assert.equal(tree.root.findByProps({'aria-label':`Retirer une vente ${service.name}`}).props.disabled,true);
+    assert.equal(tree.root.findByProps({'aria-label':`Ajouter une vente ${service.name}`}).props.disabled,false);
   } finally {if(tree)await act(async()=>tree.unmount());}
 });
 
-test('Navigation mobile : Aujourd’hui, Objectifs, Services, Classement et Bilan, sans Profil',()=>{
-  const nav=render(MobileNav,{active:'today',onNavigate:()=>{}});
+test('Navigation mobile et PC : les cinq intitulés et leur ordre sont identiques',()=>{
+  const nav=render(MobileNav,{active:'today',onNavigate:()=>{}}),sidebar=render(Sidebar,{activeNav:'today',onNavigate:()=>{}});
   const labels=['Aujourd’hui','Objectifs','Services','Classement','Bilan'];
   assert.deepEqual([...nav.matchAll(/<span>([^<]+)<\/span>/g)].map(match=>match[1]),labels);
+  const principal=sidebar.match(/<nav class="side-nav" aria-label="Navigation principale">([\s\S]*?)<\/nav>/)[1];
+  assert.deepEqual([...principal.matchAll(/<span>([^<]+)<\/span>/g)].map(match=>match[1]),labels);
+  assert.match(principal,/aria-current="location"/);
   assert.match(nav,/aria-current="location"/);assert.doesNotMatch(nav,/>Profil<|>Accueil</);
   assert.equal((nav.match(/<button /g)||[]).length,5);
   const date=render(DateChip,{today:'2026-10-29'});

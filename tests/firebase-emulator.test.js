@@ -113,6 +113,8 @@ test('Émulateurs Firebase : REST, règles Firestore et authentification PIN', {
     const myStatus=await getDoc(doc(db,'pulseStatus',seller.uid));assert.equal(myStatus.data().storeId,store);assert.equal('pinMac' in myStatus.data(),false);
     await assert.rejects(getDoc(doc(db,'pulseGoals',seller.uid)),/permission|insufficient/i);
     await assert.rejects(setDoc(doc(db,'pulseGoals',seller.uid),{goals:{}}),/permission|insufficient/i);
+    await assert.rejects(getDocFromServer(doc(db,'pulseSalesCorrectionAdds','private-request')),/permission|insufficient/i);
+    await assert.rejects(setDoc(doc(db,'pulseSalesCorrectionAdds','private-request'),{count:99}),/permission|insufficient/i);
     assert.equal((await call('/api/goals','GET',undefined,idToken)).json.goals.s1.day,2);
     assert.deepEqual((await call('/api/goals','GET',undefined,idToken)).json.workdays,[1,2,3,4,5]);
     // BatchGet must preserve requested order, even for missing documents.
@@ -941,4 +943,28 @@ test('Émulateurs Firebase : code distant, secret court protégé, comptes ancie
     for(const app of getApps())if(!before.has(app.name))await deleteApp(app);
     await unlink(generated).catch(()=>{});
   }
+});
+
+test('Émulateur Firestore : ajout historique atomique, rejeu simultané et départements préservés',{skip:!enabled},async()=>{
+  const project='demo-fnac',store=LEGACY_STORE_ID,db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'});
+  const queued=[],sent=[],waits=[],worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(t!=='admin-token')throw Error('invalid');return {sub:'administrator'};},sendFcm:async(...args)=>sent.push(args)});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:'administrator',PULSE_QUEUE:{async sendBatch(batch){queued.push(...batch);}}},ctx={waitUntil(p){waits.push(p)}};
+  const call=async(path,method='GET',body,token='admin-token')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);const json=await r.json();assert.notEqual(r.status,500,JSON.stringify(json));return {status:r.status,json};};
+  await fetch(`http://127.0.0.1:8085/emulator/v1/projects/${project}/databases/(default)/documents`,{method:'DELETE'});
+  await call('/api/bootstrap','GET',undefined,'');const catalog=(await db.get('pulse/catalog')).data,seller=catalog.sellers.find(s=>s.id===1),service=catalog.services.find(s=>s.id===1);
+  seller.active=false;catalog.sellerFlags.s1=false;service.active=false;
+  catalog.departmentsByStore={[store]:[{id:'tech',name:'Produits Techniques',active:true},{id:'editorial',name:'Ancien département',active:false}]};
+  await db.commit([db.write('pulse/catalog',catalog),db.write('pulseGoals/fixture-add-owner',{goals:{s1:{day:4,week:12,month:32}}})]);
+  const body={storeId:store,sellerId:1,period:'month',anchor:'2026-10-29',saleDate:'2026-10-13',serviceId:1,departmentId:'editorial',quantity:3,requestId:'firebase-history-add-0001',confirmation:'AJOUTER',expectedSellerName:seller.name,expectedStoreName:catalog.stores.find(s=>s.id===store).name,expectedServiceName:service.name,expectedDepartmentName:'Ancien département'};
+  const route='/api/admin/sales/add-correction';assert.equal((await call(route,'POST',body,'')).status,401);
+  assert.equal((await call(route,'POST',{...body,saleDate:'2026-11-01'})).status,400);
+  const [one,two]=await Promise.all([call(route,'POST',body),call(route,'POST',body)]);assert.equal(one.status,200);assert.equal(two.status,200);assert.deepEqual([one.json.duplicate,two.json.duplicate].sort(),[false,true]);
+  const rows=await db.query(`pulseStores/${store}/sales`);assert.equal(rows.length,3);
+  for(const row of rows){assert.equal(row.data.sellerId,1);assert.equal(row.data.serviceId,1);assert.equal(row.data.departmentId,'editorial');assert.equal(row.data.businessDate,'2026-10-13');assert.equal(row.data.source,'adjustment');assert(!row.data.createdAt.startsWith('2026-10-13'));}
+  assert.equal((await call(route,'POST',{...body,quantity:2})).status,409);assert.equal((await call(route,'POST',body)).json.duplicate,true);
+  const history=(await call(`/api/admin/sales/history?storeId=${store}&sellerId=1&period=month&anchor=2026-10-29`)).json;assert.equal(history.sales.length,3);
+  const correction={storeId:store,sellerId:1,period:'month',anchor:'2026-10-29',saleIds:[history.sales[0].id],requestId:'firebase-added-remove-001',confirmation:'SUPPRIMER',expectedSellerName:seller.name,expectedStoreName:body.expectedStoreName};
+  assert.equal((await call('/api/admin/sales/correct','POST',correction)).json.deleted,1);assert.equal((await db.query(`pulseStores/${store}/sales`)).filter(row=>!row.data.deletedAt).length,2);
+  assert.deepEqual((await db.get('pulseGoals/fixture-add-owner')).data,{goals:{s1:{day:4,week:12,month:32}}});
+  assert.equal((await db.query('pulseOutbox')).length,0);assert.equal(queued.length,0);assert.equal(sent.length,0);assert.equal(waits.length,0);
 });
