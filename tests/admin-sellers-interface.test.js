@@ -94,7 +94,7 @@ test('Magasin administré : recherche, historique masqué, mémorisation et déc
     await act(async()=>{tab('Magasins').props.onClick();await tick();});await search('Labège');
     await act(async()=>{tree.root.findByProps({role:'option'}).props.onClick();await tick();});assert.equal(saved.get('pulse-admin-managed-store-v1'),'officiel');
     await act(async()=>{tab('Administrateur').props.onClick();await tick();});
-    await act(async()=>{tree.root.findAllByType('button').find(b=>text(b).includes('Déconnexion administrateur')).props.onClick();await tick();});
+    await act(async()=>{tree.root.findAllByType('button').find(b=>text(b).includes('Se déconnecter')).props.onClick();await tick();});
     assert.equal(saved.has('pulse-admin-managed-store-v1'),false);assert.equal(saved.has('pulse-admin-token'),false);assert.deepEqual(seller,{storeId:'historique',sellerId:41});
     await act(async()=>tree.unmount());
     saved.set('pulse-admin-token','admin-token');saved.set('pulse-admin-managed-store-v1','historique');await open();

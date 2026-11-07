@@ -190,7 +190,7 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
     const isReset=action.mode==='resetPassword',mode=action.mode,email=proof.email;
     if(isReset) {
       view('Mot de passe enregistré', 'Vous pouvez maintenant vous connecter à Fnac Pulse.');
-      const steps=element(doc,'p',{},'Dans l’administration, saisissez votre e-mail et votre nouveau mot de passe. Si vous avez été invité, appuyez ensuite sur « Accepter mon invitation ».');
+      const steps=element(doc,'p',{},'Dans l’administration, connectez-vous avec votre e-mail et votre nouveau mot de passe.');
       const shared=element(doc,'p',{},'Si un autre administrateur est déjà connecté sur cet appareil, utilisez votre propre appareil ou une fenêtre privée pour préserver sa session.');
       content.append(steps,shared,loginButton());
     } else {
@@ -214,6 +214,7 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
     // l'adresse affichée au-dessus reste entièrement lisible sur mobile.
     const username=element(doc,'input',{type:'email',name:'username',autocomplete:'username',className:'email-action-username',tabindex:'-1','aria-hidden':'true',readOnly:true});
     username.value=proof.email;account.append(username);form.append(account);
+    if(reset)form.append(element(doc,'p',{},'Si vous avez été invité à l’administration, votre connexion donnera accès à tous les magasins.'));
     if(proof.previousEmail&&(action.mode==='verifyAndChangeEmail'||action.mode==='recoverEmail')) {
       const previous=element(doc,'p',{},`Adresse actuelle : ${proof.previousEmail}`);form.append(previous);
     }

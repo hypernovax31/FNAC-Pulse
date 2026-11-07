@@ -691,8 +691,11 @@ test('Émulateurs Firebase : invitation sans secret tiers, choix du mot de passe
   let clientApp;
   try {
     dropResponse=true;
-    const result=await cloud.inviteAdministrator(api,{email:targetEmail,currentPassword:rootPassword});
+    const result=await cloud.inviteAdministrator(api,{email:targetEmail,requestId:'emulator-invite-request-001'});
     assert.equal(result.accountCreated,true);assert.equal(bodies.length,2);assert.deepEqual(bodies[0],bodies[1],'même requête rejouée');
+    assert.equal(bodies[0].requestId,'emulator-invite-request-001');assert.equal(bodies[0].showInPanel,true);
+    const listResponse=await worker.fetch(new Request('https://worker.test/api/admin/invitations',{headers:{authorization:`Bearer ${await adminAuth.currentUser.getIdToken()}`}}),env,ctx);
+    assert.equal(listResponse.status,200);assert((await listResponse.json()).invitations.some(x=>x.email===targetEmail));
     assert(!JSON.stringify(bodies).includes(rootPassword),'aucun mot de passe au Worker');
     assert.equal(adminAuth.currentUser.uid,root.uid);assert.equal(sellerAuth.currentUser.uid,sellerUid);
     assert(!getApps().some(x=>x.name.startsWith('fnac-pulse-invitation-')),'applications temporaires détruites');
@@ -710,10 +713,12 @@ test('Émulateurs Firebase : invitation sans secret tiers, choix du mot de passe
     const invited=(await signInWithEmailAndPassword(targetAuth,targetEmail,'Invited-chosen-2026!')).user;
     assert.equal(invited.emailVerified,true,'la réinitialisation vérifie bien l’adresse dans l’émulateur');
     const token=await invited.getIdToken(true);
+    assert.equal((await call('/api/auth/admin-account-status',{},token)).status,403);
     assert.equal((await call('/api/admin/administrators',{},token)).status,403);
     assert.equal((await call('/api/auth/admin-invitations/accept',{confirmed:false},token)).status,400);
     assert.equal(await db.get(`pulseAdmins/${invited.uid}`),null);
     assert.deepEqual((await call('/api/auth/admin-invitations/accept',{confirmed:true},token)).json,{ok:true,already:false});
+    assert.equal((await call('/api/auth/admin-account-status',{},token)).status,200);
     assert.equal((await call('/api/auth/admin-invitations/accept',{confirmed:true},token)).json.already,true);
     assert.equal((await db.get(`pulseAdmins/${invited.uid}`)).data.createdBy,root.uid);
     assert.equal((await db.get(await invitePath(targetEmail))).data.status,'accepted');
@@ -737,9 +742,10 @@ test('Émulateurs Firebase : invitation sans secret tiers, choix du mot de passe
     // le secret aléatoire récupère le compte, sans attribution silencieuse.
     for(const [kind,address] of [['create',`lost-create-${stamp}@example.test`],['mail',`lost-mail-${stamp}@example.test`]]) {
       if(kind==='create')globalThis.__pulseLostCreate=true;else globalThis.__pulseLostMail=true;
-      await assert.rejects(cloud.inviteAdministrator(api,{email:address,currentPassword:rootPassword}),/non confirm/);
+      const requestId=`retry-${kind}-request-2026`;
+      await assert.rejects(cloud.inviteAdministrator(api,{email:address,requestId,currentPassword:rootPassword}),/non confirm/);
       const pending=(await accounts()).find(x=>x.email===address);assert(pending);assert.equal(await db.get(`pulseAdmins/${pending.localId}`),null);
-      const retried=await cloud.inviteAdministrator(api,{email:address,currentPassword:rootPassword});assert.equal(retried.accountCreated,false);assert((await lastCode(address))?.oobCode);
+      const retried=await cloud.inviteAdministrator(api,{email:address,requestId,currentPassword:rootPassword});assert.equal(retried.accountCreated,false);assert((await lastCode(address))?.oobCode);
     }
     assert.equal(sellerAuth.currentUser.uid,sellerUid);assert.equal(adminAuth.currentUser.uid,root.uid);
   } finally {
@@ -1063,4 +1069,27 @@ test('Émulateur Firestore : pagination des demandes ouvertes par statut et curs
     assert([...expected].every(id=>seen.some(item=>item.requestId===id)));
     assert.equal(seen.filter(item=>expected.has(item.requestId)).length,56);
   } finally {if(paths.length)await db.commit(paths.map(path=>db.delete(path)));}
+});
+
+test('Émulateur Firestore : pagination et confidentialité des nouvelles invitations e-mail', {skip:!enabled}, async()=>{
+  const project='demo-fnac',stamp=Date.now(),rootUid=`root-invite-page-${stamp}`,app=initializeApp({apiKey:'demo-key',projectId:project,appId:'1:1:web:demo'},`invite-page-${stamp}`);
+  const auth=getAuth(app),firestore=getFirestore(app);connectAuthEmulator(auth,'http://127.0.0.1:9099',{disableWarnings:true});connectFirestoreEmulator(firestore,'127.0.0.1',8085);
+  const user=(await signInWithCustomToken(auth,fakeCustomToken({},`seller-page-${stamp}`,{role:'seller',storeId:'x',sellerId:1,sellerKey:'s1',accessVersion:'test'}))).user;
+  const db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'}),paths=[];
+  const now=Date.now(),worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:rootUid,email:'root@example.test',auth_time:Math.floor(now/1000),firebase:{sign_in_provider:'password'}})});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:rootUid,PIN_PEPPER:Buffer.alloc(32,8).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  try {
+    for(let n=0;n<56;n++) {
+      const email=`emulator-invite-${stamp}-${n}@example.test`,id=await digestBase64(`admin-invitation:${email}`),path=`pulseAdminInvitations/${id}`;paths.push(path);
+      await db.commit([db.write(path,{email,status:'pending',createdBy:rootUid,requestId:`emulator-page-${stamp}-${n}`,createdAt:now,expiresAt:now+86400000})]);
+    }
+    await assert.rejects(getDocs(collection(firestore,'pulseAdminInvitations')),/permission|insufficient/i,'les invitations ne sont pas lisibles depuis Firebase');
+    const seen=[];let next='',pages=0;
+    do {
+      const response=await worker.fetch(new Request(`https://worker.test/api/admin/invitations${next?`?after=${next}`:''}`,{headers:{authorization:'Bearer root'}}),env,ctx);
+      assert.equal(response.status,200);const value=await response.json();seen.push(...value.invitations);next=value.next;pages++;assert(pages<10);
+    } while(next);
+    assert(pages>=2);assert.equal(seen.filter(x=>x.email.startsWith(`emulator-invite-${stamp}-`)).length,56);
+    assert.equal(new Set(seen.map(x=>x.email)).size,seen.length);assert(user.uid.startsWith('seller-page-'));
+  } finally {if(paths.length)await db.commit(paths.map(path=>db.delete(path)));await deleteApp(app);}
 });

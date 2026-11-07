@@ -2281,3 +2281,148 @@ test('Demandes administrateur : pages bornées sans masquer les dossiers ouverts
   const all=[...one.body.requests,...two.body.requests];assert.equal(new Set(all.map(x=>x.requestId)).size,56);assert(all.every(x=>['invited','pending'].includes(x.status)));
   assert.equal((await req('/api/admin/access-requests?after=../invalid')).status,400);
 });
+
+test('Invitations e-mail : liste privée, annulation idempotente, expiration et accès sans validation manuelle',async()=>{
+  const db=new MemoryDb(),now=Math.floor(Date.now()/1000),identities=new Map([
+    ['root',{sub:'root',email:'root@example.test',auth_time:now,firebase:{sign_in_provider:'password'}}],
+    ['invite',{sub:'new-admin',email:'new@example.test',email_verified:true,auth_time:now,firebase:{sign_in_provider:'password'}}],
+    ['unverified',{sub:'new-admin',email:'new@example.test',email_verified:false,auth_time:now,firebase:{sign_in_provider:'password'}}],
+    ['seller',{sub:'seller',email:'seller@example.test',role:'seller',auth_time:now,firebase:{sign_in_provider:'password'}}],
+  ]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_e,t)=>{if(!identities.has(t))throw Error('invalid');return identities.get(t);}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'root',PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  const req=async(path,method='GET',body,token='root')=>{
+    const response=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(token?{authorization:`Bearer ${token}`} : {}),...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:response.status,body:await response.json()};
+  };
+  const path=`pulseAdminInvitations/${await digestBase64('admin-invitation:new@example.test')}`;
+  const invite=(requestId,extra={})=>req('/api/admin/invitations','POST',{email:'NEW@example.test',requestId,showInPanel:true,...extra});
+  const accept=token=>req('/api/auth/admin-invitations/accept','POST',{confirmed:true},token);
+  const cancel=requestId=>req('/api/admin/invitations/cancel','POST',{email:'new@example.test',requestId,confirmed:true});
+  await db.commit([db.write('pulse/catalog',{original:'conservé'}),db.write('pulseAccess/seller-session',{active:true,version:'v1'}),db.write('pulseStores/s/sales/old',{count:9})]);
+  const old=await Promise.all(['pulse/catalog','pulseAccess/seller-session','pulseStores/s/sales/old'].map(x=>db.get(x)));
+  assert.equal((await req('/api/admin/invitations','GET',undefined,'')).status,401);
+  assert.equal((await req('/api/admin/invitations','GET',undefined,'seller')).status,403);
+  const initial=await invite('email-request-001');assert.equal(initial.status,200);assert.equal(initial.body.status,'pending');
+  const stored=await db.get(path);assert.equal(stored.data.email,'new@example.test');assert.equal(stored.data.expiresAt-stored.data.createdAt,7*86400000);
+  assert(!JSON.stringify(stored).toLowerCase().includes('password'));assert.equal((await invite('email-request-001')).body.expiresAt,initial.body.expiresAt);
+  const listed=await req('/api/admin/invitations');assert.equal(listed.status,200);assert.equal(listed.body.invitations.length,1);
+  assert.deepEqual(Object.keys(listed.body.invitations[0]).sort(),['createdAt','email','expiresAt','requestId']);
+  assert.equal((await accept('unverified')).status,403);assert.equal(await db.get('pulseAdmins/new-admin'),null);
+  assert.equal((await req('/api/admin/invitations/cancel','POST',{email:'new@example.test',requestId:'email-request-001'})).status,400);
+  assert.equal((await cancel('wrong-request-001')).status,409);assert.equal((await cancel('email-request-001')).body.already,false);
+  assert.equal((await cancel('email-request-001')).body.already,true);assert.equal((await accept('invite')).status,403);
+  assert.equal((await req('/api/admin/invitations')).body.invitations.length,0);
+  assert.equal((await invite('email-request-002')).status,200);
+  let current=await db.get(path);await db.commit([db.write(path,{...current.data,expiresAt:Date.now()-1},{updateTime:current.updateTime})]);
+  assert.equal((await req('/api/admin/invitations')).body.invitations.length,0);assert.equal((await accept('invite')).status,403);
+  assert.equal((await invite('email-request-003')).status,200);assert.equal(await db.get('pulseAdmins/new-admin'),null);
+  assert.deepEqual((await accept('invite')).body,{ok:true,already:false});
+  assert.equal((await accept('invite')).body.already,true);assert.equal((await db.get('pulseAdmins/new-admin')).data.requiresVerifiedEmail,true);
+  assert.equal((await cancel('email-request-003')).status,409,'une annulation ne retire pas un accès déjà consommé');
+  assert.equal((await invite('email-request-003')).body.status,'accepted');
+  assert.equal((await invite('email-request-004')).body.status,'accepted');
+  current=await db.get('pulseAdmins/new-admin');await db.commit([db.write('pulseAdmins/new-admin',{...current.data,active:false},{updateTime:current.updateTime})]);
+  assert.equal((await invite('email-request-003')).status,409,'une reprise ne réactive pas un accès désactivé');
+  assert.equal((await invite('email-request-005')).status,409);
+  assert.deepEqual(await Promise.all(['pulse/catalog','pulseAccess/seller-session','pulseStores/s/sales/old'].map(x=>db.get(x))),old);
+});
+
+test('Invitations e-mail : annulation et révocation simultanées empêchent toute attribution',async()=>{
+  const db=new MemoryDb(),now=Math.floor(Date.now()/1000),identities=new Map([
+    ['root',{sub:'root',email:'root@example.test',auth_time:now,firebase:{sign_in_provider:'password'}}],
+    ['issuer',{sub:'issuer',email:'issuer@example.test',email_verified:true,auth_time:now,firebase:{sign_in_provider:'password'}}],
+    ['candidate',{sub:'candidate',email:'candidate@example.test',email_verified:true,auth_time:now,firebase:{sign_in_provider:'password'}}],
+    ['legacy',{sub:'legacy',email:'legacy@example.test',email_verified:true,auth_time:now,firebase:{sign_in_provider:'password'}}],
+  ]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_e,t)=>{if(!identities.has(t))throw Error('invalid');return identities.get(t);}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'root',PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  const req=async(path,body,token)=>{const response=await worker.fetch(new Request(`https://worker.test${path}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)}),env,ctx);return {status:response.status,body:await response.json()};};
+  const invite=(email,requestId,token='issuer',showInPanel=true)=>req('/api/admin/invitations',{email,requestId,showInPanel},token);
+  const accept=token=>req('/api/auth/admin-invitations/accept',{confirmed:true},token);
+  const path=async email=>`pulseAdminInvitations/${await digestBase64(`admin-invitation:${email}`)}`;
+  await db.commit([db.write('pulseAdmins/issuer',{active:true,requiresVerifiedEmail:true})]);
+  assert.equal((await invite('candidate@example.test','race-request-001')).status,200);
+  const invitePath=await path('candidate@example.test'),original=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path==='pulseAdmins/candidate'&&!w.check)) {
+      raced=true;const current=await db.get(invitePath);
+      await original([db.write(invitePath,{...current.data,status:'cancelled'},{updateTime:current.updateTime})]);
+    }
+    return original(writes);
+  };
+  assert.equal((await accept('candidate')).status,403);assert(raced);assert.equal(await db.get('pulseAdmins/candidate'),null);
+  db.commit=original;
+  assert.equal((await invite('candidate@example.test','race-request-002')).status,200);
+  // Une invitation réellement historique n’a ni adresse ni marqueur : elle
+  // garde ses anciennes règles, même après la révocation de l’invitant.
+  const legacyPath=await path('legacy@example.test');
+  await db.commit([db.write(legacyPath,{status:'pending',createdBy:'issuer',requestId:'legacy-request-001',createdAt:Date.now(),expiresAt:Date.now()+86400000})]);
+  // Un ancien client qui crée une invitation après la mise à jour ne peut pas
+  // éviter le nouveau contrôle en omettant l’adresse dans le panneau.
+  assert.equal((await invite('old-client@example.test','old-client-request-01','issuer',false)).status,200);
+  assert.equal((await db.get(await path('old-client@example.test'))).data.issuerMustBeActive,true);
+  raced=false;db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path==='pulseAdmins/candidate'&&!w.check)) {
+      raced=true;const issuer=await db.get('pulseAdmins/issuer');
+      await original([db.write('pulseAdmins/issuer',{...issuer.data,active:false},{updateTime:issuer.updateTime})]);
+    }
+    return original(writes);
+  };
+  assert.equal((await accept('candidate')).status,403);assert(raced);assert.equal(await db.get('pulseAdmins/candidate'),null);
+  db.commit=original;
+  identities.set('old-client',{sub:'old-client',email:'old-client@example.test',email_verified:true,auth_time:now,firebase:{sign_in_provider:'password'}});
+  assert.equal((await accept('old-client')).status,403,'un ancien client ne contourne pas la révocation');
+  assert.equal((await accept('legacy')).status,200,'les invitations historiques restent compatibles');
+  assert.equal((await db.get('pulseAdmins/legacy')).data.active,true);
+  assert.equal((await invite('another@example.test','race-request-003')).status,403,'un émetteur révoqué ne peut plus inviter');
+});
+
+test('Invitations e-mail : pagination des invitations récentes sans exposer les anciennes adresses absentes',async()=>{
+  const db=new MemoryDb(),now=Math.floor(Date.now()/1000),actor={sub:'root',email:'root@example.test',auth_time:now,firebase:{sign_in_provider:'password'}};
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async()=>actor});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'root',PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  const req=async path=>{const response=await worker.fetch(new Request(`https://worker.test${path}`,{headers:{authorization:'Bearer root'}}),env,ctx);return {status:response.status,body:await response.json()};};
+  const writes=[];for(let n=0;n<56;n++){
+    const email=`page-${String(n).padStart(2,'0')}@example.test`,id=await digestBase64(`admin-invitation:${email}`);
+    writes.push(db.write(`pulseAdminInvitations/${id}`,{email,requestId:`email-page-${String(n).padStart(3,'0')}`,status:'pending',createdAt:Date.now(),expiresAt:Date.now()+86400000,createdBy:'root'}));
+  }
+  await db.commit(writes);
+  const first=await req('/api/admin/invitations');assert.equal(first.body.invitations.length,50);assert.match(first.body.next,/^[A-Za-z0-9_-]{43}$/);
+  const second=await req(`/api/admin/invitations?after=${first.body.next}`);assert.equal(second.body.invitations.length,6);assert.equal(second.body.next,null);
+  assert.equal(new Set([...first.body.invitations,...second.body.invitations].map(x=>x.email)).size,56);
+  assert.equal((await req('/api/admin/invitations?after=../invalid')).status,400);
+});
+
+test('Invitations e-mail : révoquer l’émetteur pendant la création ou l’annulation bloque la transaction',async()=>{
+  const db=new MemoryDb(),now=Math.floor(Date.now()/1000),identities=new Map([
+    ['issuer',{sub:'issuer-race',email:'issuer@example.test',email_verified:true,auth_time:now,firebase:{sign_in_provider:'password'}}],
+    ['root',{sub:'root',email:'root@example.test',auth_time:now,firebase:{sign_in_provider:'password'}}],
+  ]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_e,t)=>identities.get(t)});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'root',PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  const req=async(path,body,token='issuer')=>{const response=await worker.fetch(new Request(`https://worker.test${path}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)}),env,ctx);return {status:response.status,body:await response.json()};};
+  const invitePath=`pulseAdminInvitations/${await digestBase64('admin-invitation:race@example.test')}`;
+  const invite={email:'race@example.test',requestId:'race-invite-create-01',showInPanel:true};
+  await db.commit([db.write('pulseAdmins/issuer-race',{active:true,requiresVerifiedEmail:true})]);
+  const original=db.commit.bind(db);let raced=false;
+  db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path===invitePath&&!w.check)) {
+      raced=true;const g=await db.get('pulseAdmins/issuer-race');await original([db.write('pulseAdmins/issuer-race',{...g.data,active:false},{updateTime:g.updateTime})]);
+    }
+    return original(writes);
+  };
+  assert.equal((await req('/api/admin/invitations',invite)).status,403);assert(raced);assert.equal(await db.get(invitePath),null);
+  db.commit=original;const inactive=await db.get('pulseAdmins/issuer-race');await db.commit([db.write('pulseAdmins/issuer-race',{...inactive.data,active:true},{updateTime:inactive.updateTime})]);
+  assert.equal((await req('/api/admin/invitations',invite)).status,200);
+  raced=false;db.commit=async writes=>{
+    if(!raced&&writes.some(w=>w.path===invitePath&&!w.check)) {
+      raced=true;const g=await db.get('pulseAdmins/issuer-race');await original([db.write('pulseAdmins/issuer-race',{...g.data,active:false},{updateTime:g.updateTime})]);
+    }
+    return original(writes);
+  };
+  assert.equal((await req('/api/admin/invitations/cancel',{email:invite.email,requestId:invite.requestId,confirmed:true})).status,403);
+  assert(raced);assert.equal((await db.get(invitePath)).data.status,'pending');
+  db.commit=original;
+  assert.equal((await req('/api/admin/invitations/cancel',{email:invite.email,requestId:invite.requestId,confirmed:true},'root')).status,200,'un autre administrateur actif peut annuler');
+});

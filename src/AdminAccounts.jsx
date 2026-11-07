@@ -1,105 +1,115 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {ArrowRight,Check,LogOut,Plus,RefreshCw,ShieldCheck} from 'lucide-react';
-import {api} from './api';
-import {ADMIN_SESSION,adminAccountEmail,changeAdminPassword} from './cloud';
-import {invitationAddress} from './admin-invitation.js';
+import {LockKeyhole,LogOut,RefreshCw,Send,ShieldCheck,UserRoundPlus} from 'lucide-react';
+import {api,uid} from './api';
+import {ADMIN_SESSION,adminAccountEmail,changeAdminPassword,inviteAdministrator} from './cloud';
 import {AdminTestCleanup} from './AdminTestCleanup';
+import {LegacyAdminRequests} from './LegacyAdminRequests';
+
+const normalEmail=value=>String(value||'').trim().toLowerCase();
+const validEmail=value=>value.length<=254&&/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(value);
+const dateLabel=value=>{const date=new Date(value);return Number.isFinite(date.getTime())?date.toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}):'';};
 
 export function AdminAccounts({onLogout,onBusy}) {
-  const [email,setEmail]=useState(''),[recipient,setRecipient]=useState(''),[requests,setRequests]=useState([]),[loading,setLoading]=useState(true);
-  const [next,setNext]=useState(''),[loadingMore,setLoadingMore]=useState(false);
-  const [review,setReview]=useState(null),[verified,setVerified]=useState(false);
-  const [password,setPassword]=useState({current:'',next:'',confirm:''}),[showPassword,setShowPassword]=useState(false);
-  const [busy,setBusy]=useState(false),[feedback,setFeedback]=useState(null);
-  const running=useRef(false),alive=useRef(true),loadSequence=useRef(0),browsingPages=useRef(false);
-  async function loadRequests({silent=false,after=''}={}) {
+  const [email,setEmail]=useState(''),[draft,setDraft]=useState(null),[needsPassword,setNeedsPassword]=useState(false),[password,setPassword]=useState('');
+  const [invitations,setInvitations]=useState([]),[next,setNext]=useState(''),[loadingMore,setLoadingMore]=useState(false),[listError,setListError]=useState('');
+  const [busy,setBusy]=useState(false),[feedback,setFeedback]=useState(null),[passwordOpen,setPasswordOpen]=useState(false),[accountEmail,setAccountEmail]=useState(''),[current,setCurrent]=useState(''),[nextPassword,setNextPassword]=useState(''),[confirmPassword,setConfirmPassword]=useState('');
+  const mounted=useRef(true),running=useRef(false),listSequence=useRef(0),browsingPages=useRef(false),confirmation=useRef(null);
+  useEffect(()=>{if(draft)confirmation.current?.focus();},[draft]);
+
+  async function loadInvitations(after='',silent=false) {
     if(silent&&browsingPages.current)return;
-    const append=!!after,sequence=++loadSequence.current;
-    if(append){browsingPages.current=true;setLoadingMore(true);}else if(!silent){browsingPages.current=false;setLoadingMore(false);}
+    if(after){browsingPages.current=true;setLoadingMore(true);}else if(!silent)browsingPages.current=false;
+    const sequence=++listSequence.current;
     try {
-      const path=`/api/admin/access-requests${append?`?after=${encodeURIComponent(after)}`:''}`;
-      const value=await api(path,{token:ADMIN_SESSION});
-      if(alive.current&&sequence===loadSequence.current){
-        const page=Array.isArray(value.requests)?value.requests:[];
-        setRequests(old=>append?[...old,...page.filter(item=>!old.some(previous=>previous.requestId===item.requestId))]:page);
-        setNext(typeof value.next==='string'?value.next:'');
+      const value=await api(`/api/admin/invitations${after?`?after=${encodeURIComponent(after)}`:''}`,{token:ADMIN_SESSION});
+      if(mounted.current&&sequence===listSequence.current) {
+        const page=Array.isArray(value.invitations)?value.invitations:[];
+        setInvitations(old=>after?[...old,...page.filter(item=>!old.some(previous=>previous.requestId===item.requestId))]:page);
+        setNext(typeof value.next==='string'?value.next:'');setListError('');
       }
-    } catch(e){if(alive.current&&sequence===loadSequence.current&&!silent)setFeedback({kind:'error',message:e.message||'Impossible de charger les demandes.'});}
-    finally {if(alive.current&&sequence===loadSequence.current){setLoading(false);setLoadingMore(false);}}
+    } catch(e){if(mounted.current&&sequence===listSequence.current)setListError(e.message||'Impossible de charger les invitations.');}
+    finally{if(mounted.current&&sequence===listSequence.current)setLoadingMore(false);}
   }
   useEffect(()=>{
-    alive.current=true;
-    adminAccountEmail().then(value=>{if(alive.current)setEmail(value);}).catch(()=>{});
-    loadRequests();
-    const visible=()=>{if(document.visibilityState==='visible')loadRequests({silent:true});};
-    document.addEventListener('visibilitychange',visible);
-    const timer=setInterval(()=>loadRequests({silent:true}),15000);
-    return ()=>{alive.current=false;document.removeEventListener('visibilitychange',visible);clearInterval(timer);};
+    mounted.current=true;loadInvitations();adminAccountEmail().then(value=>{if(mounted.current)setAccountEmail(value);}).catch(()=>{});
+    const refresh=()=>{if(document.visibilityState==='visible')loadInvitations('',true);};
+    document.addEventListener('visibilitychange',refresh);const timer=setInterval(refresh,30000);
+    return()=>{mounted.current=false;document.removeEventListener('visibilitychange',refresh);clearInterval(timer);};
   },[]);
-  async function run(work) {
-    if(running.current)return;
+  function prepare(event,address=email) {
+    event?.preventDefault();if(busy)return;
+    const recipient=normalEmail(address);
+    if(!validEmail(recipient)){setFeedback({error:true,text:'Indiquez une adresse e-mail valide.'});return;}
+    setEmail(recipient);setDraft({email:recipient,requestId:uid()});setNeedsPassword(false);setPassword('');setFeedback(null);
+  }
+  async function send(event) {
+    event?.preventDefault();if(!draft||running.current)return;
+    if(needsPassword&&!password){setFeedback({error:true,text:'Confirmez votre mot de passe administrateur.'});return;}
     running.current=true;setBusy(true);onBusy?.(true);setFeedback(null);
-    try {const message=await work();if(message&&alive.current)setFeedback({kind:'success',message});}
-    catch(e){if(alive.current)setFeedback({kind:'error',message:e.message||'Opération impossible. Réessayez.'});}
-    finally {running.current=false;if(alive.current)setBusy(false);onBusy?.(false);}
+    try {
+      const result=await inviteAdministrator(api,{email:draft.email,requestId:draft.requestId,...(needsPassword?{currentPassword:password}:{})});
+      if(mounted.current){
+        setFeedback({error:false,text:result.alreadyAccepted?'Cette adresse dispose déjà de l’accès administrateur.':'Demande d’e-mail envoyée. La personne peut vérifier sa boîte de réception et ses indésirables.'});
+        setDraft(null);setEmail('');setPassword('');setNeedsPassword(false);await loadInvitations();
+      }
+    } catch(e){
+      if(mounted.current){
+        if(e?.status===401&&/Confirmez à nouveau/.test(e.message||'')){setNeedsPassword(true);setPassword('');setFeedback({error:false,text:'Pour sécuriser l’envoi, confirmez votre mot de passe administrateur.'});}
+        else setFeedback({error:true,text:e.message||'Envoi non confirmé. Réessayez.'});
+      }
+    } finally{running.current=false;if(mounted.current)setBusy(false);onBusy?.(false);}
   }
-  function submitAddress(e) {
-    e.preventDefault();run(async()=>{
-      const address=invitationAddress(recipient),body={email:address};let result;
-      try {result=await api('/api/admin/access-requests',{method:'POST',token:ADMIN_SESSION,body});}
-      catch(error){if(error?.status&&error.status<500&&error.status!==408&&error.status!==429)throw error;result=await api('/api/admin/access-requests',{method:'POST',token:ADMIN_SESSION,body});}
-      setRecipient('');await loadRequests();
-      return result.already?'Cette adresse figure déjà dans les demandes ou possède déjà un accès validé.':'Adresse ajoutée. La personne peut créer son compte depuis « Première connexion ».';
-    });
+  async function cancel(item) {
+    if(running.current||!window.confirm(`Annuler l’invitation de ${item.email} ? Elle ne donnera plus accès. Le lien Firebase peut encore servir à modifier le mot de passe ; aucun compte ne sera supprimé.`))return;
+    running.current=true;setBusy(true);onBusy?.(true);setFeedback(null);
+    const body={email:item.email,requestId:item.requestId,confirmed:true};
+    try {
+      try{await api('/api/admin/invitations/cancel',{method:'POST',token:ADMIN_SESSION,body});}
+      catch(e){if(e?.status&&e.status<500&&e.status!==408&&e.status!==429)throw e;await api('/api/admin/invitations/cancel',{method:'POST',token:ADMIN_SESSION,body});}
+      if(mounted.current){setFeedback({error:false,text:'Invitation annulée.'});await loadInvitations();}
+    } catch(e){if(mounted.current)setFeedback({error:true,text:e.message||'Annulation non confirmée. Actualisez et réessayez.'});}
+    finally{running.current=false;if(mounted.current)setBusy(false);onBusy?.(false);}
   }
-  function decide(item,approve) {
-    if(!approve&&!window.confirm(`Annuler la demande pour ${item.email} ? Aucun compte Firebase ne sera supprimé.`))return;
-    if(approve&&!verified){setFeedback({kind:'error',message:'Confirmez la vérification de l’identité avant de valider.'});return;}
-    run(async()=>{
-      const body={email:item.email,requestId:item.requestId,claimantUid:item.claimantUid||'',confirmed:true,...(approve?{identityVerified:true}:{})};
-      const path=approve?'/api/admin/access-requests/approve':'/api/admin/access-requests/cancel';
-      try {await api(path,{method:'POST',token:ADMIN_SESSION,body});}
-      catch(error){if(error?.status&&error.status<500&&error.status!==408&&error.status!==429)throw error;await api(path,{method:'POST',token:ADMIN_SESSION,body});}
-      setReview(null);setVerified(false);await loadRequests();
-      return approve?'Accès validé. La personne peut maintenant se connecter.':'Demande annulée. Aucun compte Firebase n’a été supprimé.';
-    });
+  async function changePassword(event) {
+    event.preventDefault();if(running.current)return;
+    running.current=true;setBusy(true);onBusy?.(true);setFeedback(null);
+    try{if(nextPassword!==confirmPassword)throw new Error('Les nouveaux mots de passe ne correspondent pas.');await changeAdminPassword(current,nextPassword);if(mounted.current){setCurrent('');setNextPassword('');setConfirmPassword('');setPasswordOpen(false);setFeedback({error:false,text:'Mot de passe mis à jour.'});}}
+    catch(e){if(mounted.current)setFeedback({error:true,text:e.message||'Impossible de modifier le mot de passe.'});}
+    finally{running.current=false;if(mounted.current)setBusy(false);onBusy?.(false);}
   }
   return <div className="admin-accounts">
-    <div className="admin-account-current"><ShieldCheck size={18}/><div><strong>Votre compte administrateur</strong><p>{email||'Chargement de votre adresse…'}</p></div></div>
-    {feedback&&<div className={`admin-alert ${feedback.kind}`} role={feedback.kind==='error'?'alert':'status'}>{feedback.kind==='success'&&<Check size={15}/>}<span>{feedback.message}</span></div>}
-    <section className="admin-account-section" aria-labelledby="admin-create-title">
-      <div className="admin-section-heading"><div><h3 id="admin-create-title">Ajouter un administrateur</h3><p>Ajoutez son adresse. La personne choisira son mot de passe à sa première connexion ; aucun e-mail n’est envoyé.</p></div></div>
-      <form className="admin-add-address" onSubmit={submitAddress}>
-        <label><span className="form-label">Adresse e-mail</span><input className="text-input" type="email" autoComplete="off" autoCapitalize="none" spellCheck={false} required maxLength={254} disabled={busy} value={recipient} onChange={e=>{setRecipient(e.target.value);setFeedback(null);}}/></label>
-        <button className="primary-button" type="submit" disabled={busy}><Plus size={16}/> Ajouter</button>
-      </form>
-      <div className="admin-requests-heading"><div><h4>Demandes d’accès</h4><p>Les droits ne sont accordés qu’après votre validation.</p></div><button type="button" className="admin-requests-refresh" aria-label="Actualiser les demandes" disabled={busy} onClick={()=>loadRequests()}><RefreshCw size={15}/></button></div>
-      {loading?<p className="admin-account-help">Chargement des demandes…</p>:requests.length===0?<div className="admin-request-empty">Aucune demande en attente.</div>:<div className="admin-request-list">{requests.map(item=><div className="admin-request" key={item.requestId}>
-        <div className="admin-request-copy"><strong>{item.email}</strong><span>{item.status==='pending'?'Identité à vérifier':'En attente de la première connexion'}</span></div>
-        <div className="admin-request-actions">{item.status==='pending'&&item.claimantUid&&<button type="button" className="admin-request-review" disabled={busy} onClick={()=>{setReview(item);setVerified(false);setFeedback(null);}}>Vérifier</button>}
-          <button type="button" className="admin-request-cancel" disabled={busy} onClick={()=>decide(item,false)}>Annuler</button></div>
-        {review?.requestId===item.requestId&&<div className="admin-approval" role="group" aria-label={`Vérifier ${item.email}`}>
-          <strong>Vérifiez la personne avant de valider</strong>
-          <p>Vérifiez son identité par un autre moyen et demandez-lui de vous montrer son écran « Demande en attente ». L’adresse n’est pas vérifiée automatiquement.</p>
-          <label className="admin-direct-check"><input type="checkbox" checked={verified} disabled={busy} onChange={e=>setVerified(e.target.checked)}/><span>J’ai vérifié son identité et vu son écran. Je lui accorde les droits sur <b>tous les magasins</b>, y compris l’ajout d’administrateurs.</span></label>
-          <div><button type="button" className="outline-button" disabled={busy} onClick={()=>{setReview(null);setVerified(false);}}>Retour</button><button type="button" className="primary-button" disabled={busy||!verified} onClick={()=>decide(item,true)}>Valider l’accès</button></div>
-        </div>}
-      </div>)}</div>}
-      {next&&<button type="button" className="outline-button admin-requests-more" disabled={busy||loadingMore} onClick={()=>loadRequests({after:next})}>{loadingMore?'Chargement…':'Charger la suite'}</button>}
+    <div className="admin-account-current"><ShieldCheck size={18}/><div><strong>Votre compte administrateur</strong><p>{accountEmail||'Chargement de votre adresse…'}</p></div></div>
+    <section className="admin-account-section admin-invite-section" aria-labelledby="admin-invite-title">
+      <div className="admin-account-heading"><UserRoundPlus size={19}/><div><h3 id="admin-invite-title">Inviter un administrateur</h3><p>La personne recevra un e-mail pour choisir son mot de passe.</p></div></div>
+      {feedback&&<div className={`admin-alert ${feedback.error?'error':'success'}`} role={feedback.error?'alert':'status'}>{feedback.text}</div>}
+      {!draft?<form className="admin-invite-form" onSubmit={prepare}>
+        <label htmlFor="admin-invite-email">Adresse e-mail</label>
+        <div className="admin-invite-entry"><input className="text-input" id="admin-invite-email" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="nom@exemple.fr" autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={254} disabled={busy} required/><button className="primary-button" disabled={busy} type="submit"><Send size={16}/> Continuer</button></div>
+      </form>:<form ref={confirmation} tabIndex={-1} className="admin-invite-confirm" onSubmit={send}>
+        <strong>Inviter {draft.email} ?</strong>
+        <p>Après avoir choisi son mot de passe, cette personne aura les droits administrateur sur <b>tous les magasins</b> et pourra inviter d’autres administrateurs, sans autre validation.</p>
+        {needsPassword&&<label className="admin-invite-password">Votre mot de passe administrateur<input className="text-input" type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" disabled={busy} required/></label>}
+        <div className="admin-invite-confirm-actions"><button className="outline-button" type="button" disabled={busy} onClick={()=>{setDraft(null);setPassword('');setNeedsPassword(false);setFeedback(null);}}>Retour</button><button className="primary-button" type="submit" disabled={busy}><Send size={16}/> {busy?'Envoi…':'Envoyer l’invitation'}</button></div>
+      </form>}
+      <p className="admin-account-help">L’accès est accordé après vérification de l’adresse. Le message peut parler de réinitialisation ; sa réception dépend de Firebase.</p>
     </section>
-    <section className="admin-account-section admin-password-section" aria-labelledby="admin-password-title">
-      <button type="button" className="admin-account-toggle" aria-expanded={showPassword} onClick={()=>setShowPassword(x=>!x)}><span id="admin-password-title">Modifier mon mot de passe</span><span aria-hidden="true">{showPassword?'−':'+'}</span></button>
-      {showPassword&&<form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{
-        if(password.next!==password.confirm)throw new Error('Les nouveaux mots de passe ne correspondent pas.');
-        await changeAdminPassword(password.current,password.next);setPassword({current:'',next:'',confirm:''});setShowPassword(false);return 'Votre mot de passe a été mis à jour.';
-      });}}>
-        <label><span className="form-label">Mot de passe actuel</span><input className="text-input" type="password" autoComplete="current-password" required disabled={busy} value={password.current} onChange={e=>setPassword(v=>({...v,current:e.target.value}))}/></label>
-        <label><span className="form-label">Nouveau mot de passe · 12 caractères minimum</span><input className="text-input" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={busy} value={password.next} onChange={e=>setPassword(v=>({...v,next:e.target.value}))}/></label>
-        <label><span className="form-label">Confirmer le nouveau mot de passe</span><input className="text-input" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={busy} value={password.confirm} onChange={e=>setPassword(v=>({...v,confirm:e.target.value}))}/></label>
-        <button className="primary-button" disabled={busy}>Modifier mon mot de passe <ArrowRight size={16}/></button>
+    {(invitations.length>0||next||listError)&&<section className="admin-account-section admin-pending-invitations" aria-labelledby="admin-pending-title">
+      <div className="admin-requests-heading"><div><h3 id="admin-pending-title">Invitations en cours</h3><p>L’invitation expire après sept jours.</p></div><button type="button" className="admin-requests-refresh" aria-label="Actualiser les invitations" disabled={busy} onClick={()=>loadInvitations()}><RefreshCw size={15}/></button></div>
+      {listError&&<div className="admin-alert error" role="alert">{listError}</div>}
+      <div className="admin-request-list">{invitations.map(item=><div className="admin-request" key={item.requestId}><div className="admin-request-copy"><strong>{item.email}</strong><span>En attente{dateLabel(item.expiresAt)?` · jusqu’au ${dateLabel(item.expiresAt)}`:''}</span></div><div className="admin-request-actions"><button type="button" className="admin-request-review" disabled={busy} onClick={()=>prepare(null,item.email)}>Renvoyer</button><button type="button" className="admin-request-cancel" disabled={busy} onClick={()=>cancel(item)}>Annuler</button></div></div>)}</div>
+      {next&&<button type="button" className="outline-button admin-requests-more" disabled={busy||loadingMore} onClick={()=>loadInvitations(next)}>{loadingMore?'Chargement…':'Charger la suite'}</button>}
+    </section>}
+    <details className="admin-legacy-invitations admin-legacy-requests"><summary>Demandes précédentes sans e-mail</summary><LegacyAdminRequests disabled={busy} onBusy={value=>{setBusy(value);onBusy?.(value);}}/></details>
+    <section className="admin-account-section admin-account-security">
+      <div className="admin-account-heading"><LockKeyhole size={19}/><div><h3>Mon mot de passe</h3><p>Modifiez votre mot de passe personnel.</p></div></div>
+      {!passwordOpen?<button type="button" className="outline-button" disabled={busy} onClick={()=>setPasswordOpen(true)}>Modifier mon mot de passe</button>:<form onSubmit={changePassword} className="admin-account-password-form">
+        <label>Mot de passe actuel<input className="text-input" type="password" value={current} onChange={e=>setCurrent(e.target.value)} autoComplete="current-password" disabled={busy} required/></label>
+        <label>Nouveau mot de passe · 12 caractères minimum<input className="text-input" type="password" value={nextPassword} onChange={e=>setNextPassword(e.target.value)} autoComplete="new-password" minLength={12} maxLength={128} disabled={busy} required/></label>
+        <label>Confirmer le nouveau mot de passe<input className="text-input" type="password" value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} autoComplete="new-password" minLength={12} maxLength={128} disabled={busy} required/></label>
+        <div><button type="button" className="outline-button" disabled={busy} onClick={()=>{setPasswordOpen(false);setCurrent('');setNextPassword('');setConfirmPassword('');}}>Annuler</button><button type="submit" className="primary-button" disabled={busy}>Enregistrer</button></div>
       </form>}
     </section>
     <AdminTestCleanup disabled={busy} onBusy={value=>{setBusy(value);onBusy?.(value);}}/>
-    <button type="button" className="logout-button" disabled={busy} onClick={onLogout}><LogOut size={15}/> Déconnexion administrateur</button>
+    <button type="button" className="outline-button admin-account-logout" disabled={busy} onClick={onLogout}><LogOut size={16}/> Se déconnecter</button>
   </div>;
 }

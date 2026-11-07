@@ -1330,3 +1330,35 @@ p,h1,h2,h3 { margin:0; }
   .admin-add-address { grid-template-columns:minmax(0,1fr); }
   .admin-add-address .primary-button { min-height:44px; }
 }
+
+/* Invitations par e-mail : une adresse, une confirmation, puis le lien Firebase. */
+.admin-account-heading { display:flex; align-items:flex-start; gap:10px; margin-bottom:15px; }
+.admin-account-heading > svg { flex:0 0 auto; color:#9c7b0b; margin-top:1px; }
+.admin-account-heading h3,.admin-pending-invitations h3 { color:var(--ink); font-size:14px; }
+.admin-account-heading p { color:var(--muted); font-size:11px; line-height:1.5; margin-top:4px; }
+.admin-invite-form { display:grid; gap:7px; }
+.admin-invite-form > label,.admin-invite-password,.admin-account-password-form label { color:var(--muted); font-size:11px; font-weight:700; }
+.admin-invite-entry { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:9px; }
+.admin-invite-entry .primary-button,.admin-invite-confirm-actions button { min-height:44px; padding:0 14px; }
+.admin-invite-entry .text-input { height:44px; min-width:0; }
+.admin-invite-confirm { overflow-wrap:anywhere; }
+.admin-invite-confirm p { margin:0; }
+.admin-invite-password,.admin-account-password-form label { display:grid; gap:7px; }
+.admin-invite-confirm-actions,.admin-account-password-form > div { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+.admin-invite-section > .admin-account-help { margin-top:12px; }
+.admin-pending-invitations .admin-requests-heading,.admin-legacy-body .admin-requests-heading { margin-top:0; }
+.admin-pending-invitations .admin-requests-heading h3 { font-size:13px; }
+.admin-legacy-requests { padding:12px 16px; border:1px solid var(--border); border-radius:9px; background:var(--panel); }
+.admin-legacy-requests .admin-legacy-body { margin-top:14px; }
+.admin-account-password-form { display:grid; gap:12px; margin-top:14px; }
+.admin-account-password-form button { min-height:44px; padding:0 14px; }
+.admin-account-logout { justify-self:start; min-height:44px; padding:0 14px; }
+.admin-login-hint { margin:2px 0; color:var(--muted); font-size:11px; line-height:1.5; }
+@media(max-width:480px) {
+  .admin-invite-entry { grid-template-columns:minmax(0,1fr); }
+}
+
+@media(max-width:360px) {
+  .admin-invite-confirm-actions { display:grid; grid-template-columns:minmax(0,1fr); }
+  .admin-invite-confirm-actions .primary-button { order:-1; }
+}

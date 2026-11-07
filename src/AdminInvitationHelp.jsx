@@ -38,7 +38,7 @@ export function AdminInvitationHelp({email,busy,onBusy,onCompleted,onVerified}) 
       if(next!==confirm)throw new Error('Les deux mots de passe ne correspondent pas.');
       const {code,email:verifiedEmail}=proof;setProof(null);setNext('');setConfirm('');
       const result=await confirmAdminPasswordReset({code,email:verifiedEmail},next);onCompleted(result.email);
-      return 'Mot de passe enregistré. Renseignez votre e-mail et votre mot de passe ci-dessus, puis acceptez votre invitation.';
+      return 'Mot de passe enregistré. Connectez-vous avec votre e-mail et votre nouveau mot de passe.';
     });}}>
       <p><Info size={14}/> Compte concerné : <strong>{proof.email}</strong></p>
       <label><span className="form-label">Votre nouveau mot de passe · 12 caractères minimum</span><input className="text-input" type="password" autoComplete="new-password" minLength={12} maxLength={128} value={next} onChange={e=>setNext(e.target.value)} disabled={busy} required/></label>

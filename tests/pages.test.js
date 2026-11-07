@@ -48,7 +48,7 @@ for (const scope of ['https://example.test/', 'https://example.test/FNAC-Pulse/'
     const network=[];
     const sw = serviceWorker(scope,[],async(request,options)=>{network.push({request,options});return new Response('réseau');});
     await dispatch(sw.handlers.get('install'));
-    assert.deepEqual(Array.from(sw.added[0]), [base,`${base}auth-action-v1.js?v=2`,`${base}manifest.webmanifest`,`${base}icons/icon-192-v3.png`,`${base}icons/icon-512-v3.png`,`${base}icons/icon-maskable-512-v3.png`,`${base}icons/apple-touch-icon-v3.png`,`${base}icons/icon-192.png`,`${base}fnac.svg`,`${base}FNAC%20-%20SIGNATURE.mp3`]);
+    assert.deepEqual(Array.from(sw.added[0]), [base,`${base}auth-action-v1.js?v=3`,`${base}manifest.webmanifest`,`${base}icons/icon-192-v3.png`,`${base}icons/icon-512-v3.png`,`${base}icons/icon-maskable-512-v3.png`,`${base}icons/apple-touch-icon-v3.png`,`${base}icons/icon-192.png`,`${base}fnac.svg`,`${base}FNAC%20-%20SIGNATURE.mp3`]);
     assert.deepEqual(Array.from(sw.added[1]), [`${base}assets/app.js`,`${base}assets/app.css`]);
     let response;
     const secretRequest={method:'GET',url:`${scope}?mode=resetPassword&oobCode=code-fictif`,mode:'navigate'};
@@ -61,7 +61,7 @@ for (const scope of ['https://example.test/', 'https://example.test/FNAC-Pulse/'
     assert.match(await (await response).text(),/assets\/app\.js/);
     assert.equal(offline.stored.length,0,'hors ligne, seule la page générique est lue');
     await dispatch(sw.handlers.get('activate'));
-    assert.deepEqual(sw.deleted,['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','fnac-pulse-shell-v8','fnac-pulse-shell-v9','fnac-pulse-shell-v10','fnac-pulse-shell-v11','fnac-pulse-shell-v12','fnac-pulse-shell-v13','fnac-pulse-shell-v14','fnac-pulse-shell-v15','fnac-pulse-shell-v16','fnac-pulse-shell-v17','fnac-pulse-shell-v18','fnac-pulse-shell-v19','fnac-pulse-shell-v20','fnac-pulse-shell-v21','fnac-pulse-shell-v22','fnac-pulse-shell-v23','fnac-pulse-shell-v24','fnac-pulse-shell-v25','fnac-pulse-shell-v34','fnac-pulse-shell-v35','fnac-pulse-shell-v36','fnac-pulse-shell-v37','fnac-pulse-shell-v38','fnac-pulse-shell-v39','fnac-pulse-shell-v40','fnac-pulse-shell-v41','fnac-pulse-shell-v42','fnac-pulse-shell-v43','fnac-pulse-shell-v44','fnac-pulse-shell-v45','fnac-pulse-shell-v46','fnac-pulse-shell-v47','fnac-pulse-shell-v48']);
+    assert.deepEqual(sw.deleted,['fnac-pulse-shell-v3','fnac-pulse-shell-v4','fnac-pulse-shell-v5','fnac-pulse-shell-v6','fnac-pulse-shell-v7','fnac-pulse-shell-v8','fnac-pulse-shell-v9','fnac-pulse-shell-v10','fnac-pulse-shell-v11','fnac-pulse-shell-v12','fnac-pulse-shell-v13','fnac-pulse-shell-v14','fnac-pulse-shell-v15','fnac-pulse-shell-v16','fnac-pulse-shell-v17','fnac-pulse-shell-v18','fnac-pulse-shell-v19','fnac-pulse-shell-v20','fnac-pulse-shell-v21','fnac-pulse-shell-v22','fnac-pulse-shell-v23','fnac-pulse-shell-v24','fnac-pulse-shell-v25','fnac-pulse-shell-v34','fnac-pulse-shell-v35','fnac-pulse-shell-v36','fnac-pulse-shell-v37','fnac-pulse-shell-v38','fnac-pulse-shell-v39','fnac-pulse-shell-v40','fnac-pulse-shell-v41','fnac-pulse-shell-v42','fnac-pulse-shell-v43','fnac-pulse-shell-v44','fnac-pulse-shell-v45','fnac-pulse-shell-v46','fnac-pulse-shell-v47','fnac-pulse-shell-v48','fnac-pulse-shell-v49']);
     await dispatch(sw.handlers.get('push'),{data:{json:()=>({title:'Test', url:'https://elsewhere.invalid/'})}});
     assert.equal(sw.shown[0].options.icon,`${base}icons/icon-192-v3.png`);
     assert.deepEqual(Array.from(sw.shown[0].options.vibrate),[70,70,70,70,70]);
@@ -105,8 +105,8 @@ test('PWA : icônes versionnées, tailles, masque et compatibilité des ancienne
   assert.match(html,/rel="icon"[^>]+icon-192-v3\.png/);
   assert.match(html,/rel="apple-touch-icon"[^>]+apple-touch-icon-v3\.png/);
   const cloudWorker=fs.readFileSync(new URL('../src/sw-cloud.js',import.meta.url),'utf8');
-  assert.match(source,/fnac-pulse-shell-v49/);
-  assert.match(cloudWorker,/fnac-pulse-shell-v49/);
+  assert.match(source,/fnac-pulse-shell-v50/);
+  assert.match(cloudWorker,/fnac-pulse-shell-v50/);
   assert.match(cloudWorker,/request\.mode === 'navigate' && url\.searchParams\.has\('oobCode'\)/);
   for(const icon of manifest.icons)assert.ok(cloudWorker.includes(icon.src));
 });

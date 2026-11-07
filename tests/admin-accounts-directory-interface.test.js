@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url),{act}=TestRenderer,tick=()=>new Pro
 const plugin={name:'admin-fixtures',setup(b){
   b.onResolve({filter:/^\.\/api$/},()=>({path:'api',namespace:'mock'}));
   b.onResolve({filter:/^\.\/cloud$/},()=>({path:'cloud',namespace:'mock'}));
-  b.onLoad({filter:/^api$/,namespace:'mock'},()=>({contents:'export const api=(...x)=>globalThis.__adminTest.api(...x);',loader:'js'}));
+  b.onLoad({filter:/^api$/,namespace:'mock'},()=>({contents:'export const api=(...x)=>globalThis.__adminTest.api(...x); export const uid=()=>"invitation-test-request-01";',loader:'js'}));
   b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`
     export const ADMIN_SESSION='admin-session';
     export const deleteTestFirebaseAccount=(...x)=>globalThis.__adminTest.deleteTest?.(...x);
@@ -79,41 +79,72 @@ test('Administration : ordre exact des onglets et accès clavier',async()=>{
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
-test('Administrateur : adresse seule, puis validation explicite après vérification de la personne',async()=>{
-  const e=setup(),busy=[],requests=[];let tree,loggedOut=0;
+test('Administrateur : invitation par adresse, droits globaux, annulation et ancienne demande conservée',async()=>{
+  const e=setup(),busy=[],requests=[{email:'ancien@example.test',requestId:'legacy-request-001',status:'pending',claimantUid:'old-uid'}],invitations=[];let tree,loggedOut=0;
   globalThis.__adminTest.api=async(path,options={})=>{
     e.calls.push(['api',path,options]);
-    if(path==='/api/admin/access-requests'&&!options.method)return {requests:structuredClone(requests)};
-    if(path==='/api/admin/access-requests'&&options.method==='POST'){requests.push({email:options.body.email,requestId:'request-test-001',status:'invited'});return {ok:true};}
+    if(path==='/api/admin/access-requests')return {requests:structuredClone(requests)};
+    if(path==='/api/admin/invitations'&&!options.method)return {invitations:structuredClone(invitations)};
+    if(path==='/api/admin/invitations/cancel'){invitations.splice(0);return {ok:true};}
     if(path.endsWith('/approve')){requests.splice(0);return {ok:true};}
     return {ok:true};
   };
+  globalThis.__adminTest.invite=async(_api,body)=>{e.calls.push(['invite',body]);invitations.push({...body,expiresAt:Date.now()+86400000});return {alreadyAccepted:false};};
   const button=caption=>tree.root.findAllByType('button').find(x=>text(x).includes(caption));
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onBusy:x=>busy.push(x),onLogout:()=>loggedOut++}));await tick();});
-    assert.match(text(tree.toJSON()),/responsable@example\.test/);assert.match(text(tree.toJSON()),/aucun e-mail n’est envoyé/);
-    assert.doesNotMatch(text(tree.toJSON()),/Préparer l’invitation|Modifier mon e-mail|mot de passe provisoire/);
-    const create=()=>form(tree,'admin-create-title'),fields=()=>create().findAllByType('input');assert.equal(fields().length,1);
-    await change(fields()[0],' NOUVEAU@example.test ');await submit(create());
-    const add=e.calls.find(x=>x[1]==='/api/admin/access-requests'&&x[2]?.method==='POST');
-    assert.deepEqual(add[2].body,{email:'nouveau@example.test'});assert.match(text(tree.toJSON()),/En attente de la première connexion/);
-    requests[0]={...requests[0],status:'pending',claimantUid:'new-admin-uid'};
-    await act(async()=>{tree.root.findByProps({'aria-label':'Actualiser les demandes'}).props.onClick();await tick();});
+    assert.match(text(tree.toJSON()),/responsable@example\.test/);assert.match(text(tree.toJSON()),/recevra un e-mail/);
+    assert.doesNotMatch(text(tree.toJSON()),/Modifier mon e-mail|mot de passe provisoire/);
+    const invite=()=>form(tree,'admin-invite-title');assert.equal(invite().findAllByType('input').length,1);
+    await change(invite().findByType('input'),' NOUVEAU@example.test ');await submit(invite());
+    assert.equal(e.calls.filter(x=>x[0]==='invite').length,0,'une confirmation précède l’envoi');
+    assert.match(text(tree.toJSON()),/Inviter nouveau@example\.test/);assert.match(text(tree.toJSON()),/tous les magasins/);
+    await submit(invite());
+    assert.deepEqual(e.calls.find(x=>x[0]==='invite')[1],{email:'nouveau@example.test',requestId:'invitation-test-request-01'});
+    assert.match(text(tree.toJSON()),/Demande d’e-mail envoyée/);assert.match(text(tree.toJSON()),/En attente/);
+    assert(!e.calls.some(x=>x[1]==='/api/admin/access-requests'&&x[2]?.method==='POST'),'aucune nouvelle demande manuelle');
+    const pending=tree.root.findByProps({'aria-labelledby':'admin-pending-title'});
+    e.allow=false;await act(async()=>pending.findAllByType('button').find(x=>text(x)==='Annuler').props.onClick());
+    assert(!e.calls.some(x=>x[1]==='/api/admin/invitations/cancel'));
+    e.allow=true;await act(async()=>{pending.findAllByType('button').find(x=>text(x)==='Annuler').props.onClick();await tick();await tick();});
+    const cancel=e.calls.find(x=>x[1]==='/api/admin/invitations/cancel');
+    assert.deepEqual(cancel[2].body,{email:'nouveau@example.test',requestId:'invitation-test-request-01',confirmed:true});assert.match(e.confirms.at(-1),/aucun compte ne sera supprimé/);
     await act(async()=>button('Vérifier').props.onClick());
     assert.match(text(tree.toJSON()),/identité par un autre moyen/);assert.match(text(tree.toJSON()),/adresse n’est pas vérifiée automatiquement/);
-    assert.equal(button('Valider l’accès').props.disabled,true);assert(!e.calls.some(x=>x[1]?.endsWith('/approve')));
-    const checkbox=tree.root.findAllByType('input').find(x=>x.props.type==='checkbox');
-    await act(async()=>checkbox.props.onChange({target:{checked:true}}));
+    assert.equal(button('Valider l’accès').props.disabled,true);assert(!e.calls.some(x=>x[1]?.endsWith?.('/approve')));
+    const checkbox=tree.root.findAllByType('input').find(x=>x.props.type==='checkbox');await act(async()=>checkbox.props.onChange({target:{checked:true}}));
     await act(async()=>{button('Valider l’accès').props.onClick();await tick();await tick();});
-    const approval=e.calls.find(x=>x[1]?.endsWith('/approve'));
-    assert.deepEqual(approval[2].body,{email:'nouveau@example.test',requestId:'request-test-001',claimantUid:'new-admin-uid',confirmed:true,identityVerified:true});
-    assert.match(text(tree.toJSON()),/Accès validé/);assert.doesNotMatch(JSON.stringify(e.calls),/mot de passe provisoire/);
+    const approval=e.calls.find(x=>x[1]?.endsWith?.('/approve'));
+    assert.deepEqual(approval[2].body,{email:'ancien@example.test',requestId:'legacy-request-001',claimantUid:'old-uid',confirmed:true,identityVerified:true});assert.match(text(tree.toJSON()),/Accès validé/);
     await act(async()=>button('Modifier mon mot de passe').props.onClick());
-    const pw=()=>form(tree,'admin-password-title'),pwFields=()=>pw().findAllByType('input');
-    await change(pwFields()[0],'Ancien-password-2026!');await change(pwFields()[1],'Nouveau-password-2026!');await change(pwFields()[2],'Nouveau-password-2026!');await submit(pw());
+    const pw=()=>tree.root.findByProps({className:'admin-account-password-form'}),fields=()=>pw().findAllByType('input');
+    await change(fields()[0],'Ancien-password-2026!');await change(fields()[1],'Nouveau-password-2026!');await change(fields()[2],'incorrect');await submit(pw());
+    assert.match(text(tree.toJSON()),/ne correspondent pas/);assert(!e.calls.some(x=>x[0]==='password'));
+    await change(fields()[2],'Nouveau-password-2026!');await submit(pw());
     assert.deepEqual(e.calls.find(x=>x[0]==='password').slice(1),['Ancien-password-2026!','Nouveau-password-2026!']);
-    await act(async()=>button('Déconnexion administrateur').props.onClick());assert.equal(loggedOut,1);
-    assert.deepEqual(busy,[true,false,true,false,true,false]);
+    await act(async()=>button('Se déconnecter').props.onClick());assert.equal(loggedOut,1);
+    assert.equal(busy.filter(Boolean).length,5);assert.equal(busy.filter(x=>!x).length,5);
+  } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
+});
+
+test('Administrateur : réauthentification seulement si nécessaire et reprise avec le même identifiant',async()=>{
+  const e=setup(),attempts=[];let tree;
+  globalThis.__adminTest.api=async(path)=>path==='/api/admin/access-requests'?{requests:[]}:{invitations:[]};
+  globalThis.__adminTest.invite=async(_api,body)=>{
+    attempts.push({...body});
+    if(attempts.length===1)throw Object.assign(Error('Confirmez à nouveau votre mot de passe administrateur.'),{status:401});
+    if(attempts.length===2)throw Error('Envoi non confirmé. Réessayez.');
+    return {alreadyAccepted:false};
+  };
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onLogout(){}}));await tick();});
+    const invite=()=>form(tree,'admin-invite-title');await change(invite().findByType('input'),'invité@example.test');await submit(invite());await submit(invite());
+    assert.equal(attempts.length,1);assert.equal(attempts[0].currentPassword,undefined);
+    assert.match(text(tree.toJSON()),/confirmez votre mot de passe administrateur/);
+    await change(invite().findByType('input'),'secret-admin-test');await submit(invite());assert.match(text(tree.toJSON()),/Envoi non confirmé/);
+    await submit(invite());assert.equal(attempts.length,3);assert.equal(new Set(attempts.map(x=>x.requestId)).size,1);
+    assert.equal(attempts[1].currentPassword,'secret-admin-test');assert.equal(attempts[2].currentPassword,'secret-admin-test');
+    assert.match(text(tree.toJSON()),/Demande d’e-mail envoyée/);assert.doesNotMatch(text(tree.toJSON()),/secret-admin-test/);
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
@@ -121,6 +152,7 @@ test('Nettoyage du test : recherche privée, retrait ciblé puis suppression Fir
   const e=setup(),busy=[];let tree,deleteCalls=0;
   globalThis.__adminTest.api=async(path,options={})=>{e.calls.push(['api',path,options]);
     if(path==='/api/admin/access-requests')return {requests:[]};
+    if(path==='/api/admin/invitations')return {invitations:[]};
     if(path==='/api/admin/old-test/inspect')return {found:true,email:options.body.email,uid:'test-uid-001',grantActive:true};
     if(path==='/api/admin/old-test/revoke')return {ok:true,uid:'test-uid-001'};
     throw Error('unexpected '+path);
@@ -129,7 +161,7 @@ test('Nettoyage du test : recherche privée, retrait ciblé puis suppression Fir
   const button=caption=>tree.root.findAllByType('button').find(x=>text(x).includes(caption));
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onBusy:x=>busy.push(x),onLogout(){}}));await tick();});
-    const details=tree.root.findByType('details'),lookup=details.findAllByType('form')[0];
+    const details=tree.root.findByProps({className:'admin-test-cleanup'}),lookup=details.findAllByType('form')[0];
     await change(lookup.findByType('input'),'TEST@example.test');await submit(lookup);
     assert.match(text(details),/test@example\.test/);assert.match(text(details),/test-uid-001/);
     assert.equal(button('Retirer les droits de ce test').props.disabled,true);assert.equal(deleteCalls,0);
@@ -274,6 +306,7 @@ test('Administrateur : les demandes suivantes restent accessibles et l’actuali
   const e=setup();let tree;
   globalThis.__adminTest.api=async(path)=>{
     e.calls.push(['api',path]);
+    if(path==='/api/admin/invitations')return {invitations:[]};
     if(path==='/api/admin/access-requests')return {requests:[{email:'premier@example.test',requestId:'request-first-001',status:'invited'}],next:'cursor-first'};
     if(path==='/api/admin/access-requests?after=cursor-first')return {requests:[{email:'suivant@example.test',requestId:'request-second-01',status:'pending',claimantUid:'uid-second'}],next:null};
     throw Error('unexpected '+path);
@@ -284,7 +317,7 @@ test('Administrateur : les demandes suivantes restent accessibles et l’actuali
     assert.match(text(tree.toJSON()),/premier@example\.test/);assert(button('Charger la suite'));
     await act(async()=>{button('Charger la suite').props.onClick();await tick();});
     assert.match(text(tree.toJSON()),/premier@example\.test/);assert.match(text(tree.toJSON()),/suivant@example\.test/);assert(!button('Charger la suite'));
-    await act(async()=>{tree.root.findByProps({'aria-label':'Actualiser les demandes'}).props.onClick();await tick();});
+    await act(async()=>{tree.root.findByProps({'aria-label':'Actualiser les anciennes demandes'}).props.onClick();await tick();});
     assert.match(text(tree.toJSON()),/premier@example\.test/);assert.doesNotMatch(text(tree.toJSON()),/suivant@example\.test/);assert(button('Charger la suite'));
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });

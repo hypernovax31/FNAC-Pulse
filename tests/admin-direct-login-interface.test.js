@@ -13,7 +13,7 @@ const out=await build({entryPoints:['src/Admin.jsx'],bundle:true,platform:'node'
   b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`
     export const claimAdminAccess=(...x)=>globalThis.__directLogin?.claim?.(...x),registerAdminForApproval=(...x)=>globalThis.__directLogin?.manualRegister?.(...x),deleteTestFirebaseAccount=()=>{}; export const CLOUD=true,ADMIN_SESSION='admin-session';
     export const adminLogin=(...x)=>globalThis.__directLogin.login(...x),adminLogout=()=>globalThis.__directLogin.logout(),changeAdminPassword=(...x)=>globalThis.__directLogin.change(...x);
-    export const adminAccountEmail=async()=>"nouveau@example.test",createDirectAdministrator=()=>{},resendAdminVerification=()=>{};
+    export const adminAccountEmail=async()=>"nouveau@example.test",createDirectAdministrator=()=>{},inviteAdministrator=()=>{},resendAdminVerification=()=>{};
     export const createAdminEnrollmentCode=()=>{},cancelAdminEnrollmentCode=()=>{},registerAdminWithCode=(...x)=>globalThis.__directLogin.register?.(...x),changeFirstCodeAdminPassword=(...x)=>globalThis.__directLogin.codeChange?.(...x);
     export const requestAdminPasswordReset=()=>{},inspectAdminPasswordReset=()=>{},confirmAdminPasswordReset=()=>{},inspectAdminVerification=()=>{},confirmAdminVerification=()=>{};
   `,loader:'js'}));
@@ -135,12 +135,67 @@ test('Compte existant : se connecter avec son propre mot de passe transmet seule
   put('__directLogin',{
     async login(email,password){calls.push(['login',email,password]);return 'admin-session';},async logout(){},async change(){},
     async claim(){calls.push(['claim']);return {ok:true,status:'pending'};},
-    async api(path){if(path==='/api/auth/admin-account-status')throw Object.assign(Error('Accès administrateur refusé.'),{status:403});throw Error('aucune donnée admin avant validation');},
+    async api(path){if(path==='/api/auth/admin-account-status'||path==='/api/auth/admin-invitations/accept')throw Object.assign(Error('Accès administrateur refusé.'),{status:403});throw Error('aucune donnée admin avant validation');},
   });
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
     await set(tree.root.findByProps({id:'admin-email'}),'ancien@example.test');await set(tree.root.findByProps({id:'admin-password'}),'Ancien-password-test!');
     await act(async()=>{tree.root.findAllByType('form')[0].props.onSubmit({preventDefault(){}});await tick();await tick();});
     assert(calls.some(x=>x[0]==='claim'));assert.equal(values.has('pulse-admin-token'),false);assert.match(text(tree.toJSON()),/Demande en attente/);
+  } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
+});
+
+test('Invitation par e-mail : connexion automatique après vérification, même si une réponse est perdue',async()=>{
+  const names=['document','window','sessionStorage','__directLogin'],old=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)]));
+  const values=new Map(),calls=[],put=(n,value)=>Object.defineProperty(globalThis,n,{configurable:true,writable:true,value});let tree,accepted=false,attempts=0;
+  put('document',{body:{style:{overflow:''}},activeElement:null,addEventListener(){},removeEventListener(){}});put('window',{confirm:()=>true});
+  put('sessionStorage',{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)});
+  put('__directLogin',{
+    async login(email,password){calls.push(['login',email,password]);return 'admin-session';},async logout(){calls.push(['logout']);},async change(){},
+    async claim(){throw Error('une validation manuelle ne doit pas être demandée');},
+    async api(path,options={}){
+      calls.push(['api',path,options]);
+      if(path==='/api/auth/admin-account-status'){if(!accepted)throw Object.assign(Error('Accès administrateur refusé.'),{status:403});return {passwordChangeRequired:false};}
+      if(path==='/api/auth/admin-invitations/accept'){
+        assert.deepEqual(options.body,{confirmed:true});accepted=true;
+        if(++attempts===1)throw new TypeError('réponse perdue');return {ok:true,already:true};
+      }
+      if(path==='/api/admin/all')return {sellers:[],services:[],serviceOrders:{},departmentsByStore:{}};
+      return {ok:true};
+    },
+  });
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
+    assert.match(text(tree.toJSON()),/choisissez votre mot de passe depuis l’e-mail/i);
+    assert.doesNotMatch(text(tree.toJSON()),/Accepter mon invitation/);
+    await set(tree.root.findByProps({id:'admin-email'}),'invite@example.test');await set(tree.root.findByProps({id:'admin-password'}),'Mot-de-passe-personnel-2026');
+    await act(async()=>{tree.root.findAllByType('form')[0].props.onSubmit({preventDefault(){}});await tick();await tick();});
+    assert.equal(attempts,2);assert.equal(values.get('pulse-admin-token'),'admin-session');
+    assert.equal(calls.filter(x=>x[1]==='/api/auth/admin-account-status').length,2);
+    assert(calls.some(x=>x[1]==='/api/admin/all'));assert(!calls.some(x=>x[1]?.includes?.('/approve')));assert(!calls.some(x=>x[0]==='logout'));
+  } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
+});
+
+test('Invitation par e-mail : une adresse non vérifiée ne reçoit aucun accès automatique',async()=>{
+  const names=['document','window','sessionStorage','__directLogin'],old=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)]));
+  const values=new Map(),calls=[],put=(n,value)=>Object.defineProperty(globalThis,n,{configurable:true,writable:true,value});let tree;
+  put('document',{body:{style:{overflow:''}},activeElement:null,addEventListener(){},removeEventListener(){}});put('window',{confirm:()=>true});
+  put('sessionStorage',{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)});
+  put('__directLogin',{
+    async login(){return 'admin-session';},async logout(){calls.push('logout');},async change(){},
+    async claim(){throw Object.assign(Error('Aucune demande précédente.'),{status:403});},
+    async api(path){
+      calls.push(path);
+      if(path==='/api/auth/admin-account-status')throw Object.assign(Error('Accès administrateur refusé.'),{status:403});
+      if(path==='/api/auth/admin-invitations/accept')throw Object.assign(Error('Confirmez d’abord l’adresse e-mail du compte invité.'),{status:403});
+      throw Error('aucune donnée admin avant vérification');
+    },
+  });
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
+    await set(tree.root.findByProps({id:'admin-email'}),'invite@example.test');await set(tree.root.findByProps({id:'admin-password'}),'Mot-de-passe-personnel-2026');
+    await act(async()=>{tree.root.findAllByType('form')[0].props.onSubmit({preventDefault(){}});await tick();await tick();});
+    assert.match(text(tree.toJSON()),/Confirmez d’abord l’adresse e-mail/);assert.equal(values.has('pulse-admin-token'),false);
+    assert(calls.includes('logout'));assert(!calls.includes('/api/admin/all'));
   } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
 });

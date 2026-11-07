@@ -242,16 +242,18 @@ function secureRandomText() {
   let raw='';for(const byte of bytes)raw+=String.fromCharCode(byte);
   return btoa(raw).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
-export async function inviteAdministrator(api,{email,currentPassword}) {
-  const address=String(email||'').trim();
-  if(!address||address.length>254)throw new Error('Indiquez une adresse e-mail valide.');
-  await reauthenticateAdmin(currentPassword);
-  const requestId=secureRandomText(),body={email:address,requestId};let invitation;
+export async function inviteAdministrator(api,{email,currentPassword,requestId}) {
+  const address=String(email||'').trim().toLowerCase();
+  if(!address||address.length>254||! /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(address))throw new Error('Indiquez une adresse e-mail valide.');
+  // Une session déjà récente suffit. Si le Worker la juge trop ancienne,
+  // l’interface propose une confirmation du mot de passe puis rejoue le même ID.
+  if(currentPassword)await reauthenticateAdmin(currentPassword);
+  const id=requestId||secureRandomText(),body={email:address,requestId:id,showInPanel:true};let invitation;
   try {invitation=await api('/api/admin/invitations',{method:'POST',token:ADMIN_SESSION,body});}
   catch(error) {
     if(error?.status&&error.status<500)throw error;
     try {invitation=await api('/api/admin/invitations',{method:'POST',token:ADMIN_SESSION,body});}
-    catch {throw new Error('L’invitation n’a pas pu être confirmée. Réessayez ; aucun droit n’est attribué sans l’accord du destinataire.');}
+    catch(retryError) {if(retryError?.status&&retryError.status<500)throw retryError;throw new Error('L’invitation n’a pas pu être confirmée. Réessayez ; aucun droit n’est attribué sans l’accord du destinataire.');}
   }
   if(invitation?.status==='accepted')return {alreadyAccepted:true};
   if(invitation?.status!=='pending')throw new Error('L’invitation a expiré. Envoyez une nouvelle invitation.');
@@ -260,17 +262,17 @@ export async function inviteAdministrator(api,{email,currentPassword}) {
   try {
     await setPersistence(temporaryAuth,inMemoryPersistence);temporaryAuth.languageCode='fr';
     try {
-      await createUserWithEmailAndPassword(temporaryAuth,address,`${secureRandomText()}aA1!`);accountCreated=true;
+      await firebaseDeadline(createUserWithEmailAndPassword(temporaryAuth,address,`${secureRandomText()}aA1!`));accountCreated=true;
     } catch(error) {
       if(error?.code!=='auth/email-already-in-use') {
         const detail=error?.code==='auth/invalid-email'?'Vérifiez l’adresse e-mail.':error?.code==='auth/too-many-requests'?'Trop de demandes ; réessayez plus tard.':'Vérifiez votre connexion et réessayez.';
-        throw new Error(`Invitation enregistrée, mais création du compte non confirmée. ${detail} Aucun droit n’a été attribué.`);
+        throw new Error(`Invitation enregistrée, mais création du compte non confirmée. ${detail} La personne doit vérifier son adresse avant d’obtenir l’accès.`);
       }
     }
-    try {await sendPasswordResetEmail(temporaryAuth,address);}
+    try {await firebaseDeadline(sendPasswordResetEmail(temporaryAuth,address));}
     catch(error) {
       const detail=error?.code==='auth/too-many-requests'?'Quota d’e-mails atteint. Réessayez plus tard.':'Vérifiez la connexion et réessayez.';
-      throw new Error(`Invitation enregistrée, mais envoi non confirmé. ${detail} Aucun droit n’a été attribué.`);
+      throw new Error(`Invitation enregistrée, mais envoi non confirmé. ${detail} La personne doit vérifier son adresse avant d’obtenir l’accès.`);
     }
     return {alreadyAccepted:false,accountCreated,expiresAt:invitation.expiresAt};
   } finally {await signOut(temporaryAuth).catch(()=>{});await deleteApp(temporary).catch(()=>{});}

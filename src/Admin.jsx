@@ -163,8 +163,24 @@ export default function Admin({onClose,data,session,onChanged}) {
           try {status=await api('/api/auth/admin-account-status',{method:'POST',token:auth,body:{}});}
           catch(statusError) {
             if(acceptInvitation||statusError.status!==403||/Confirmez/.test(statusError.message))throw statusError;
-            const claim=await claimAdminAccess(api);
-            if(claim.status==='pending'){setEmail(email.trim().toLowerCase());setPassword('');setApprovalWaiting(true);return;}
+            // Une connexion après le lien Firebase accepte l’invitation : le
+            // Worker exige l’adresse vérifiée avant toute attribution. Les
+            // anciennes demandes sans e-mail gardent leur validation manuelle.
+            let accepted=false,inviteError;
+            const accept=()=>api('/api/auth/admin-invitations/accept',{method:'POST',token:auth,body:{confirmed:true}});
+            try {
+              try {await accept();}catch(e){if(e?.status&&e.status<500&&e.status!==408)throw e;await accept();}
+              accepted=true;
+            } catch(e){
+              if(e?.status===403)inviteError=e;
+              else if(!e?.status||e.status>=500)throw new Error('Accès non confirmé. Reconnectez-vous avec les mêmes identifiants.');
+              else throw e;
+            }
+            if(!accepted) {
+              let claim;
+              try {claim=await claimAdminAccess(api);}catch(e){if(e.status===403&&inviteError)throw inviteError;throw e;}
+              if(claim.status==='pending'){setEmail(email.trim().toLowerCase());setPassword('');setApprovalWaiting(true);return;}
+            }
             status=await api('/api/auth/admin-account-status',{method:'POST',token:auth,body:{}});
           }
           if(status.passwordChangeRequired){setFirstTemporary(status.method==='code'?'':password);setFirstPassword(status.method==='code'?'code':'direct');setPassword('');return;}
@@ -317,10 +333,10 @@ export default function Admin({onClose,data,session,onChanged}) {
         catch(e){setError(e.message);}finally{setBusy(false);}
       }}>Renvoyer le lien de confirmation</button>}
       <button className="primary-button full-button" type="submit" disabled={busy}>{busy?'Connexion…':'Se connecter'} <ArrowRight size={16}/></button>
-      {CLOUD&&<button type="button" className="outline-button full-button admin-registration-button" disabled={busy} onClick={()=>{setError('');setNotice('');setManualRegistration(true);}}>Première connexion · Créer mon compte</button>}
-      {CLOUD&&<details className="admin-legacy-invitations"><summary>Anciennes invitations</summary>
+      {CLOUD&&<p className="admin-login-hint">Vous avez reçu une invitation ? Choisissez votre mot de passe depuis l’e-mail, puis connectez-vous ici.</p>}
+      {CLOUD&&<details className="admin-legacy-invitations"><summary>Anciennes demandes</summary>
+        <div className="admin-invitation-accept"><strong>Demande sans e-mail</strong><p>Pour une adresse ajoutée avant cette mise à jour.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>{setError('');setNotice('');setManualRegistration(true);}}>Première connexion · Créer mon compte</button></div>
         <div className="admin-invitation-accept"><strong>Invitation avec un code</strong><p>Utilisez cette option uniquement pour un code reçu précédemment.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>{setError('');setNotice('');setCodeRegistration(true);}}>Créer mon accès avec un code</button></div>
-        <div className="admin-invitation-accept"><strong>Invitation avec un lien</strong><p>Choisissez votre mot de passe grâce au lien reçu, puis renseignez votre e-mail et votre mot de passe ci-dessus. En acceptant, vous disposerez des droits sur tous les magasins.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>login(null,true)}>Accepter mon invitation</button></div>
       </details>}
       <p className="form-footnote"><ShieldCheck size={14}/> L’accès administrateur est protégé par mot de passe.</p>
     </form>

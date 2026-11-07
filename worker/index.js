@@ -758,26 +758,72 @@ export function createWorker(deps={}) {
     }
     return {ok:true,already:false};
   }
-  // L'invitation ne contient ni mot de passe ni lien secret. Elle est privée,
-  // associée à l'empreinte de l'adresse et ne donne aucun droit à elle seule.
+  // L’invitation ne donne aucun droit à elle seule. Les nouvelles invitations
+  // gardent l’adresse dans une collection privée pour pouvoir être annulées ;
+  // les anciennes, qui ne l’enregistraient pas, restent compatibles.
+  async function emailInvitationPath(email) {
+    return `pulseAdminInvitations/${await digestBase64(`admin-invitation:${email}`)}`;
+  }
   async function inviteAdministrator(env,db,actor,body) {
     if(!recentAdminAuthentication(actor))fail(401,'Confirmez à nouveau votre mot de passe administrateur.');
     const email=normalizeAdminEmail(body?.email),requestId=body?.requestId;
-    if(!validAdminEmail(email)||!SAFE_ID.test(requestId||'')||body?.password!==undefined)fail(400,'Adresse ou invitation invalide.');
+    if(!validManualEmail(email)||!SAFE_ID.test(requestId||'')||!noPasswordBody(body))fail(400,'Adresse ou invitation invalide.');
     if(normalizeAdminEmail(actor.email)===email)fail(409,'Cette adresse correspond à votre propre compte administrateur.');
     await limitAuthentication(env,`admin-invite:${actor.sub}`);
-    const path=`pulseAdminInvitations/${await digestBase64(`admin-invitation:${email}`)}`;
+    const path=await emailInvitationPath(email);
     for(let attempt=0;attempt<8;attempt++) {
-      const previous=await db.get(path);
-      if(previous?.data?.requestId===requestId) {
-        if(previous.data.createdBy!==actor.sub)fail(409,'Cette demande appartient à un autre administrateur.');
-        return {ok:true,status:previous.data.status,expiresAt:previous.data.expiresAt};
+      const [previous,checks]=await Promise.all([db.get(path),adminActorChecks(db,env,actor)]);
+      if(previous?.data?.requestId===requestId&&previous.data.createdBy!==actor.sub)
+        fail(409,'Cette demande appartient à un autre administrateur.');
+      if(previous?.data?.status==='accepted') {
+        const uid=previous.data.acceptedBy;
+        const grant=ADMIN_ID.test(uid||'')?await db.get(`pulseAdmins/${uid}`):null;
+        if(grant?.data?.active)return {ok:true,status:'accepted',expiresAt:previous.data.expiresAt};
+        fail(409,'Cet accès a déjà été traité. Aucun droit n’a été modifié.');
       }
-      const now=Date.now(),next={status:'pending',createdBy:actor.sub,requestId,createdAt:now,expiresAt:now+ADMIN_INVITATION_MS};
-      try {await db.commit([db.write(path,next,precondition(previous))]);return {ok:true,status:'pending',expiresAt:next.expiresAt};}
+      if(previous?.data?.requestId===requestId)return {ok:true,status:previous.data.status,expiresAt:previous.data.expiresAt};
+      const now=Date.now(),next={status:'pending',createdBy:actor.sub,requestId,createdAt:now,expiresAt:now+ADMIN_INVITATION_MS,
+        issuerMustBeActive:true,...(body?.showInPanel===true?{email}:{})};
+      try {await db.commit([...checks,db.write(path,next,precondition(previous))]);return {ok:true,status:'pending',expiresAt:next.expiresAt};}
       catch(error){if(!conflict(error))throw error;}
     }
     fail(409,'Invitation modifiée simultanément. Réessayez.');
+  }
+  async function listEmailInvitations(db,after='') {
+    if(after&&!/^[A-Za-z0-9_-]{43}$/.test(after))fail(400,'Curseur d’invitations invalide.');
+    const rows=await db.page('pulseAdminInvitations',{field:'status',op:'EQUAL',value:'pending',limit:51,after});
+    const page=rows.slice(0,50),now=Date.now();
+    return {invitations:page.map(x=>x.data).filter(x=>validManualEmail(normalizeAdminEmail(x.email))&&
+      SAFE_ID.test(x.requestId||'')&&Number.isFinite(x.expiresAt)&&x.expiresAt>now)
+      .map(x=>({email:x.email,requestId:x.requestId,createdAt:x.createdAt,expiresAt:x.expiresAt}))
+      .sort((a,b)=>b.createdAt-a.createdAt),next:rows.length>50?page.at(-1).id:null};
+  }
+  async function cancelEmailInvitation(env,db,actor,body) {
+    const email=normalizeAdminEmail(body?.email),requestId=body?.requestId;
+    if(!noPasswordBody(body)||!validManualEmail(email)||!SAFE_ID.test(requestId||'')||body?.confirmed!==true)
+      fail(400,'Confirmez l’invitation à annuler.');
+    const path=await emailInvitationPath(email);
+    for(let attempt=0;attempt<8;attempt++) {
+      const [invitation,checks]=await Promise.all([db.get(path),adminActorChecks(db,env,actor)]),item=invitation?.data;
+      if(!item||item.requestId!==requestId||item.email!==email)fail(409,'Cette invitation a changé. Actualisez la liste.');
+      if(item.status==='cancelled')return {ok:true,already:true};
+      if(item.status!=='pending')fail(409,'Cette invitation a déjà été utilisée. Aucun accès n’a été retiré.');
+      try {await db.commit([...checks,db.write(path,{...item,status:'cancelled',cancelledAt:Date.now(),cancelledBy:actor.sub},precondition(invitation))]);return {ok:true,already:false};}
+      catch(error){if(!conflict(error))throw error;}
+    }
+    fail(409,'Cette invitation a changé. Actualisez la liste.');
+  }
+  async function invitationIssuerChecks(db,env,invitation) {
+    // Le marqueur est ajouté par le serveur, même avec un ancien client.
+    // Les invitations historiques sans marqueur gardent leur règle d’origine.
+    if(invitation?.data?.issuerMustBeActive!==true)return [];
+    const uid=invitation?.data?.createdBy;
+    if(uid===env.ADMIN_UID)return [];
+    if(!ADMIN_ID.test(uid||''))fail(403,'L’invitation n’est plus valide. Demandez-en une nouvelle.');
+    const path=`pulseAdmins/${uid}`,grant=await db.get(path);
+    if(!grant?.data?.active||(grant.data.source===ADMIN_DIRECT_SOURCE&&grant.data.passwordChangeRequired!==false))
+      fail(403,'L’invitation n’est plus valide. Demandez-en une nouvelle.');
+    return [db.verify(path,precondition(grant))];
   }
   async function acceptAdministratorInvitation(req,env,db,body) {
     if(body?.confirmed!==true)fail(400,'Confirmez explicitement l’acceptation de l’invitation.');
@@ -797,12 +843,12 @@ export function createWorker(deps={}) {
       if(existing)fail(409,'Ce compte administrateur est désactivé.');
       if(!invitation||invitation.data.status!=='pending'||!Number.isFinite(invitation.data.expiresAt)||invitation.data.expiresAt<=Date.now())
         fail(403,'Aucune invitation valide pour cette adresse. Demandez à un administrateur de vous inviter à nouveau.');
+      const issuerChecks=await invitationIssuerChecks(db,env,invitation);
       const now=Date.now(),grant={active:true,createdBy:invitation.data.createdBy,createdAt:new Date(now).toISOString(),requiresVerifiedEmail:true};
       const accepted={...invitation.data,status:'accepted',acceptedBy:user.sub,acceptedAt:now};
       try {
-        // Le contrôle vendeur, l'attribution et la consommation du droit sont
-        // atomiques : une course ou une réponse perdue ne crée pas deux droits.
-        await db.commit([db.verify(accessPath,precondition(access)),db.write(adminPath,grant,{exists:false}),db.write(invitePath,accepted,precondition(invitation))]);
+        // Attribution, consommation et validité de l’invitant sont atomiques.
+        await db.commit([...issuerChecks,db.verify(accessPath,precondition(access)),db.write(adminPath,grant,{exists:false}),db.write(invitePath,accepted,precondition(invitation))]);
         return {ok:true,already:false};
       } catch(error){if(!conflict(error))throw error;}
     }
@@ -1980,7 +2026,9 @@ export function createWorker(deps={}) {
       if(method==='POST'&&path==='/api/admin/enrollment-code/cancel')return cancelAdminCode(env,db,administrator,await readBody(req));
       if(method==='POST'&&path==='/api/admin/direct-account/start')return beginDirectAdministrator(env,db,administrator,await readBody(req));
       if(method==='POST'&&path==='/api/admin/direct-account/complete')return completeDirectAdministrator(env,db,administrator,await readBody(req));
+      if(method==='GET'&&path==='/api/admin/invitations')return listEmailInvitations(db,url.searchParams.get('after')||'');
       if(method==='POST'&&path==='/api/admin/invitations')return inviteAdministrator(env,db,administrator,await readBody(req));
+      if(method==='POST'&&path==='/api/admin/invitations/cancel')return cancelEmailInvitation(env,db,administrator,await readBody(req));
       if(method==='POST'&&path==='/api/admin/administrators')return grantAdministrator(env,db,administrator,await readBody(req));
       if(method==='GET'&&path==='/api/admin/all'){const d=(await catalog(db)).data;return {sellers:d.sellers,services:d.services,serviceOrders:d.serviceOrders||{},serviceRemovalsByStore:d.serviceRemovalsByStore||{},departmentsByStore:d.departmentsByStore||{},directorySync:d.directorySync||null};}
       if(method==='POST'&&path==='/api/admin/stores/sync')return refreshDirectory(db);
