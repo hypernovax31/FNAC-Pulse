@@ -2,8 +2,6 @@ import React,{useEffect,useRef,useState} from 'react';
 import {LockKeyhole,LogOut,RefreshCw,Send,ShieldCheck,UserRoundPlus} from 'lucide-react';
 import {api,uid} from './api';
 import {ADMIN_SESSION,adminAccountEmail,changeAdminPassword,inviteAdministrator} from './cloud';
-import {AdminTestCleanup} from './AdminTestCleanup';
-import {LegacyAdminRequests} from './LegacyAdminRequests';
 
 const normalEmail=value=>String(value||'').trim().toLowerCase();
 const validEmail=value=>value.length<=254&&/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(value);
@@ -99,7 +97,6 @@ export function AdminAccounts({onLogout,onBusy}) {
       <div className="admin-request-list">{invitations.map(item=><div className="admin-request" key={item.requestId}><div className="admin-request-copy"><strong>{item.email}</strong><span>En attente{dateLabel(item.expiresAt)?` · jusqu’au ${dateLabel(item.expiresAt)}`:''}</span></div><div className="admin-request-actions"><button type="button" className="admin-request-review" disabled={busy} onClick={()=>prepare(null,item.email)}>Renvoyer</button><button type="button" className="admin-request-cancel" disabled={busy} onClick={()=>cancel(item)}>Annuler</button></div></div>)}</div>
       {next&&<button type="button" className="outline-button admin-requests-more" disabled={busy||loadingMore} onClick={()=>loadInvitations(next)}>{loadingMore?'Chargement…':'Charger la suite'}</button>}
     </section>}
-    <details className="admin-legacy-invitations admin-legacy-requests"><summary>Demandes précédentes sans e-mail</summary><LegacyAdminRequests disabled={busy} onBusy={value=>{setBusy(value);onBusy?.(value);}}/></details>
     <section className="admin-account-section admin-account-security">
       <div className="admin-account-heading"><LockKeyhole size={19}/><div><h3>Mon mot de passe</h3><p>Modifiez votre mot de passe personnel.</p></div></div>
       {!passwordOpen?<button type="button" className="outline-button" disabled={busy} onClick={()=>setPasswordOpen(true)}>Modifier mon mot de passe</button>:<form onSubmit={changePassword} className="admin-account-password-form">
@@ -109,7 +106,6 @@ export function AdminAccounts({onLogout,onBusy}) {
         <div><button type="button" className="outline-button" disabled={busy} onClick={()=>{setPasswordOpen(false);setCurrent('');setNextPassword('');setConfirmPassword('');}}>Annuler</button><button type="submit" className="primary-button" disabled={busy}>Enregistrer</button></div>
       </form>}
     </section>
-    <AdminTestCleanup disabled={busy} onBusy={value=>{setBusy(value);onBusy?.(value);}}/>
     <button type="button" className="outline-button admin-account-logout" disabled={busy} onClick={onLogout}><LogOut size={16}/> Se déconnecter</button>
   </div>;
 }

@@ -35,7 +35,7 @@ async function load(entry){
   const out=await build({entryPoints:[entry],bundle:true,platform:'node',format:'cjs',write:false,external:['react','lucide-react'],plugins:[plugin],logLevel:'silent'});
   const mod={exports:{}};new Function('module','exports','require',out.outputFiles[0].text)(mod,mod.exports,require);return mod.exports;
 }
-const {AdminAccounts}=await load('src/AdminAccounts.jsx'),{AdminFirstPassword}=await load('src/AdminFirstPassword.jsx'),{AdminCodeRegistration}=await load('src/AdminCodeRegistration.jsx'),{AdminInvitationHelp}=await load('src/AdminInvitationHelp.jsx'),{DirectoryImport}=await load('src/DirectoryImport.jsx'),{AdminTabs}=await load('src/AdminTabs.jsx');
+const {AdminAccounts}=await load('src/AdminAccounts.jsx'),{AdminTestCleanup}=await load('src/AdminTestCleanup.jsx'),{LegacyAdminRequests}=await load('src/LegacyAdminRequests.jsx'),{AdminFirstPassword}=await load('src/AdminFirstPassword.jsx'),{AdminCodeRegistration}=await load('src/AdminCodeRegistration.jsx'),{AdminInvitationHelp}=await load('src/AdminInvitationHelp.jsx'),{DirectoryImport}=await load('src/DirectoryImport.jsx'),{AdminTabs}=await load('src/AdminTabs.jsx');
 const text=node=>typeof node==='string'||typeof node==='number'?String(node):!node?'':Array.isArray(node)?node.map(text).join(''):text(node.children);
 const form=(tree,id)=>tree.root.findByProps({'aria-labelledby':id}).findAllByType('form')[0];
 const change=async(input,value)=>act(async()=>{input.props.onChange({target:{value}});await tick();});
@@ -79,14 +79,12 @@ test('Administration : ordre exact des onglets et accès clavier',async()=>{
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
-test('Administrateur : invitation par adresse, droits globaux, annulation et ancienne demande conservée',async()=>{
-  const e=setup(),busy=[],requests=[{email:'ancien@example.test',requestId:'legacy-request-001',status:'pending',claimantUid:'old-uid'}],invitations=[];let tree,loggedOut=0;
+test('Administrateur : panneau épuré, invitation par adresse, droits globaux et annulation',async()=>{
+  const e=setup(),busy=[],invitations=[];let tree,loggedOut=0;
   globalThis.__adminTest.api=async(path,options={})=>{
     e.calls.push(['api',path,options]);
-    if(path==='/api/admin/access-requests')return {requests:structuredClone(requests)};
     if(path==='/api/admin/invitations'&&!options.method)return {invitations:structuredClone(invitations)};
     if(path==='/api/admin/invitations/cancel'){invitations.splice(0);return {ok:true};}
-    if(path.endsWith('/approve')){requests.splice(0);return {ok:true};}
     return {ok:true};
   };
   globalThis.__adminTest.invite=async(_api,body)=>{e.calls.push(['invite',body]);invitations.push({...body,expiresAt:Date.now()+86400000});return {alreadyAccepted:false};};
@@ -94,7 +92,8 @@ test('Administrateur : invitation par adresse, droits globaux, annulation et anc
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onBusy:x=>busy.push(x),onLogout:()=>loggedOut++}));await tick();});
     assert.match(text(tree.toJSON()),/responsable@example\.test/);assert.match(text(tree.toJSON()),/recevra un e-mail/);
-    assert.doesNotMatch(text(tree.toJSON()),/Modifier mon e-mail|mot de passe provisoire/);
+    assert.doesNotMatch(text(tree.toJSON()),/Modifier mon e-mail|mot de passe provisoire|Demandes précédentes sans e-mail|Supprimer le compte de test précédent/);
+    assert(!e.calls.some(x=>typeof x[1]==='string'&&(/\/access-requests|\/old-test\//).test(x[1])),'aucun chargement ni nettoyage des anciennes données');
     const invite=()=>form(tree,'admin-invite-title');assert.equal(invite().findAllByType('input').length,1);
     await change(invite().findByType('input'),' NOUVEAU@example.test ');await submit(invite());
     assert.equal(e.calls.filter(x=>x[0]==='invite').length,0,'une confirmation précède l’envoi');
@@ -109,13 +108,6 @@ test('Administrateur : invitation par adresse, droits globaux, annulation et anc
     e.allow=true;await act(async()=>{pending.findAllByType('button').find(x=>text(x)==='Annuler').props.onClick();await tick();await tick();});
     const cancel=e.calls.find(x=>x[1]==='/api/admin/invitations/cancel');
     assert.deepEqual(cancel[2].body,{email:'nouveau@example.test',requestId:'invitation-test-request-01',confirmed:true});assert.match(e.confirms.at(-1),/aucun compte ne sera supprimé/);
-    await act(async()=>button('Vérifier').props.onClick());
-    assert.match(text(tree.toJSON()),/identité par un autre moyen/);assert.match(text(tree.toJSON()),/adresse n’est pas vérifiée automatiquement/);
-    assert.equal(button('Valider l’accès').props.disabled,true);assert(!e.calls.some(x=>x[1]?.endsWith?.('/approve')));
-    const checkbox=tree.root.findAllByType('input').find(x=>x.props.type==='checkbox');await act(async()=>checkbox.props.onChange({target:{checked:true}}));
-    await act(async()=>{button('Valider l’accès').props.onClick();await tick();await tick();});
-    const approval=e.calls.find(x=>x[1]?.endsWith?.('/approve'));
-    assert.deepEqual(approval[2].body,{email:'ancien@example.test',requestId:'legacy-request-001',claimantUid:'old-uid',confirmed:true,identityVerified:true});assert.match(text(tree.toJSON()),/Accès validé/);
     await act(async()=>button('Modifier mon mot de passe').props.onClick());
     const pw=()=>tree.root.findByProps({className:'admin-account-password-form'}),fields=()=>pw().findAllByType('input');
     await change(fields()[0],'Ancien-password-2026!');await change(fields()[1],'Nouveau-password-2026!');await change(fields()[2],'incorrect');await submit(pw());
@@ -123,7 +115,28 @@ test('Administrateur : invitation par adresse, droits globaux, annulation et anc
     await change(fields()[2],'Nouveau-password-2026!');await submit(pw());
     assert.deepEqual(e.calls.find(x=>x[0]==='password').slice(1),['Ancien-password-2026!','Nouveau-password-2026!']);
     await act(async()=>button('Se déconnecter').props.onClick());assert.equal(loggedOut,1);
-    assert.equal(busy.filter(Boolean).length,5);assert.equal(busy.filter(x=>!x).length,5);
+    assert.equal(busy.filter(Boolean).length,4);assert.equal(busy.filter(x=>!x).length,4);
+  } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
+});
+
+test('Compatibilité hors panneau : une ancienne demande ne change de droit qu’après validation explicite',async()=>{
+  const e=setup(),requests=[{email:'ancien@example.test',requestId:'legacy-request-001',status:'pending',claimantUid:'old-uid'}];let tree;
+  globalThis.__adminTest.api=async(path,options={})=>{
+    e.calls.push(['api',path,options]);
+    if(path==='/api/admin/access-requests')return {requests:structuredClone(requests)};
+    if(path.endsWith('/approve')){requests.splice(0);return {ok:true};}
+    throw Error('unexpected '+path);
+  };
+  const button=caption=>tree.root.findAllByType('button').find(x=>text(x).includes(caption));
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(LegacyAdminRequests,{}));await tick();});
+    await act(async()=>button('Vérifier').props.onClick());
+    assert.match(text(tree.toJSON()),/identité par un autre moyen/);assert.match(text(tree.toJSON()),/adresse n’est pas vérifiée automatiquement/);
+    assert.equal(button('Valider l’accès').props.disabled,true);assert(!e.calls.some(x=>x[1]?.endsWith?.('/approve')));
+    const checkbox=tree.root.findAllByType('input').find(x=>x.props.type==='checkbox');await act(async()=>checkbox.props.onChange({target:{checked:true}}));
+    await act(async()=>{button('Valider l’accès').props.onClick();await tick();await tick();});
+    assert.deepEqual(e.calls.find(x=>x[1]?.endsWith?.('/approve'))[2].body,{email:'ancien@example.test',requestId:'legacy-request-001',claimantUid:'old-uid',confirmed:true,identityVerified:true});
+    assert.match(text(tree.toJSON()),/Accès validé/);
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
@@ -148,7 +161,7 @@ test('Administrateur : réauthentification seulement si nécessaire et reprise a
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
-test('Nettoyage du test : recherche privée, retrait ciblé puis suppression Firebase séparée et confirmée',async()=>{
+test('Compatibilité hors panneau : nettoyage du test strictement ciblé et confirmé',async()=>{
   const e=setup(),busy=[];let tree,deleteCalls=0;
   globalThis.__adminTest.api=async(path,options={})=>{e.calls.push(['api',path,options]);
     if(path==='/api/admin/access-requests')return {requests:[]};
@@ -160,7 +173,7 @@ test('Nettoyage du test : recherche privée, retrait ciblé puis suppression Fir
   globalThis.__adminTest.deleteTest=async(_api,details)=>{deleteCalls++;e.calls.push(['deleteTest',details]);};
   const button=caption=>tree.root.findAllByType('button').find(x=>text(x).includes(caption));
   try {
-    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onBusy:x=>busy.push(x),onLogout(){}}));await tick();});
+    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminTestCleanup,{onBusy:x=>busy.push(x)}));await tick();});
     const details=tree.root.findByProps({className:'admin-test-cleanup'}),lookup=details.findAllByType('form')[0];
     await change(lookup.findByType('input'),'TEST@example.test');await submit(lookup);
     assert.match(text(details),/test@example\.test/);assert.match(text(details),/test-uid-001/);
@@ -302,7 +315,7 @@ test('Invitation : confirmation d’adresse bloquée vérifiée puis confirmée 
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 
-test('Administrateur : les demandes suivantes restent accessibles et l’actualisation revient à la première page',async()=>{
+test('Compatibilité hors panneau : pagination et actualisation des anciennes demandes',async()=>{
   const e=setup();let tree;
   globalThis.__adminTest.api=async(path)=>{
     e.calls.push(['api',path]);
@@ -313,7 +326,7 @@ test('Administrateur : les demandes suivantes restent accessibles et l’actuali
   };
   const button=caption=>tree.root.findAllByType('button').find(x=>text(x).includes(caption));
   try {
-    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onLogout(){}}));await tick();});
+    await act(async()=>{tree=TestRenderer.create(React.createElement(LegacyAdminRequests,{}));await tick();});
     assert.match(text(tree.toJSON()),/premier@example\.test/);assert(button('Charger la suite'));
     await act(async()=>{button('Charger la suite').props.onClick();await tick();});
     assert.match(text(tree.toJSON()),/premier@example\.test/);assert.match(text(tree.toJSON()),/suivant@example\.test/);assert(!button('Charger la suite'));

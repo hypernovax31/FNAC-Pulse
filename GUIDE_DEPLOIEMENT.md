@@ -6,9 +6,13 @@ Ce guide configure **GitHub Pages + Firebase Spark + Cloudflare Workers/Queues F
 >
 > Ne partagez jamais ici ou dans Git de mot de passe, PIN, fichier JSON de compte de service, clé privée VAPID, `PIN_PEPPER` ou jeton d'accès. La configuration Web Firebase, l'URL Worker et la **clé VAPID publique** ne sont pas des secrets. Les règles Firestore et les contrôles du Worker, et non la confidentialité de la configuration Web, protègent les données.
 
+## Mise à jour : panneau administrateur épuré
+
+Cette modification concerne **Pages uniquement** : elle retire deux encarts de l’interface sans supprimer les anciennes demandes, comptes ou droits. Le Worker existant et la configuration Firebase restent inchangés. Publier Pages par son workflow manuel, puis fermer et rouvrir la PWA en ligne pour charger le cache v51.
+
 ## Mise à jour : invitations administrateur par e-mail et journée unique
 
-Déployer d’abord le **Worker** complet, sans modifier ses secrets, sa Queue ni les règles Firebase, puis publier Pages par son workflow manuel. Fermer puis rouvrir la PWA en ligne pour charger le cache v50. Le déploiement ne crée ni ne supprime de compte et ne modifie aucune vente, aucun objectif ou session existante. Les anciennes demandes et invitations restent compatibles.
+Déployer d’abord le **Worker** complet, sans modifier ses secrets, sa Queue ni les règles Firebase, puis publier Pages par son workflow manuel. Fermer puis rouvrir la PWA en ligne pour charger le cache courant. Le déploiement ne crée ni ne supprime de compte et ne modifie aucune vente, aucun objectif ou session existante. Les anciennes demandes et invitations restent compatibles.
 
 Dans **Administration → Ventes**, choisir un vendeur et **une seule journée** : les actions **Ajouter** ou **Retirer** portent sur cette date et demandent confirmation. Les nouveaux ajouts ou retraits sur une semaine ou un mois sont refusés côté serveur ; les lectures et les rejouements déjà enregistrés restent compatibles. Le reset global est distinct. Les objectifs, le catalogue, les autres ventes et magasins sont conservés.
 
@@ -16,7 +20,7 @@ Dans **Administration → Administrateur**, saisir l’adresse, toucher **Contin
 
 L’URL d’action Firebase enregistrée est `https://hypernovax31.github.io/FNAC-Pulse/`. Un test réel de récupération de mot de passe a réussi ; il ne prouve pas encore le parcours complet d’invitation. La réussite de la demande d’envoi ne garantit pas la réception : vérifier les indésirables et les quotas Firebase. Les tests automatisés et émulateurs utilisent des données fictives. Le test réel de la nouvelle invitation doit être effectué uniquement avec une adresse que son titulaire saisit lui-même et dont l’utilisation a été autorisée.
 
-Les demandes précédentes sans e-mail restent disponibles dans **Demandes précédentes sans e-mail**, avec leur validation manuelle. Pour l’ancien compte de test uniquement, utiliser **Supprimer le compte de test précédent** et saisir son adresse dans l’application. Après vérification de l’identifiant et retrait des droits, supprimer le compte avec son propre mot de passe ; à défaut, utiliser Firebase Console → Authentication → Users et vérifier l’adresse et l’UID avant de supprimer ce seul compte. La suppression Auth et le retrait des droits ne sont pas atomiques ; une suppression manuelle ne peut pas être confirmée par l’application.
+Les encarts des anciennes demandes sans e-mail et du compte de test ne sont plus affichés. Leurs données et les routes compatibles restent conservées ; aucune suppression n’est lancée. Les demandes manuelles en attente ne peuvent plus être approuvées depuis le panneau actuel : une nouvelle invitation e-mail peut être envoyée à la personne concernée. Un éventuel nettoyage du seul compte de test exige une identification certaine de l’adresse et de l’UID et un retrait ciblé des droits ; la suppression Auth et le retrait des droits ne sont pas atomiques.
 
 ## Historique : code administrateur à transmettre en privé
 

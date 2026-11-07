@@ -2426,3 +2426,25 @@ test('Invitations e-mail : révoquer l’émetteur pendant la création ou l’a
   db.commit=original;
   assert.equal((await req('/api/admin/invitations/cancel',{email:invite.email,requestId:invite.requestId,confirmed:true},'root')).status,200,'un autre administrateur actif peut annuler');
 });
+
+test('Ancienne demande en attente : une nouvelle invitation vérifiée peut aboutir sans effacer la demande',async()=>{
+  const db=new MemoryDb(),now=Math.floor(Date.now()/1000),identities=new Map([
+    ['root',{sub:'root',email:'root@example.test',auth_time:now,firebase:{sign_in_provider:'password'}}],
+    ['candidate',{sub:'legacy-candidate',email:'legacy@example.test',email_verified:false,auth_time:now,firebase:{sign_in_provider:'password'}}],
+  ]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!identities.has(t))throw Error('invalid');return identities.get(t);}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'root',PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  const req=async(path,body,token)=>{const response=await worker.fetch(new Request(`https://worker.test${path}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)}),env,ctx);return {status:response.status,body:await response.json()};};
+  assert.equal((await req('/api/admin/access-requests',{email:'legacy@example.test'},'root')).status,200);
+  assert.equal((await req('/api/auth/admin-access/claim',{},'candidate')).body.status,'pending');
+  const manualPath=`pulseAdminAccessRequests/${await digestBase64('manual-admin-request:legacy@example.test')}`;
+  const before=await db.get(manualPath);
+  assert.equal((await req('/api/admin/invitations',{email:'legacy@example.test',requestId:'replacement-email-request-01',showInPanel:true},'root')).status,200);
+  assert.equal((await req('/api/auth/admin-invitations/accept',{confirmed:true},'candidate')).status,403);
+  assert.equal(await db.get('pulseAdmins/legacy-candidate'),null);
+  identities.set('candidate',{...identities.get('candidate'),email_verified:true});
+  assert.equal((await req('/api/auth/admin-invitations/accept',{confirmed:true},'candidate')).status,200);
+  assert.equal((await db.get('pulseAdmins/legacy-candidate')).data.active,true);
+  assert.deepEqual(await db.get(manualPath),before,'la demande historique n’est ni modifiée ni supprimée');
+  assert.equal((await req('/api/auth/admin-account-status',{},'candidate')).status,200);
+});
