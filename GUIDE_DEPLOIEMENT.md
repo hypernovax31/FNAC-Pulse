@@ -319,6 +319,14 @@ FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 node --test tests/firebase-emulator.test.
 
 Le test **efface les documents du projet fictif `demo-fnac` dans l'émulateur**. Ne modifiez pas cette commande pour viser une base réelle. Les refus `PERMISSION_DENIED` affichés pendant ce test sont attendus : ils vérifient les règles. Le test ne valide ni le vrai compte de service ni FCM.
 
+Pour vérifier aussi la compatibilité de la lecture d’un compte invité avec le runtime Cloudflare réel, sans toucher aux comptes Firebase ni à la base :
+
+```bash
+npx --yes --package=node@22 --package=wrangler@4.119.0 -c 'FNAC_MINIFLARE_PATH="$(dirname "$(dirname "$(command -v wrangler)")")/miniflare" node qa/workerd-activation.mjs'
+```
+
+Le test utilise uniquement des identités fictives et intercepte toutes les requêtes sortantes. Il vérifie notamment que les redirections ne sont pas suivies. Le runtime Workers refuse `redirect: 'error'` ; la lecture Firebase utilise donc `manual` et rejette toute réponse non réussie.
+
 ## Références
 
 - [Tarifs Firebase](https://firebase.google.com/pricing/) et [quotas Firestore](https://firebase.google.com/docs/firestore/quotas)

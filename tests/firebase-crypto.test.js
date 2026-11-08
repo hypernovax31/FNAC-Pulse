@@ -86,11 +86,21 @@ test('Firebase : lecture du compte avec le seul jeton personnel, réponse filtr�
     assert(!JSON.stringify(result).includes('never-return'));
     const request=requests[0];assert.match(request.url,/^https:\/\/identitytoolkit\.googleapis\.com\/v1\/accounts:lookup\?key=/);
     assert.deepEqual(JSON.parse(request.options.body),{idToken:'fake-id-token'});assert.equal(request.options.headers.referer,env.APP_URL);
-    assert.equal(request.options.redirect,'error');assert.equal(request.options.cache,'no-store');
+    // « error » n'est pas implémenté dans Cloudflare Workers ; « manual »
+    // conserve le refus des redirections sans exposer le jeton à leur cible.
+    assert.equal(request.options.redirect,'manual');assert.equal(request.options.cache,'no-store');
     await assert.rejects(lookupFirebaseAccount({...env,FIREBASE_PROJECT_ID:'autre-projet'},'fake-id-token'));
     answer={users:[]};await assert.rejects(lookupFirebaseAccount(env,'fake-id-token'));
     answer={users:[{},{}]};await assert.rejects(lookupFirebaseAccount(env,'fake-id-token'));
     globalThis.fetch=async()=>Response.json({error:{message:'private'}},{status:403});
     await assert.rejects(lookupFirebaseAccount(env,'fake-id-token'),e=>!e.message.includes('private'));
+    for(const status of [301,302,303,304,307,308]) {
+      let calls=0;
+      globalThis.fetch=async(_url,options)=>{calls++;assert.equal(options.redirect,'manual');return new Response(null,{status,headers:{location:'https://redirect-target.invalid/'}});};
+      await assert.rejects(lookupFirebaseAccount(env,'fake-id-token'),e=>!e.message.includes('fake-id-token'));
+      assert.equal(calls,1,'Une redirection ne doit jamais être suivie.');
+    }
+    globalThis.fetch=async()=>({ok:true,redirected:true,json:async()=>answer});
+    await assert.rejects(lookupFirebaseAccount(env,'fake-id-token'));
   } finally {globalThis.fetch=old;}
 });
