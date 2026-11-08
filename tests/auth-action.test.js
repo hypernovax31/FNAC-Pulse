@@ -32,6 +32,18 @@ test('Action e-mail : configuration publique synchronisée et liens du projet un
   assert.equal(parseActionLink(app+'&continueUrl='+encodeURIComponent('https://hypernovax31.github.io/FNAC-Pulse/?suite=1')).continueUrl,'https://hypernovax31.github.io/FNAC-Pulse/?suite=1');
 });
 
+test('Action e-mail : enveloppes Hosting du projet uniquement, sans redirection externe',()=>{
+  const link=old.replace('mode=resetPassword','mode=signIn');
+  const wrapper=`https://${ACTION_PROJECT.authDomain}/__/auth/links?link=${encodeURIComponent(link)}`;
+  const forwarded=`https://hypernovax31.github.io/FNAC-Pulse/?link=${encodeURIComponent(link)}`;
+  assert.equal(parseActionLink(wrapper).code,code);assert.equal(parseActionLink(forwarded).mode,'signIn');
+  const bad=[wrapper.replace(ACTION_PROJECT.authDomain,'ailleurs.test'),
+    wrapper.replace(encodeURIComponent(link),encodeURIComponent(link.replace(ACTION_PROJECT.authDomain,'ailleurs.test'))),
+    wrapper+'&link='+encodeURIComponent(link),wrapper+'&oobCode=AUTRECODE',wrapper+'&tenantId=autre',
+    `https://${ACTION_PROJECT.authDomain}/__/auth/links?link=${encodeURIComponent(wrapper.replace(ACTION_PROJECT.authDomain,'ailleurs.test'))}`];
+  for(const value of bad)assert.throws(()=>parseActionLink(value),e=>e.code==='INVALID_LINK'&&!e.message.includes(code));
+});
+
 test('Action e-mail : vérification et changement vont uniquement à Firebase et nécessitent le bon type',async()=>{
   const calls=[];const mock=async(url,opts)=>{calls.push({url,opts,body:JSON.parse(opts.body)});return response({email:'invite@example.test',requestType:'PASSWORD_RESET'});};
   const action=parseActionLink(app.replace(`&apiKey=${key}`,'')),proof=await inspectAction(action,{fetchImpl:mock});
@@ -96,6 +108,8 @@ test('La page supprime le code de l’historique avant le module et ouvre l’ad
   };
   const direct=run(app);assert.equal(direct.window.__fnacEmailActionMode,true);assert.equal(direct.window.__fnacEmailActionLink,app);
   assert.equal(direct.replaced[0][2],'/FNAC-Pulse/');assert(direct.added.some(x=>x.src?.includes('auth-action-v1.js')));
+  const nestedHref=`https://hypernovax31.github.io/FNAC-Pulse/?link=${encodeURIComponent(old)}`;
+  const nested=run(nestedHref);assert.equal(nested.window.__fnacEmailActionLink,nestedHref);assert.equal(nested.replaced[0][2],'/FNAC-Pulse/');
   const helper=run('https://hypernovax31.github.io/FNAC-Pulse/?aide-invitation=1');assert.equal(helper.window.__fnacEmailActionLink,'');
   const login=run('https://hypernovax31.github.io/FNAC-Pulse/?administration=invitation&source=mail');
   assert.equal(login.window.__fnacOpenAdminInvitation,true);assert.equal(login.replaced[0][2],'/FNAC-Pulse/?source=mail');
@@ -103,4 +117,34 @@ test('La page supprime le code de l’historique avant le module et ouvre l’ad
   const cloud=fs.readFileSync(new URL('../src/cloud.js',import.meta.url),'utf8');
   assert.match(cloud,/emailActionMode\?null:initializeApp\(firebaseConfig\)/);
   assert.match(cloud,/emailActionMode\?null:initializeApp\(firebaseConfig,'fnac-pulse-admin'\)/);
+});
+
+test('Activation : le code et les mots de passe vont à Firebase ; seul le jeton va au Worker configuré',async()=>{
+  const {signInActivation,createActivationPassword,confirmActivationPassword,acceptActivation}=await import('../public/auth-action-v1.js');
+  const calls=[],mail='invite@example.test',pwd='MotDePasse-Fictif-2026!',token='jeton-fictif';
+  const firebase=async(url,options)=>{
+    calls.push({url,options,body:JSON.parse(options.body)});
+    const path=new URL(url).pathname;
+    if(path.endsWith(':signInWithEmailLink'))return response({idToken:token,localId:'uid-fictif',email:mail,isNewUser:true});
+    if(path.endsWith(':update'))return response({idToken:token,localId:'uid-fictif'});
+    if(path.endsWith(':signInWithPassword'))return response({idToken:token,localId:'uid-fictif',email:mail});
+    throw Error('route imprévue');
+  };
+  const action={mode:'signIn',code};
+  const proof=await signInActivation(action,` ${mail.toUpperCase()} `,{fetchImpl:firebase});assert.equal(proof.isNewUser,true);
+  await createActivationPassword(proof.idToken,pwd,{fetchImpl:firebase});
+  const reauthenticated=await confirmActivationPassword(mail,pwd,{fetchImpl:firebase});assert.equal(reauthenticated.localId,proof.localId);
+  assert.deepEqual(calls.map(x=>new URL(x.url).pathname),['/v1/accounts:signInWithEmailLink','/v1/accounts:update','/v1/accounts:signInWithPassword']);
+  assert(calls.every(x=>new URL(x.url).origin==='https://identitytoolkit.googleapis.com'&&x.options.credentials==='omit'));
+  let workerCall;
+  await acceptActivation(reauthenticated.idToken,'https://worker.example.test',{fetchImpl:async(url,options)=>{workerCall={url,options};return response({ok:true});}});
+  assert.equal(workerCall.url,'https://worker.example.test/api/auth/admin-invitations/accept');assert.deepEqual(JSON.parse(workerCall.options.body),{confirmed:true});
+  assert.equal(workerCall.options.headers.Authorization,`Bearer ${token}`);assert(!JSON.stringify(workerCall.options).includes(pwd));assert(!JSON.stringify(workerCall.options).includes(code));
+  assert.equal(workerCall.options.redirect,'error');assert.equal(workerCall.options.credentials,'omit');
+  await assert.rejects(acceptActivation(token,'http://worker.example.test',{fetchImpl:firebase}),e=>e.code==='WORKER_CONFIG');
+  await assert.rejects(acceptActivation(token,'https://attacker.example.test/path?token=vol',{fetchImpl:firebase}),e=>e.code==='WORKER_CONFIG');
+  await assert.rejects(createActivationPassword(token,'court',{fetchImpl:firebase}),e=>e.code==='WEAK_PASSWORD');
+  await assert.rejects(signInActivation({...action,mode:'resetPassword'},mail,{fetchImpl:firebase}),e=>e.code==='INVALID_LINK');
+  await assert.rejects(acceptActivation(token,'https://worker.example.test',{fetchImpl:async()=>response({},403)}),e=>e.code==='INVITATION_INACTIVE'&&!e.message.includes(token));
+  await assert.rejects(acceptActivation(token,'https://worker.example.test',{fetchImpl:async()=>response({},503)}),e=>e.code==='WORKER_UNAVAILABLE');
 });

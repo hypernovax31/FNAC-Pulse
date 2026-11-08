@@ -1,12 +1,12 @@
 /* Fnac Pulse: app shell and Web Push. Works at a domain root or under /FNAC-Pulse/.
    The backend remains necessary; sales are never queued offline. */
-const CACHE = 'fnac-pulse-shell-v51';
+const CACHE = 'fnac-pulse-shell-v52';
 const APP_URL = new URL(self.registration.scope);
 const APP_PATH = APP_URL.pathname;
 const appAsset = path => new URL(path, APP_URL).pathname;
 const SHELL = ['', 'manifest.webmanifest', 'icons/icon-192-v3.png', 'icons/icon-512-v3.png', 'icons/icon-maskable-512-v3.png', 'icons/apple-touch-icon-v3.png', 'icons/icon-192.png', 'fnac.svg', 'FNAC - SIGNATURE.mp3'].map(appAsset);
 // La requête versionnée contourne aussi le cache v43 encore installé.
-SHELL.splice(1, 0, `${appAsset('auth-action-v1.js')}?v=3`);
+SHELL.splice(1, 0, `${appAsset('auth-action-v1.js')}?v=4`);
 
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
@@ -37,7 +37,7 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET' || url.origin !== APP_URL.origin || !url.pathname.startsWith(APP_PATH) || url.pathname.startsWith(appAsset('api/'))) return;
   // Ne jamais mettre en cache l'URL d'un lien secret. Hors ligne, la copie
   // générique de la page peut toutefois afficher une erreur explicite.
-  if (request.mode === 'navigate' && url.searchParams.has('oobCode')) {
+  if (request.mode === 'navigate' && (url.searchParams.has('oobCode') || url.searchParams.has('link'))) {
     event.respondWith(fetch(request, {cache:'no-store'}).catch(() => caches.open(CACHE).then(cache => cache.match(APP_PATH))));
     return;
   }

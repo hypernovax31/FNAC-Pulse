@@ -172,6 +172,9 @@ export default function Admin({onClose,data,session,onChanged}) {
               try {await accept();}catch(e){if(e?.status&&e.status<500&&e.status!==408)throw e;await accept();}
               accepted=true;
             } catch(e){
+              // Une invitation e-mail valide doit être confirmée, même si une
+              // ancienne demande manuelle existe pour la même adresse.
+              if(e?.status===403&&/Confirmez d’abord l’adresse e-mail du compte invité/.test(e.message))throw e;
               if(e?.status===403)inviteError=e;
               else if(!e?.status||e.status>=500)throw new Error('Accès non confirmé. Reconnectez-vous avec les mêmes identifiants.');
               else throw e;
@@ -333,7 +336,7 @@ export default function Admin({onClose,data,session,onChanged}) {
         catch(e){setError(e.message);}finally{setBusy(false);}
       }}>Renvoyer le lien de confirmation</button>}
       <button className="primary-button full-button" type="submit" disabled={busy}>{busy?'Connexion…':'Se connecter'} <ArrowRight size={16}/></button>
-      {CLOUD&&<p className="admin-login-hint">Vous avez reçu une invitation ? Choisissez votre mot de passe depuis l’e-mail, puis connectez-vous ici.</p>}
+      {CLOUD&&<p className="admin-login-hint">Vous avez reçu une invitation ? Créez votre mot de passe depuis le lien ou connectez-vous ici avec votre mot de passe habituel.</p>}
       {CLOUD&&<details className="admin-legacy-invitations"><summary>Anciennes demandes</summary>
         <div className="admin-invitation-accept"><strong>Demande sans e-mail</strong><p>Pour une adresse ajoutée avant cette mise à jour.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>{setError('');setNotice('');setManualRegistration(true);}}>Première connexion · Créer mon compte</button></div>
         <div className="admin-invitation-accept"><strong>Invitation avec un code</strong><p>Utilisez cette option uniquement pour un code reçu précédemment.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>{setError('');setNotice('');setCodeRegistration(true);}}>Créer mon accès avec un code</button></div>

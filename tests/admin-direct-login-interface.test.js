@@ -13,7 +13,7 @@ const out=await build({entryPoints:['src/Admin.jsx'],bundle:true,platform:'node'
   b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`
     export const claimAdminAccess=(...x)=>globalThis.__directLogin?.claim?.(...x),registerAdminForApproval=(...x)=>globalThis.__directLogin?.manualRegister?.(...x),deleteTestFirebaseAccount=()=>{}; export const CLOUD=true,ADMIN_SESSION='admin-session';
     export const adminLogin=(...x)=>globalThis.__directLogin.login(...x),adminLogout=()=>globalThis.__directLogin.logout(),changeAdminPassword=(...x)=>globalThis.__directLogin.change(...x);
-    export const adminAccountEmail=async()=>"nouveau@example.test",createDirectAdministrator=()=>{},inviteAdministrator=()=>{},resendAdminVerification=()=>{};
+    export const adminAccountEmail=async()=>"nouveau@example.test",createDirectAdministrator=()=>{},inviteAdministrator=()=>{},resendAdminVerification=(...x)=>globalThis.__directLogin?.resend?.(...x);
     export const createAdminEnrollmentCode=()=>{},cancelAdminEnrollmentCode=()=>{},registerAdminWithCode=(...x)=>globalThis.__directLogin.register?.(...x),changeFirstCodeAdminPassword=(...x)=>globalThis.__directLogin.codeChange?.(...x);
     export const requestAdminPasswordReset=()=>{},inspectAdminPasswordReset=()=>{},confirmAdminPasswordReset=()=>{},inspectAdminVerification=()=>{},confirmAdminVerification=()=>{};
   `,loader:'js'}));
@@ -166,7 +166,7 @@ test('Invitation par e-mail : connexion automatique après vérification, même 
   });
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
-    assert.match(text(tree.toJSON()),/choisissez votre mot de passe depuis l’e-mail/i);
+    assert.match(text(tree.toJSON()),/Créez votre mot de passe depuis le lien ou connectez-vous ici avec votre mot de passe habituel/i);
     assert.doesNotMatch(text(tree.toJSON()),/Accepter mon invitation/);
     await set(tree.root.findByProps({id:'admin-email'}),'invite@example.test');await set(tree.root.findByProps({id:'admin-password'}),'Mot-de-passe-personnel-2026');
     await act(async()=>{tree.root.findAllByType('form')[0].props.onSubmit({preventDefault(){}});await tick();await tick();});
@@ -183,7 +183,8 @@ test('Invitation par e-mail : une adresse non vérifiée ne reçoit aucun accès
   put('sessionStorage',{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)});
   put('__directLogin',{
     async login(){return 'admin-session';},async logout(){calls.push('logout');},async change(){},
-    async claim(){throw Object.assign(Error('Aucune demande précédente.'),{status:403});},
+    async claim(){calls.push('claim');return {ok:true,status:'pending'};},
+    async resend(email,password){calls.push(['resend',email,password]);return {verified:false};},
     async api(path){
       calls.push(path);
       if(path==='/api/auth/admin-account-status')throw Object.assign(Error('Accès administrateur refusé.'),{status:403});
@@ -196,6 +197,10 @@ test('Invitation par e-mail : une adresse non vérifiée ne reçoit aucun accès
     await set(tree.root.findByProps({id:'admin-email'}),'invite@example.test');await set(tree.root.findByProps({id:'admin-password'}),'Mot-de-passe-personnel-2026');
     await act(async()=>{tree.root.findAllByType('form')[0].props.onSubmit({preventDefault(){}});await tick();await tick();});
     assert.match(text(tree.toJSON()),/Confirmez d’abord l’adresse e-mail/);assert.equal(values.has('pulse-admin-token'),false);
-    assert(calls.includes('logout'));assert(!calls.includes('/api/admin/all'));
+    assert(calls.includes('logout'));assert(!calls.includes('/api/admin/all'));assert(!calls.includes('claim'),'la nouvelle invitation prime sur une ancienne demande manuelle');
+    const resend=tree.root.findAllByType('button').find(x=>text(x).includes('Renvoyer le lien de confirmation'));assert(resend);
+    await act(async()=>{resend.props.onClick();await tick();await tick();});
+    assert.deepEqual(calls.find(x=>Array.isArray(x)&&x[0]==='resend'),['resend','invite@example.test','Mot-de-passe-personnel-2026']);
+    assert.match(text(tree.toJSON()),/Nouveau lien envoyé/);
   } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
 });

@@ -48,7 +48,7 @@ for (const scope of ['https://example.test/', 'https://example.test/FNAC-Pulse/'
     const network=[];
     const sw = serviceWorker(scope,[],async(request,options)=>{network.push({request,options});return new Response('réseau');});
     await dispatch(sw.handlers.get('install'));
-    assert.deepEqual(Array.from(sw.added[0]), [base,`${base}auth-action-v1.js?v=3`,`${base}manifest.webmanifest`,`${base}icons/icon-192-v3.png`,`${base}icons/icon-512-v3.png`,`${base}icons/icon-maskable-512-v3.png`,`${base}icons/apple-touch-icon-v3.png`,`${base}icons/icon-192.png`,`${base}fnac.svg`,`${base}FNAC%20-%20SIGNATURE.mp3`]);
+    assert.deepEqual(Array.from(sw.added[0]), [base,`${base}auth-action-v1.js?v=4`,`${base}manifest.webmanifest`,`${base}icons/icon-192-v3.png`,`${base}icons/icon-512-v3.png`,`${base}icons/icon-maskable-512-v3.png`,`${base}icons/apple-touch-icon-v3.png`,`${base}icons/icon-192.png`,`${base}fnac.svg`,`${base}FNAC%20-%20SIGNATURE.mp3`]);
     assert.deepEqual(Array.from(sw.added[1]), [`${base}assets/app.js`,`${base}assets/app.css`]);
     let response;
     const secretRequest={method:'GET',url:`${scope}?mode=resetPassword&oobCode=code-fictif`,mode:'navigate'};
@@ -56,6 +56,10 @@ for (const scope of ['https://example.test/', 'https://example.test/FNAC-Pulse/'
     assert.equal(await (await response).text(),'réseau');
     assert.equal(network[0].options.cache,'no-store');
     assert.equal(sw.stored.length,0,'un lien secret ne doit pas être stocké');
+    const nestedRequest={method:'GET',url:`${scope}?link=${encodeURIComponent('https://example.test/__/auth/action?mode=signIn&oobCode=code-fictif')}`,mode:'navigate'};
+    sw.handlers.get('fetch')({request:nestedRequest,respondWith(work){response=work;}});
+    assert.equal(await (await response).text(),'réseau');assert.equal(network.at(-1).options.cache,'no-store');
+    assert.equal(sw.stored.length,0,'une enveloppe de lien secret ne doit pas être stockée');
     const offline=serviceWorker(scope,[],async()=>{throw new TypeError('hors ligne');});
     offline.handlers.get('fetch')({request:secretRequest,respondWith(work){response=work;}});
     assert.match(await (await response).text(),/assets\/app\.js/);
@@ -105,8 +109,8 @@ test('PWA : icônes versionnées, tailles, masque et compatibilité des ancienne
   assert.match(html,/rel="icon"[^>]+icon-192-v3\.png/);
   assert.match(html,/rel="apple-touch-icon"[^>]+apple-touch-icon-v3\.png/);
   const cloudWorker=fs.readFileSync(new URL('../src/sw-cloud.js',import.meta.url),'utf8');
-  assert.match(source,/fnac-pulse-shell-v51/);
-  assert.match(cloudWorker,/fnac-pulse-shell-v51/);
-  assert.match(cloudWorker,/request\.mode === 'navigate' && url\.searchParams\.has\('oobCode'\)/);
+  assert.match(source,/fnac-pulse-shell-v52/);
+  assert.match(cloudWorker,/fnac-pulse-shell-v52/);
+  assert.match(cloudWorker,/request\.mode === 'navigate' && \(url\.searchParams\.has\('oobCode'\) \|\| url\.searchParams\.has\('link'\)\)/);
   for(const icon of manifest.icons)assert.ok(cloudWorker.includes(icon.src));
 });

@@ -767,6 +767,7 @@ export function createWorker(deps={}) {
   async function inviteAdministrator(env,db,actor,body) {
     if(!recentAdminAuthentication(actor))fail(401,'Confirmez à nouveau votre mot de passe administrateur.');
     const email=normalizeAdminEmail(body?.email),requestId=body?.requestId;
+    if(body?.activation!==undefined&&body.activation!=='email-link-v1')fail(400,'Mode d’activation invalide.');
     if(!validManualEmail(email)||!SAFE_ID.test(requestId||'')||!noPasswordBody(body))fail(400,'Adresse ou invitation invalide.');
     if(normalizeAdminEmail(actor.email)===email)fail(409,'Cette adresse correspond à votre propre compte administrateur.');
     await limitAuthentication(env,`admin-invite:${actor.sub}`);
@@ -783,7 +784,7 @@ export function createWorker(deps={}) {
       }
       if(previous?.data?.requestId===requestId)return {ok:true,status:previous.data.status,expiresAt:previous.data.expiresAt};
       const now=Date.now(),next={status:'pending',createdBy:actor.sub,requestId,createdAt:now,expiresAt:now+ADMIN_INVITATION_MS,
-        issuerMustBeActive:true,...(body?.showInPanel===true?{email}:{})};
+        issuerMustBeActive:true,...(body?.activation==='email-link-v1'?{activation:'email-link-v1'}:{}),...(body?.showInPanel===true?{email}:{})};
       try {await db.commit([...checks,db.write(path,next,precondition(previous))]);return {ok:true,status:'pending',expiresAt:next.expiresAt};}
       catch(error){if(!conflict(error))throw error;}
     }
@@ -831,7 +832,15 @@ export function createWorker(deps={}) {
     const email=normalizeAdminEmail(user.email);
     if(!ADMIN_ID.test(user.sub||'')||user.role==='seller'||user.firebase?.sign_in_provider!=='password'||!validAdminEmail(email))
       fail(403,'Connectez-vous avec le compte invité et son mot de passe.');
-    if(user.email_verified!==true)fail(403,'Confirmez d’abord l’adresse e-mail du compte invité.');
+    if(user.email_verified!==true) {
+      // Une ancienne demande manuelle sans invitation e-mail doit pouvoir
+      // suivre son parcours historique. Une invitation e-mail valide prime :
+      // elle demande la confirmation plutôt qu'une seconde approbation.
+      const pending=await db.get(await emailInvitationPath(email));
+      if(pending?.data?.status==='pending'&&Number.isFinite(pending.data.expiresAt)&&pending.data.expiresAt>Date.now())
+        fail(403,'Confirmez d’abord l’adresse e-mail du compte invité.');
+      fail(403,'Aucune invitation valide pour cette adresse. Demandez à un administrateur de vous inviter à nouveau.');
+    }
     if(!recentAdminAuthentication(user))fail(401,'Reconnectez-vous avant d’accepter l’invitation.');
     await limitAuthentication(env,`admin-accept:${user.sub}`);
     const invitePath=`pulseAdminInvitations/${await digestBase64(`admin-invitation:${email}`)}`;
@@ -844,6 +853,11 @@ export function createWorker(deps={}) {
       if(!invitation||invitation.data.status!=='pending'||!Number.isFinite(invitation.data.expiresAt)||invitation.data.expiresAt<=Date.now())
         fail(403,'Aucune invitation valide pour cette adresse. Demandez à un administrateur de vous inviter à nouveau.');
       const issuerChecks=await invitationIssuerChecks(db,env,invitation);
+      if(invitation.data.activation==='email-link-v1') {
+        let account;try{account=await lookupAccount(env,authHeader(req));}catch{fail(503,'Vérification Firebase indisponible. Réessayez.');}
+        if(account?.localId!==user.sub||normalizeAdminEmail(account.email)!==email||account.disabled===true)fail(403,'Compte invité invalide.');
+        if(!Number.isFinite(account.passwordUpdatedAt)||account.passwordUpdatedAt<=0)fail(403,'Créez d’abord votre mot de passe pour activer votre compte.');
+      }
       const now=Date.now(),grant={active:true,createdBy:invitation.data.createdBy,createdAt:new Date(now).toISOString(),requiresVerifiedEmail:true};
       const accepted={...invitation.data,status:'accepted',acceptedBy:user.sub,acceptedAt:now};
       try {

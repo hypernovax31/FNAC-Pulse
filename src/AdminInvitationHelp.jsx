@@ -18,7 +18,8 @@ export function AdminInvitationHelp({email,busy,onBusy,onCompleted,onVerified}) 
   }
   return <details className="admin-email-fallback admin-invitation-help" onToggle={e=>{if(!e.currentTarget.open)clear();}}>
     <summary>Mot de passe oublié ou lien bloqué ?</summary>
-    <p>Le lien Firebase sert à choisir ou réinitialiser le mot de passe. Pour un compte existant, rien ne change tant que vous ne confirmez pas.</p>
+    <p>Pour un compte existant, vous pouvez demander un lien de réinitialisation de mot de passe.</p>
+    <p>Pour une nouvelle invitation bloquée, demandez un nouvel envoi à votre administrateur ou ouvrez la <a href="?aide-invitation=1" target="_blank" rel="noopener noreferrer">page de secours</a> pour y coller le lien de connexion.</p>
     <button type="button" className="outline-button" disabled={busy||!email.trim()} onClick={()=>run(async()=>{
       await requestAdminPasswordReset(email);
       return 'Si cette adresse possède un compte compatible, Firebase envoie un nouveau lien. Vérifiez aussi les courriers indésirables.';

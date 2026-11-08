@@ -58,7 +58,7 @@ export function AdminAccounts({onLogout,onBusy}) {
     } finally{running.current=false;if(mounted.current)setBusy(false);onBusy?.(false);}
   }
   async function cancel(item) {
-    if(running.current||!window.confirm(`Annuler l’invitation de ${item.email} ? Elle ne donnera plus accès. Le lien Firebase peut encore servir à modifier le mot de passe ; aucun compte ne sera supprimé.`))return;
+    if(running.current||!window.confirm(`Annuler l’invitation de ${item.email} ? Elle ne donnera plus de nouveaux droits. Un lien Firebase déjà envoyé peut rester utilisable ; aucun compte ne sera supprimé.`))return;
     running.current=true;setBusy(true);onBusy?.(true);setFeedback(null);
     const body={email:item.email,requestId:item.requestId,confirmed:true};
     try {
@@ -78,18 +78,18 @@ export function AdminAccounts({onLogout,onBusy}) {
   return <div className="admin-accounts">
     <div className="admin-account-current"><ShieldCheck size={18}/><div><strong>Votre compte administrateur</strong><p>{accountEmail||'Chargement de votre adresse…'}</p></div></div>
     <section className="admin-account-section admin-invite-section" aria-labelledby="admin-invite-title">
-      <div className="admin-account-heading"><UserRoundPlus size={19}/><div><h3 id="admin-invite-title">Inviter un administrateur</h3><p>La personne recevra un e-mail pour choisir son mot de passe.</p></div></div>
+      <div className="admin-account-heading"><UserRoundPlus size={19}/><div><h3 id="admin-invite-title">Inviter un administrateur</h3><p>La personne recevra un lien de connexion pour activer son compte.</p></div></div>
       {feedback&&<div className={`admin-alert ${feedback.error?'error':'success'}`} role={feedback.error?'alert':'status'}>{feedback.text}</div>}
       {!draft?<form className="admin-invite-form" onSubmit={prepare}>
         <label htmlFor="admin-invite-email">Adresse e-mail</label>
         <div className="admin-invite-entry"><input className="text-input" id="admin-invite-email" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="nom@exemple.fr" autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={254} disabled={busy} required/><button className="primary-button" disabled={busy} type="submit"><Send size={16}/> Continuer</button></div>
       </form>:<form ref={confirmation} tabIndex={-1} className="admin-invite-confirm" onSubmit={send}>
         <strong>Inviter {draft.email} ?</strong>
-        <p>Après avoir choisi son mot de passe, cette personne aura les droits administrateur sur <b>tous les magasins</b> et pourra inviter d’autres administrateurs, sans autre validation.</p>
+        <p>Après confirmation de son adresse et création ou confirmation de son mot de passe, cette personne aura les droits administrateur sur <b>tous les magasins</b> et pourra inviter d’autres administrateurs, sans autre validation.</p>
         {needsPassword&&<label className="admin-invite-password">Votre mot de passe administrateur<input className="text-input" type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" disabled={busy} required/></label>}
         <div className="admin-invite-confirm-actions"><button className="outline-button" type="button" disabled={busy} onClick={()=>{setDraft(null);setPassword('');setNeedsPassword(false);setFeedback(null);}}>Retour</button><button className="primary-button" type="submit" disabled={busy}><Send size={16}/> {busy?'Envoi…':'Envoyer l’invitation'}</button></div>
       </form>}
-      <p className="admin-account-help">L’accès est accordé après vérification de l’adresse. Le message peut parler de réinitialisation ; sa réception dépend de Firebase.</p>
+      <p className="admin-account-help">Firebase envoie un e-mail standard de connexion ; sa réception n’est pas garantie. Si la personne a déjà un compte, elle peut utiliser son mot de passe habituel. Sur l’offre gratuite, la limite est de cinq e-mails de connexion par jour.</p>
     </section>
     {(invitations.length>0||next||listError)&&<section className="admin-account-section admin-pending-invitations" aria-labelledby="admin-pending-title">
       <div className="admin-requests-heading"><div><h3 id="admin-pending-title">Invitations en cours</h3><p>L’invitation expire après sept jours.</p></div><button type="button" className="admin-requests-refresh" aria-label="Actualiser les invitations" disabled={busy} onClick={()=>loadInvitations()}><RefreshCw size={15}/></button></div>

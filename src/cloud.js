@@ -1,5 +1,5 @@
 import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, createUserWithEmailAndPassword, deleteUser, signOut, setPersistence, browserSessionPersistence, inMemoryPersistence, EmailAuthProvider, reauthenticateWithCredential, updatePassword, verifyBeforeUpdateEmail, sendEmailVerification, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset, checkActionCode, applyActionCode, reload } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, createUserWithEmailAndPassword, deleteUser, signOut, setPersistence, browserSessionPersistence, inMemoryPersistence, EmailAuthProvider, reauthenticateWithCredential, updatePassword, verifyBeforeUpdateEmail, sendEmailVerification, sendPasswordResetEmail, sendSignInLinkToEmail, verifyPasswordResetCode, confirmPasswordReset, checkActionCode, applyActionCode, reload } from 'firebase/auth';
 import { getFirestore, doc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { getMessaging, getToken, deleteToken, isSupported } from 'firebase/messaging';
 import { firebaseConfig } from './firebase-config';
@@ -234,8 +234,7 @@ export async function confirmAdminEmailChange({code,newEmail}={}) {
   return {email:verifiedEmail,refreshed};
 }
 // L'administrateur ne choisit et ne reçoit jamais le mot de passe du destinataire.
-// Un secret aléatoire, utilisé uniquement pour créer un compte Firebase neuf,
-// devient inutilisable dès que le titulaire choisit son propre mot de passe.
+// Le lien Firebase est demandé sans créer de compte ni changer une session existante.
 function secureRandomText() {
   if(!globalThis.crypto?.getRandomValues)throw new Error('Générateur sécurisé indisponible sur cet appareil.');
   const bytes=crypto.getRandomValues(new Uint8Array(32));
@@ -248,7 +247,7 @@ export async function inviteAdministrator(api,{email,currentPassword,requestId})
   // Une session déjà récente suffit. Si le Worker la juge trop ancienne,
   // l’interface propose une confirmation du mot de passe puis rejoue le même ID.
   if(currentPassword)await reauthenticateAdmin(currentPassword);
-  const id=requestId||secureRandomText(),body={email:address,requestId:id,showInPanel:true};let invitation;
+  const id=requestId||secureRandomText(),body={email:address,requestId:id,showInPanel:true,activation:'email-link-v1'};let invitation;
   try {invitation=await api('/api/admin/invitations',{method:'POST',token:ADMIN_SESSION,body});}
   catch(error) {
     if(error?.status&&error.status<500)throw error;
@@ -258,23 +257,20 @@ export async function inviteAdministrator(api,{email,currentPassword,requestId})
   if(invitation?.status==='accepted')return {alreadyAccepted:true};
   if(invitation?.status!=='pending')throw new Error('L’invitation a expiré. Envoyez une nouvelle invitation.');
   const appName=`fnac-pulse-invitation-${secureRandomText()}`,temporary=initializeApp(firebaseConfig,appName),temporaryAuth=getAuth(temporary);
-  let accountCreated=false;
   try {
     await setPersistence(temporaryAuth,inMemoryPersistence);temporaryAuth.languageCode='fr';
-    try {
-      await firebaseDeadline(createUserWithEmailAndPassword(temporaryAuth,address,`${secureRandomText()}aA1!`));accountCreated=true;
-    } catch(error) {
-      if(error?.code!=='auth/email-already-in-use') {
-        const detail=error?.code==='auth/invalid-email'?'Vérifiez l’adresse e-mail.':error?.code==='auth/too-many-requests'?'Trop de demandes ; réessayez plus tard.':'Vérifiez votre connexion et réessayez.';
-        throw new Error(`Invitation enregistrée, mais création du compte non confirmée. ${detail} La personne doit vérifier son adresse avant d’obtenir l’accès.`);
-      }
-    }
-    try {await firebaseDeadline(sendPasswordResetEmail(temporaryAuth,address));}
+    const continuation=new URL(import.meta.env.BASE_URL||'/',window.location.origin);
+    if(continuation.protocol!=='https:'||continuation.origin!==window.location.origin)throw new Error('Adresse de retour non sécurisée.');
+    continuation.searchParams.set('administration','invitation');
+    try {await firebaseDeadline(sendSignInLinkToEmail(temporaryAuth,address,{url:continuation.href,handleCodeInApp:true}));}
     catch(error) {
-      const detail=error?.code==='auth/too-many-requests'?'Quota d’e-mails atteint. Réessayez plus tard.':'Vérifiez la connexion et réessayez.';
-      throw new Error(`Invitation enregistrée, mais envoi non confirmé. ${detail} La personne doit vérifier son adresse avant d’obtenir l’accès.`);
+      const detail=error?.code==='auth/operation-not-allowed'?'La connexion par lien n’est pas activée dans Firebase.':
+        ['auth/too-many-requests','auth/quota-exceeded'].includes(error?.code)?'Le quota d’e-mails est atteint. Réessayez plus tard.':
+        error?.code==='auth/invalid-continue-uri'||error?.code==='auth/unauthorized-continue-uri'?'L’adresse de retour n’est pas autorisée dans Firebase.':
+        'Vérifiez votre connexion et réessayez.';
+      throw new Error(`Invitation enregistrée, mais demande d’envoi non confirmée. ${detail} Aucun nouveau droit n’a été attribué.`);
     }
-    return {alreadyAccepted:false,accountCreated,expiresAt:invitation.expiresAt};
+    return {alreadyAccepted:false,expiresAt:invitation.expiresAt};
   } finally {await signOut(temporaryAuth).catch(()=>{});await deleteApp(temporary).catch(()=>{});}
 }
 export async function requestAdminPasswordReset(email) {

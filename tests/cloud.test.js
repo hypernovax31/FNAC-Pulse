@@ -2448,3 +2448,25 @@ test('Ancienne demande en attente : une nouvelle invitation vérifiée peut abou
   assert.deepEqual(await db.get(manualPath),before,'la demande historique n’est ni modifiée ni supprimée');
   assert.equal((await req('/api/auth/admin-account-status',{},'candidate')).status,200);
 });
+
+test('Activation par lien : blocage avant mot de passe, échec sûr et compatibilité des anciennes invitations',async()=>{
+  const db=new MemoryDb(),now=Math.floor(Date.now()/1000),identities=new Map([
+    ['root',{sub:'root',email:'root@example.test',auth_time:now,firebase:{sign_in_provider:'password'}}],
+    ['invited',{sub:'invited',email:'invited@example.test',email_verified:true,auth_time:now,firebase:{sign_in_provider:'password'}}],
+    ['old',{sub:'old',email:'old@example.test',email_verified:true,auth_time:now,firebase:{sign_in_provider:'password'}}],
+  ]);let account={localId:'invited',email:'invited@example.test',disabled:false,passwordUpdatedAt:NaN},outage=false,lookups=0;
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_e,t)=>{if(!identities.has(t))throw Error('invalid');return identities.get(t);},lookupFirebaseAccount:async()=>{lookups++;if(outage)throw Error('indisponible');return account;}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'root',PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  const req=async(path,body,token)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)}),env,ctx);return {status:r.status,body:await r.json()};};
+  const invitation={email:'invited@example.test',requestId:'activation-request-001',showInPanel:true,activation:'email-link-v1'};
+  assert.equal((await req('/api/admin/invitations',{...invitation,activation:'other'},'root')).status,400);
+  assert.equal((await req('/api/admin/invitations',invitation,'root')).status,200);
+  let r=await req('/api/auth/admin-invitations/accept',{confirmed:true},'invited');assert.equal(r.status,403);assert.match(r.body.error,/Créez d’abord/);assert.equal(await db.get('pulseAdmins/invited'),null);
+  account.passwordUpdatedAt=Date.now();outage=true;r=await req('/api/auth/admin-invitations/accept',{confirmed:true},'invited');assert.equal(r.status,503);assert.equal(await db.get('pulseAdmins/invited'),null);outage=false;
+  for(const invalid of [{...account,localId:'other'},{...account,email:'other@example.test'},{...account,disabled:true}]){const saved=account;account=invalid;assert.equal((await req('/api/auth/admin-invitations/accept',{confirmed:true},'invited')).status,403);account=saved;}
+  assert.equal((await req('/api/auth/admin-invitations/accept',{confirmed:true},'invited')).status,200);
+  assert.equal((await db.get('pulseAdmins/invited')).data.active,true);outage=true;
+  assert.equal((await req('/api/auth/admin-invitations/accept',{confirmed:true},'invited')).status,200,'reprise idempotente après accès');outage=false;
+  const oldLookup=lookups;assert.equal((await req('/api/admin/invitations',{email:'old@example.test',requestId:'old-invitation-001',showInPanel:true},'root')).status,200);
+  assert.equal((await req('/api/auth/admin-invitations/accept',{confirmed:true},'old')).status,200);assert.equal(lookups,oldLookup,'invitations existantes sans nouveau marqueur conservées');
+});
