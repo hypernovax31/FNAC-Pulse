@@ -19,7 +19,7 @@ const bundled=await build({entryPoints:['src/App.jsx'],bundle:true,platform:'nod
     export const subscribeFcm=(api,options)=>globalThis.__startupTest.subscribe(api,options);
     export const unsubscribeFcm=()=>globalThis.__startupTest.unsubscribe();
     export const notificationsWanted=()=>localStorage.getItem('fnac-pulse-fcm-enabled')==='1';
-    export const sellerLogin=(...x)=>globalThis.__startupTest.sellerLogin(...x),sellerChoosePin=()=>{},sellerMigratePin=()=>{},sellerRegister=(...x)=>globalThis.__startupTest.sellerRegister(...x),sellerLogout=()=>{},adminLogin=()=>{},adminLogout=()=>{},changeAdminPassword=()=>{},adminAccountEmail=async()=>"admin@example.test",createAdministrator=()=>{},createDirectAdministrator=()=>{},createAdminEnrollmentCode=()=>{},cancelAdminEnrollmentCode=()=>{},registerAdminWithCode=()=>{},changeFirstCodeAdminPassword=()=>{},inviteAdministrator=()=>{},requestAdminPasswordReset=()=>{},inspectAdminPasswordReset=()=>{},confirmAdminPasswordReset=()=>{},inspectAdminVerification=()=>{},confirmAdminVerification=()=>{},requestAdminEmailChange=()=>{},inspectAdminEmailChange=()=>{},confirmAdminEmailChange=()=>{},resendAdminVerification=()=>{};
+    export const sellerLogin=(...x)=>globalThis.__startupTest.sellerLogin(...x),sellerChoosePin=()=>{},sellerMigratePin=(...x)=>globalThis.__startupTest.sellerMigratePin(...x),sellerRegister=(...x)=>globalThis.__startupTest.sellerRegister(...x),sellerLogout=(...x)=>globalThis.__startupTest.sellerLogout(...x),adminLogin=(...x)=>globalThis.__startupTest.adminLogin(...x),adminLogout=(...x)=>globalThis.__startupTest.adminLogout(...x),changeAdminPassword=()=>{},adminAccountEmail=async()=>"admin@example.test",createAdministrator=()=>{},createDirectAdministrator=()=>{},createAdminEnrollmentCode=()=>{},cancelAdminEnrollmentCode=()=>{},registerAdminWithCode=()=>{},changeFirstCodeAdminPassword=()=>{},inviteAdministrator=()=>{},requestAdminPasswordReset=()=>{},inspectAdminPasswordReset=()=>{},confirmAdminPasswordReset=()=>{},inspectAdminVerification=()=>{},confirmAdminVerification=()=>{},requestAdminEmailChange=()=>{},inspectAdminEmailChange=()=>{},confirmAdminEmailChange=()=>{},resendAdminVerification=()=>{};
   `,loader:'js'}));
 }}]});
 const module={exports:{}};new Function('module','exports','require',bundled.outputFiles[0].text)(module,module.exports,require);
@@ -29,11 +29,13 @@ const text=node=>typeof node==='string'||typeof node==='number'?String(node):!no
 const session={storeId:'near',sellerId:1,uid:'fictif',accessVersion:'v1'};
 const data={stores:[{id:'near',name:'Fnac Près',lat:43.6,lon:1.4,active:true},{id:'far',name:'Fnac Loin',lat:48,lon:2,active:true}],sellers:[{id:1,name:'Morgan',storeId:'near',departmentId:'tech',active:true}],services:[],departmentsByStore:{near:[{id:'tech',name:'Technique',active:true}],far:[{id:'tech',name:'Technique',active:true}]},today:'2026-11-02',stats:null};
 
-function environment({geoPermission='prompt',geoResult='success',notificationPermission='default',notificationResult='granted',wanted=false,geoDeferred=false,notificationDeferred=false,prepareDeferred=false,auth='manual',existingTouch=true}={}) {
-  const names=['window','navigator','document','Notification','localStorage','Audio','__startupTest'],old=new Map(names.map(name=>[name,Object.getOwnPropertyDescriptor(globalThis,name)]));
+function environment({geoPermission='prompt',geoResult='success',notificationPermission='default',notificationResult='granted',wanted=false,geoDeferred=false,notificationDeferred=false,prepareDeferred=false,auth='manual',existingTouch=true,standalone=true,directInvitation=false,adminValues:initialAdminValues={}}={}) {
+  const names=['window','navigator','document','Notification','localStorage','sessionStorage','Audio','__startupTest'],old=new Map(names.map(name=>[name,Object.getOwnPropertyDescriptor(globalThis,name)]));
   const values=new Map();if(existingTouch)values.set('fnac-pulse-touch-welcome-v1','done');if(wanted)values.set('fnac-pulse-fcm-enabled','1');
   const storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)};
-  const e={values,gesture:false,notifications:[],locations:[],sounds:[],audioLoads:0,audioInstances:0,audioReject:false,listenCalls:0,onSale:null,prepares:0,prepareFails:false,subscriptions:0,requests:[],sellerCalls:[],auth:null,geoSuccess:null,geoResult};
+  const adminValues=new Map(Object.entries(initialAdminValues));
+  const adminStorage={getItem:key=>adminValues.get(key)??null,setItem:(key,value)=>adminValues.set(key,value),removeItem:key=>adminValues.delete(key)};
+  const e={values,adminValues,failBootstrap:false,adminFail:false,pinStatus:null,logoutCount:0,adminLogins:[],gesture:false,notifications:[],locations:[],sounds:[],audioLoads:0,audioInstances:0,audioReject:false,listenCalls:0,onSale:null,prepares:0,prepareFails:false,subscriptions:0,requests:[],sellerCalls:[],auth:null,geoSuccess:null,geoResult};
   const permission={permission:notificationPermission,requestPermission(){
     e.notifications.push({gesture:e.gesture});
     if(notificationDeferred)return new Promise(resolve=>{e.resolveNotification=value=>{this.permission=value;resolve(value);};});
@@ -47,17 +49,19 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
     else success({coords:{latitude:43.61,longitude:1.42}});
   }};
   const registration={pushManager:{getSubscription:async()=>null}};
-  const nav={standalone:true,userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)',platform:'iPhone',maxTouchPoints:5,geolocation:geo,serviceWorker:{register:async()=>registration,ready:Promise.resolve(registration)},permissions:{query:async({name})=>({state:name==='geolocation'?geoPermission:permission.permission,addEventListener(){},removeEventListener(){}})}};
-  const media=query=>({matches:query==='(display-mode: standalone)',addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}});
+  const nav={standalone,userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)',platform:'iPhone',maxTouchPoints:5,geolocation:geo,serviceWorker:{register:async()=>registration,ready:Promise.resolve(registration)},permissions:{query:async({name})=>({state:name==='geolocation'?geoPermission:permission.permission,addEventListener(){},removeEventListener(){}})}};
+  const media=query=>({matches:standalone&&query==='(display-mode: standalone)',addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}});
   const windowEvents=new Map();
-  const win={navigator:nav,isSecureContext:true,PushManager:function(){},Notification:permission,matchMedia:media,addEventListener(name,fn){if(!windowEvents.has(name))windowEvents.set(name,new Set());windowEvents.get(name).add(fn);},removeEventListener(name,fn){windowEvents.get(name)?.delete(fn);},scrollTo(){}};
+  const win={navigator:nav,__fnacOpenAdminInvitation:directInvitation,isSecureContext:true,PushManager:function(){},Notification:permission,matchMedia:media,addEventListener(name,fn){if(!windowEvents.has(name))windowEvents.set(name,new Set());windowEvents.get(name).add(fn);},removeEventListener(name,fn){windowEvents.get(name)?.delete(fn);},scrollTo(){}};
   e.dispatchWindow=(name,event)=>{for(const fn of windowEvents.get(name)||[])fn(event);};
   const doc={visibilityState:'visible',body:{style:{}},documentElement:{dataset:{},style:{}},activeElement:null,addEventListener(){},removeEventListener(){},getElementById(){return null;},querySelector(){return null;}};
   const mock={
     observe(fn){e.auth=fn;if(auth!=='manual')queueMicrotask(()=>fn(auth));return ()=>{if(e.auth===fn)e.auth=null;};},
     listen(_session,_day,_client,onChange,onSale,onError){e.listenCalls++;e.onSale=onSale;e.onChange=onChange;e.onError=onError;return ()=>{if(e.onSale===onSale){e.onSale=null;e.onChange=null;e.onError=null;}};},
-    async api(path,options={}){e.requests.push({path,method:options.method||'GET',body:options.body});if(path.startsWith('/api/bootstrap'))return e.addedSeller?{...data,sellers:[...data.sellers,e.addedSeller]}:data;if(path==='/api/auth/status')return {needsPin:false,pinLength:4,pinSalt:'sel-fictif'};if(path==='/api/goals')return {goals:{}};if(path.startsWith('/api/summary-goals'))return {};return {};},
+    async api(path,options={}){e.requests.push({path,method:options.method||'GET',body:options.body});if(path.startsWith('/api/bootstrap')){if(e.failBootstrap)throw Error('Connexion indisponible');return e.addedSeller?{...data,sellers:[...data.sellers,e.addedSeller]}:data;}if(path==='/api/auth/status')return e.pinStatus||{needsPin:false,pinLength:4,pinSalt:'sel-fictif'};if(path==='/api/auth/admin-account-status')return {passwordChangeRequired:false};if(path==='/api/admin/all')return {sellers:[],services:[],serviceOrders:{},serviceRemovalsByStore:{},departmentsByStore:{}};if(path==='/api/goals')return {goals:{}};if(path.startsWith('/api/summary-goals'))return {};return {};},
+    async sellerLogout(){e.logoutCount++;},async adminLogin(email,password){e.adminLogins.push({email,password});if(e.adminFail)throw Error('Identifiants incorrects');return 'admin';},async adminLogout(){},
     async sellerLogin(_api,selection,pin,pinSalt){e.sellerCalls.push({mode:'login',selection,pin,pinSalt});return {...selection,uid:'fictif',accessVersion:'v1'};},
+    async sellerMigratePin(_api,selection,oldPin,newPin,pinSalt){e.sellerCalls.push({mode:'migrate',selection,oldPin,newPin,pinSalt});return {...selection,uid:'fictif',accessVersion:'v1'};},
     async sellerRegister(_api,selection,name,pin){e.sellerCalls.push({mode:'register',selection,name,pin});e.addedSeller={id:2,name,storeId:selection.storeId,departmentId:selection.departmentId,active:true};return {...selection,sellerId:2,uid:'fictif-nouveau',accessVersion:'v1'};},
     async prepare({signal}={}){
       if(signal?.aborted)throw Error('annulé');e.prepares++;if(e.prepareFails)throw Error('hors ligne');
@@ -70,7 +74,7 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
   const put=(name,value)=>Object.defineProperty(globalThis,name,{configurable:true,writable:true,value});
   class AudioMock {constructor(){e.audioInstances++;this.paused=true;}load(){e.audioLoads++;}play(){e.sounds.push({gesture:e.gesture});if(e.audioReject)return Promise.reject(Error('lecture refusée'));this.paused=false;return Promise.resolve();}pause(){this.paused=true;}}
   e.doc=doc;e.permission=permission;e.mock=mock;
-  put('window',win);put('navigator',nav);put('document',doc);put('Notification',permission);put('localStorage',storage);put('Audio',AudioMock);put('__startupTest',mock);
+  put('window',win);put('navigator',nav);put('document',doc);put('Notification',permission);put('localStorage',storage);put('sessionStorage',adminStorage);put('Audio',AudioMock);put('__startupTest',mock);
   e.restore=()=>{for(const [name,descriptor] of old)if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];};
   e.authAs=async value=>{assert(e.auth);await act(async()=>{e.auth(value);await tick();await tick();});};
   e.press=async button=>{await act(async()=>{e.gesture=true;try{button.props.onClick();}finally{e.gesture=false;}await tick();await tick();});};
@@ -79,7 +83,13 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
 function section(tree,name){return tree.root.findByProps({'aria-label':name});}
 function action(tree,name){return section(tree,name).findByType('button');}
 function button(tree,name){return tree.root.findAllByType('button').find(item=>text(item).includes(name));}
-async function mount(){let tree;await act(async()=>{tree=TestRenderer.create(React.createElement(React.StrictMode,null,React.createElement(App)));await tick();await tick();});return tree;}
+async function mount({stayAtLaunch=false}={}){
+  let tree;await act(async()=>{tree=TestRenderer.create(React.createElement(React.StrictMode,null,React.createElement(App)));await tick();await tick();});
+  // Les tests historiques ciblent les permissions et le tableau de bord ; ils
+  // franchissent explicitement le nouvel écran sans modifier son état stocké.
+  if(!stayAtLaunch)await act(async()=>{tree.root.findByProps({className:'startup-start'}).props.onClick();await tick();await tick();});
+  return tree;
+}
 async function finish(tree,e){if(tree)await act(async()=>tree.unmount());e.restore();}
 
 test('PWA : autorisations dès le démarrage, avant données ou profil, puis rattachement automatique',async()=>{
@@ -239,14 +249,15 @@ test('Refus du dialogue système : aucun abonnement en attente et accès possibl
   } finally {await finish(tree,e);}
 });
 
-test('Premier lancement : accueil sonore au premier appui, puis autorisations sans seconde ouverture de bienvenue',async()=>{
+test('Premier lancement : son au geste puis autorisations ; profil reproposé sans rejouer le son',async()=>{
   const e=environment({existingTouch:false,auth:null});let tree;
   try {
-    tree=await mount();assert.match(text(tree.toJSON()),/Bienvenue sur/);assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);
+    tree=await mount({stayAtLaunch:true});assert.match(text(tree.toJSON()),/Bienvenue sur/);assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);
     assert.equal(e.sounds.length,0);assert.equal(e.notifications.length,0);assert.equal(e.locations.length,0);
     await e.press(button(tree,'Accéder aux services'));
     assert.deepEqual(e.sounds,[{gesture:true}]);assert.equal(e.values.get('fnac-pulse-touch-welcome-v1'),'done');assert.match(text(tree.toJSON()),/Bien démarrer/);
-    await act(async()=>tree.unmount());tree=await mount();assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur/);assert.match(text(tree.toJSON()),/Bien démarrer/);assert.equal(e.sounds.length,1);
+    await act(async()=>tree.unmount());tree=await mount({stayAtLaunch:true});assert.match(text(tree.toJSON()),/Bienvenue sur/);assert.equal(e.sounds.length,1);
+    await e.press(button(tree,'Accéder aux services'));assert.match(text(tree.toJSON()),/Bien démarrer/);assert.equal(e.sounds.length,1);
   } finally {await finish(tree,e);}
 });
 
@@ -442,5 +453,236 @@ test('Bien démarrer : création d’un profil et PIN sans quitter la modale ; p
     assert.match(text(profile()),/Votre profil est déjà connecté/);
     await e.press(button(tree,'Continuer'));assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);
     assert.match(e.values.get('fnac-pulse-device-profile-v1'),/"sellerId":2/);
+  } finally {await finish(tree,e);}
+});
+
+async function selectMorganOnLaunch(tree) {
+  const profile=()=>section(tree,'Sélection du profil vendeur');
+  const change=async(label,value)=>act(async()=>{profile().findByProps({'aria-label':label}).props.onChange({target:{value}});await tick();});
+  await change('Votre magasin Fnac','Fnac Près');
+  await act(async()=>{profile().findAllByProps({role:'option'}).find(item=>text(item).includes('Fnac Près')).props.onClick();await tick();});
+  await change('Votre département','tech');
+  const name=profile().findByProps({'aria-label':'Votre prénom'});
+  await act(async()=>{name.props.onFocus();await tick();});
+  assert(profile().findAllByProps({role:'option'}).some(item=>text(item).includes('Morgan')),'suggestion de prénom dès le lancement');
+  await act(async()=>{profile().findAllByProps({role:'option'}).find(item=>text(item).includes('Morgan')).props.onClick();await tick();await tick();});
+  await change('Code PIN personnel','4829');
+  await act(async()=>{await profile().findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
+}
+
+test('Navigateur : profil, suggestions et PIN avant l’accueil ; accès différé toujours possible',async()=>{
+  const e=environment({standalone:false,auth:null});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});
+    assert.match(text(tree.toJSON()),/Bienvenue sur/);assert.doesNotMatch(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.match(text(button(tree,'Plus tard')),/Accéder aux services/);
+    assert.equal(tree.root.findByProps({'aria-label':'Ouvrir l’administration'}).props.disabled,false);
+    assert(section(tree,'Sélection du profil vendeur').findByProps({'aria-label':'Votre magasin Fnac'}));
+    await selectMorganOnLaunch(tree);
+    assert.deepEqual(e.sellerCalls,[{mode:'login',selection:{storeId:'near',departmentId:'tech',sellerId:1},pin:'4829',pinSalt:'sel-fictif'}]);
+    assert.match(text(section(tree,'Sélection du profil vendeur')),/Morgan/);
+    assert.doesNotMatch(text(section(tree,'Sélection du profil vendeur')),/Code PIN personnel/);
+    assert.doesNotMatch(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.match(e.values.get('fnac-pulse-device-profile-v1'),/"sellerId":1/);
+    await e.press(button(tree,'Accéder aux services'));
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.equal(e.sounds.length,0);
+  } finally {await finish(tree,e);}
+});
+
+test('Lancement : création autonome du vendeur et PIN sans quitter l’écran',async()=>{
+  const e=environment({standalone:false,auth:null});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});const profile=()=>section(tree,'Sélection du profil vendeur');
+    const change=async(label,value)=>act(async()=>{profile().findByProps({'aria-label':label}).props.onChange({target:{value}});await tick();});
+    await change('Votre magasin Fnac','Fnac Près');
+    await act(async()=>{profile().findAllByProps({role:'option'}).find(x=>text(x).includes('Fnac Près')).props.onClick();await tick();});
+    await change('Votre département','tech');await change('Votre prénom','Alice');
+    await change('Votre nouveau code PIN','7264');await change('Confirmer votre code PIN','7264');
+    await act(async()=>{await profile().findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
+    assert.deepEqual(e.sellerCalls,[{mode:'register',selection:{storeId:'near',departmentId:'tech'},name:'Alice',pin:'7264'}]);
+    assert.match(text(profile()),/Alice|Profil connecté/);assert.match(text(tree.toJSON()),/Bienvenue sur/);
+    assert.match(e.values.get('fnac-pulse-device-profile-v1'),/"sellerId":2/);
+    assert.equal(e.notifications.length,0);assert.equal(e.sounds.length,0);
+  } finally {await finish(tree,e);}
+});
+
+test('Administration depuis le lancement : connexion indépendante, retour et saisie vendeur conservée',async()=>{
+  const e=environment({standalone:false,auth:null});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});const profile=()=>section(tree,'Sélection du profil vendeur');
+    const store=profile().findByProps({'aria-label':'Votre magasin Fnac'});
+    await act(async()=>{store.props.onChange({target:{value:'Fnac Près'}});await tick();});
+    await act(async()=>{profile().findAllByProps({role:'option'}).find(x=>text(x).includes('Fnac Près')).props.onClick();await tick();});
+    await e.press(tree.root.findByProps({'aria-label':'Ouvrir l’administration'}));
+    let dialog=()=>tree.root.findByProps({role:'dialog','aria-label':'Espace administrateur'});
+    assert(dialog());assert.doesNotMatch(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    await act(async()=>{dialog().findByProps({id:'admin-email'}).props.onChange({target:{value:'admin@example.test'}});dialog().findByProps({id:'admin-password'}).props.onChange({target:{value:'Personnel-fictif!'}});await tick();});
+    await act(async()=>{await dialog().findByProps({className:'admin-login-form'}).props.onSubmit({preventDefault(){}});await tick();await tick();});
+    assert.deepEqual(e.adminLogins,[{email:'admin@example.test',password:'Personnel-fictif!'}]);
+    assert.equal(e.adminValues.get('pulse-admin-token'),'admin');
+    assert(tree.root.findByProps({role:'dialog','aria-label':'Administration'}));
+    await e.press(tree.root.findByProps({role:'dialog','aria-label':'Administration'}).findByProps({'aria-label':'Fermer'}));
+    assert.match(text(tree.toJSON()),/Bienvenue sur/);assert.doesNotMatch(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.equal(profile().findByProps({'aria-label':'Votre magasin Fnac'}).props.value,'Fnac Près');
+    assert.equal(e.logoutCount,0);assert.equal(e.adminValues.get('pulse-admin-token'),'admin');
+    await e.press(tree.root.findByProps({'aria-label':'Ouvrir l’administration'}));
+    assert(tree.root.findByProps({role:'dialog','aria-label':'Administration'}));
+  } finally {await finish(tree,e);}
+});
+
+test('Session vendeur et magasin admin déjà mémorisés : affichés sans déconnexion ni effacement',async()=>{
+  const e=environment({auth:session,adminValues:{'pulse-admin-token':'admin','pulse-admin-managed-store-v1':'far'}});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});
+    assert.match(text(section(tree,'Sélection du profil vendeur')),/Morgan/);
+    assert.match(text(section(tree,'Sélection du profil vendeur')),/Fnac Près/);
+    assert.doesNotMatch(text(tree.toJSON()),/Plus tard/);assert.equal(e.logoutCount,0);
+    await e.press(button(tree,'Gérer'));
+    const personal=tree.root.findByProps({role:'dialog','aria-label':'Mon profil'});
+    assert.match(text(personal),/Votre session reste ouverte/);
+    await e.press(personal.findByProps({'aria-label':'Fermer'}));
+    assert.equal(e.logoutCount,0);assert.match(text(tree.toJSON()),/Morgan/);
+    await e.press(tree.root.findByProps({'aria-label':'Ouvrir l’administration'}));
+    const admin=tree.root.findByProps({role:'dialog','aria-label':'Administration'});
+    assert.match(text(admin),/Magasin sélectionné : Fnac Loin/);
+    assert.equal(e.adminValues.get('pulse-admin-managed-store-v1'),'far');assert.equal(e.logoutCount,0);
+    await e.press(admin.findByProps({'aria-label':'Fermer'}));
+    assert.match(text(section(tree,'Sélection du profil vendeur')),/Morgan/);
+  } finally {await finish(tree,e);}
+});
+
+test('Lancement : chargement et panne actionnables, sans effacer le magasin admin',async()=>{
+  const e=environment({auth:'manual',adminValues:{'pulse-admin-token':'admin','pulse-admin-managed-store-v1':'far'}});let tree;
+  try {
+    e.failBootstrap=true;tree=await mount({stayAtLaunch:true});
+    assert.match(text(tree.toJSON()),/Vérification de votre session/);
+    assert.equal(tree.root.findByProps({'aria-label':'Ouvrir l’administration'}).props.disabled,true);
+    assert.equal(e.adminValues.get('pulse-admin-managed-store-v1'),'far');
+    await e.authAs(null);
+    assert.match(text(tree.toJSON()),/Profil indisponible/);assert.match(text(tree.toJSON()),/Administration indisponible/);
+    assert.equal(tree.root.findByProps({'aria-label':'Ouvrir l’administration'}).props.disabled,true);
+    e.failBootstrap=false;
+    await e.press(tree.root.findByProps({className:'startup-admin-status'}).findByType('button'));
+    assert.equal(tree.root.findByProps({'aria-label':'Ouvrir l’administration'}).props.disabled,false);
+    assert(section(tree,'Sélection du profil vendeur').findByProps({'aria-label':'Votre magasin Fnac'}));
+    assert.equal(e.adminValues.get('pulse-admin-managed-store-v1'),'far');
+  } finally {await finish(tree,e);}
+});
+
+test('Invitation directe : administration avant l’accueil, y compris pendant les permissions',async()=>{
+  for(const leaveBeforeData of [false,true]) {
+    const e=environment({auth:'manual',directInvitation:true,adminValues:{'pulse-admin-token':'admin','pulse-admin-managed-store-v1':'far'}});let tree;
+    try {
+      tree=await mount({stayAtLaunch:true});
+      assert.match(text(tree.toJSON()),/Ouverture de l’administration après le chargement/);
+      assert.equal(e.adminValues.get('pulse-admin-managed-store-v1'),'far');
+      if(leaveBeforeData){await e.press(button(tree,'Accéder aux services'));assert.match(text(tree.toJSON()),/Bien démarrer/);}
+      await e.authAs(null);
+      const dialog=tree.root.findByProps({role:'dialog','aria-label':'Administration'});
+      assert.match(text(dialog),/Magasin sélectionné : Fnac Loin/);
+      assert.equal(e.adminValues.get('pulse-admin-managed-store-v1'),'far');
+      assert.doesNotMatch(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+      await e.press(dialog.findByProps({'aria-label':'Fermer'}));
+      assert.match(text(tree.toJSON()),leaveBeforeData?/Bien démarrer/:/Bienvenue sur/);
+    } finally {await finish(tree,e);}
+  }
+});
+
+test('PWA : choisir le profil ne joue pas le son ; le geste d’accès le joue une fois',async()=>{
+  const e=environment({auth:null,existingTouch:false});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});await selectMorganOnLaunch(tree);
+    assert.equal(e.sounds.length,0);assert.equal(e.notifications.length,0);
+    await e.press(button(tree,'Accéder aux services'));
+    assert.deepEqual(e.sounds,[{gesture:true}]);assert.equal(e.values.get('fnac-pulse-touch-welcome-v1'),'done');
+    assert.match(text(tree.toJSON()),/Bien démarrer/);assert.match(text(tree.toJSON()),/Morgan/);
+    assert.equal(e.logoutCount,0);
+  } finally {await finish(tree,e);}
+});
+
+test('PWA : lecture refusée, accès sans son et choix des permissions préservés',async()=>{
+  const e=environment({auth:null,existingTouch:false});let tree;
+  try {
+    e.audioReject=true;tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Plus tard'));
+    assert.deepEqual(e.sounds,[{gesture:true}]);assert.match(text(tree.toJSON()),/Le son n’a pas pu être lu/);
+    assert.match(text(tree.toJSON()),/Continuer sans son/);
+    await e.press(button(tree,'Continuer sans son'));
+    assert.equal(e.values.get('fnac-pulse-touch-welcome-v1'),'done');assert.match(text(tree.toJSON()),/Bien démarrer/);
+    assert.equal(e.notifications.length,0);assert.equal(e.locations.length,0);
+  } finally {await finish(tree,e);}
+});
+
+test('Tableau de bord après le lancement : invitation en haut et textes conservés',async()=>{
+  const e=environment({auth:session});let tree;
+  try {
+    tree=await mount();await e.press(button(tree,'Continuer'));
+    const output=text(tree.toJSON());
+    assert(output.indexOf('Restez informés')>=0&&output.indexOf('Restez informés')<output.indexOf('VOTRE TABLEAU DE BORD'));
+    assert.match(output,/VENTES QUOTIDIENNES/);assert.match(output,/Une vente de services \? Un clic et c’est enregistré\./);
+    assert.doesNotMatch(output,/VOTRE ESPACE DE VENTE/);assert.match(output,/La vente, c’est notre rayon\. Les services aussi\. 😉/);
+    assert(tree.root.findByProps({'aria-label':'Mon profil, Morgan'}));
+  } finally {await finish(tree,e);}
+});
+
+test('Plus tard dans un navigateur : accès à l’accueil sans profil ni lecture sonore',async()=>{
+  const e=environment({standalone:false,auth:null,existingTouch:false});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Plus tard'));
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert(tree.root.findByProps({'aria-label':'Votre magasin Fnac'}));
+    assert.equal(e.sellerCalls.length,0);assert.equal(e.sounds.length,0);assert.equal(e.values.get('fnac-pulse-touch-welcome-v1'),undefined);
+  } finally {await finish(tree,e);}
+});
+
+test('Invitation directe dans un navigateur : pas de modale d’installation au-dessus de l’administration',async()=>{
+  const e=environment({standalone:false,auth:'manual',directInvitation:true});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Plus tard'));await e.authAs(null);
+    assert(tree.root.findByProps({role:'dialog','aria-label':'Espace administrateur'}));
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,1,'une seule modale visible');
+    await e.press(tree.root.findByProps({role:'dialog','aria-label':'Espace administrateur'}).findByProps({'aria-label':'Fermer'}));
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+  } finally {await finish(tree,e);}
+});
+
+test('Profil mémorisé déconnecté au lancement : PIN requis, sans redemander le prénom',async()=>{
+  const e=environment({standalone:false,auth:null});let tree;
+  try {
+    e.values.set('fnac-pulse-device-profile-v1',JSON.stringify({storeId:'near',sellerId:1}));
+    tree=await mount({stayAtLaunch:true});const profile=()=>section(tree,'Sélection du profil vendeur');
+    assert.match(text(profile()),/Morgan/);assert.match(text(profile()),/Fnac Près/);
+    assert.equal(profile().findAllByProps({'aria-label':'Votre prénom'}).length,0);
+    assert(profile().findByProps({'aria-label':'Code PIN personnel'}));assert.equal(e.sellerCalls.length,0);
+    await act(async()=>{profile().findByProps({'aria-label':'Code PIN personnel'}).props.onChange({target:{value:'4829'}});await tick();});
+    await act(async()=>{await profile().findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
+    assert.deepEqual(e.sellerCalls,[{mode:'login',selection:{storeId:'near',departmentId:'tech',sellerId:1},pin:'4829',pinSalt:'sel-fictif'}]);
+    assert.equal(e.logoutCount,0);assert.match(text(tree.toJSON()),/Bienvenue sur/);
+  } finally {await finish(tree,e);}
+});
+
+test('Ancien PIN au lancement : migration individuelle à 4 chiffres sans perte de profil',async()=>{
+  const e=environment({standalone:false,auth:null});let tree;
+  try {
+    e.values.set('fnac-pulse-device-profile-v1',JSON.stringify({storeId:'near',sellerId:1}));
+    e.pinStatus={needsPin:false,pinLength:8,pinSalt:'sel-fictif'};
+    tree=await mount({stayAtLaunch:true});const profile=()=>section(tree,'Sélection du profil vendeur');
+    const change=async(label,value)=>act(async()=>{profile().findByProps({'aria-label':label}).props.onChange({target:{value}});await tick();});
+    assert.match(text(profile()),/Passez à un PIN de 4 chiffres/);
+    await change('Ancien code PIN à 8 chiffres','73628519');await change('Votre nouveau code PIN','7284');await change('Confirmer votre code PIN','7284');
+    await act(async()=>{await profile().findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
+    assert.deepEqual(e.sellerCalls,[{mode:'migrate',selection:{storeId:'near',departmentId:'tech',sellerId:1},oldPin:'73628519',newPin:'7284',pinSalt:'sel-fictif'}]);
+    assert.match(e.values.get('fnac-pulse-device-profile-v1'),/"sellerId":1/);assert.equal(e.logoutCount,0);
+  } finally {await finish(tree,e);}
+});
+
+test('Échec de connexion admin au lancement : pas de droit attribué ni déconnexion vendeur',async()=>{
+  const e=environment({auth:session});let tree;
+  try {
+    e.adminFail=true;tree=await mount({stayAtLaunch:true});await e.press(tree.root.findByProps({'aria-label':'Ouvrir l’administration'}));
+    const dialog=()=>tree.root.findByProps({role:'dialog','aria-label':'Espace administrateur'});
+    await act(async()=>{dialog().findByProps({id:'admin-email'}).props.onChange({target:{value:'admin@example.test'}});dialog().findByProps({id:'admin-password'}).props.onChange({target:{value:'incorrect'}});await tick();});
+    await act(async()=>{await dialog().findByProps({className:'admin-login-form'}).props.onSubmit({preventDefault(){}});await tick();await tick();});
+    assert.match(text(dialog()),/Identifiants incorrects/);assert.equal(e.adminValues.get('pulse-admin-token'),undefined);
+    assert.equal(e.logoutCount,0);assert.match(text(section(tree,'Sélection du profil vendeur')),/Morgan/);
   } finally {await finish(tree,e);}
 });

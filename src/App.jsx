@@ -371,7 +371,9 @@ export default function App() {
   const [summaryState,setSummaryState]=useState({key:'',data:null,loading:false,error:''});
   const [theme,setTheme]=useState(readTheme);
   const [soundEnabled,setSoundEnabled]=useState(readSoundEnabled);
-  const [startupGate,setStartupGate]=useState(()=>needsStartupTouch({standalone:isStandalone()}));
+  // Le choix du profil et l'accès administrateur sont proposés à chaque ouverture,
+  // sans rejouer le son lorsque le premier geste PWA est déjà enregistré.
+  const [startupGate,setStartupGate]=useState(true);
   const [startupReady,setStartupReady]=useState(false);
   const [startupStatus,setStartupStatus]=useState('ready');
   const [startupPermissionsOpen,setStartupPermissionsOpen]=useState(isStandalone);
@@ -435,8 +437,8 @@ export default function App() {
       }
     };
     const displayChanged=()=>{if(needsStartupTouch({standalone:isStandalone()}))setStartupGate(true);};
-    // Sur les ouvertures suivantes, préparer le même lecteur au premier geste,
-    // sans jouer le MP3 ni réafficher l'accueil tactile déjà terminé.
+    // Après l'écran de lancement, préparer le même lecteur au premier geste,
+    // sans rejouer le MP3 lorsque le premier lancement PWA est déjà terminé.
     const prepare=event=>{if(event.isTrusted!==false&&!startupGateRef.current)player.prepareFromGesture();};
     const visibility=()=>{if(document.visibilityState==='hidden')player.stop();};
     const media=window.matchMedia?.('(display-mode: standalone)');
@@ -670,7 +672,7 @@ export default function App() {
     } else authenticated=next;
     localStorage.setItem(SESSION_KEY,JSON.stringify(authenticated));
     setData(d=>d?{...d,stats:null}:d);setSession(authenticated);setSessionModal(false);setActiveNav('today');
-    window.scrollTo({top:0,behavior:'smooth'});
+    if(!startupGateRef.current)window.scrollTo({top:0,behavior:'smooth'});
     const person=data?.sellers.find(s=>s.id===authenticated.sellerId),name=person?.name||setup?.name;
     flash(`Bienvenue${name?`, ${name}`:''} ! Votre espace est prêt.`);
   }
@@ -878,9 +880,16 @@ export default function App() {
     } catch {setInstallError('Le navigateur n’a pas ouvert l’installation. Utilisez le menu indiqué ci-dessus.');}
   }
   const installationDialog=installModal&&<InstallDialog platform={platform} base={APP_BASE} promptAvailable={!!installPrompt} installError={installError} onInstall={installApp} onClose={()=>setInstallModal(false)}/>;
-  if(startupGate)return <StartupGate base={APP_BASE} enabled={soundEnabled} ready={startupReady} status={startupStatus} onStart={enterStartup} onSound={toggleSound} onContinue={continueWithoutStartupSound}/>;
-  if(startupPermissionsOpen)return <><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div><StartupPermissionsDialog platform={platform} permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} authReady={authReady} profileName={seller?.name} profileContent={data?<SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'startup-new'} data={data} initialProfile={deviceProfile} startupLocation={startupLocation} modal startup onSubmit={selectSession} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>:loadFailed?<div className="startup-profile-status" role="alert">Profil indisponible. Vérifiez votre connexion. <button type="button" className="text-button" onClick={refresh}>Réessayer</button></div>:<p className="startup-profile-status" role="status">Chargement des magasins et des profils…</p>} locationStatus={locationStatus} locationFeedback={locationFeedback} onNotification={requestStartupNotifications} onLocation={()=>requestStartupLocation(true)} onClose={closeStartupPermissions}/></>;
-  if(!data)return <><div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>{installationDialog}</>;
+  const profileContent=data?<SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'startup-new'} data={data} initialProfile={deviceProfile} startupLocation={startupLocation} modal startup onSubmit={selectSession} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>:loadFailed?<div className="startup-profile-status" role="alert">Profil indisponible. Vérifiez votre connexion. <button type="button" className="text-button" onClick={refresh}>Réessayer</button></div>:<p className="startup-profile-status" role="status">Chargement des magasins et des profils…</p>;
+  // L'administration reçoit toujours le vrai catalogue : un catalogue vide
+  // temporaire effacerait à tort le magasin d'administration mémorisé.
+  const adminDialog=adminModal&&data&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>;
+  const sessionDialog=sessionModal&&data&&<Modal title={CLOUD?'Mon profil':'Changer d’espace'} subtitle={CLOUD?'Votre espace sur cet appareil.':'Sélectionnez votre magasin, votre département et votre profil vendeur.'} onClose={()=>setSessionModal(false)}>
+    {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button></>:<><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/><p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></>}
+  </Modal>;
+  if(startupGate)return <><StartupGate base={APP_BASE} enabled={soundEnabled} ready={startupReady} status={startupStatus} authReady={authReady} hasSession={!!session} profileName={seller?.name} profileContext={[store&&displayStoreName(store),department?.name].filter(Boolean).join(' · ')} profileContent={profileContent} onChangeProfile={()=>setSessionModal(true)} onAdmin={()=>setAdminModal(true)} adminAvailable={!!data} adminPending={adminModal} adminError={loadFailed} onRetry={refresh} onStart={enterStartup} onSound={toggleSound} onContinue={continueWithoutStartupSound}/>{sessionDialog}{adminDialog}</>;
+  if(startupPermissionsOpen)return <><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div>{adminDialog||<StartupPermissionsDialog platform={platform} permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} authReady={authReady} profileName={seller?.name} profileContent={profileContent} locationStatus={locationStatus} locationFeedback={locationFeedback} onNotification={requestStartupNotifications} onLocation={()=>requestStartupLocation(true)} onClose={closeStartupPermissions}/>}</>;
+  if(!data)return <><div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>{!adminModal&&installationDialog}</>;
   const stats=data.stats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
   return <><div className="app-shell">
     <Sidebar onNavigate={navigate} onAdmin={()=>setAdminModal(true)} onSession={changeSession} onInstall={openInstall} showInstall={!installed} activeNav={activeNav}/>
@@ -899,12 +908,10 @@ export default function App() {
       </main>
     </div>
     <MobileNav onNavigate={navigate} active={activeNav}/>
-    {sessionModal&&<Modal title={CLOUD?'Mon profil':'Changer d’espace'} subtitle={CLOUD?'Votre espace sur cet appareil.':'Sélectionnez votre magasin, votre département et votre profil vendeur.'} onClose={()=>setSessionModal(false)}>
-      {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button></>:<><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/><p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></>}
-    </Modal>}
+    {sessionDialog}
     {todayDetail&&session&&stats&&<TodayDetails scope={todayDetail} stats={stats} services={data.services} date={data.today} department={department} offline={connection==='offline'} onClose={()=>setTodayDetail(null)}/>}
     {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={()=>setGoalModal(null)}><GoalForm services={data.services} goals={currentGoals} workdays={goalState.workdays} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={()=>setGoalModal(null)} disabled={connection==='offline'}/></Modal>}
-    {adminModal&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>}
+    {adminDialog}
     {notificationsModal&&<NotificationsDialog permission={notificationPermission} enabled={displayedEnabled} checkError={displayedError} unconfirmed={displayedUnconfirmed} pushAvailable={pushAvailable} platform={platform} installed={installed} hasSession={!!session} pendingProfile={notificationPendingProfile} pendingError={!!startupNotificationError} busy={notificationBusy} onClose={()=>setNotificationsModal(false)} onEnable={enableNotifications} onDisable={disableNotifications} onRetry={retryNotifications} onInstall={openInstall} onSelectProfile={()=>{setNotificationsModal(false);changeSession();}}/>}
     {themeModal&&<Modal title="Apparence" subtitle="Vos préférences sur cet appareil." onClose={()=>setThemeModal(false)}>
       <div className="theme-options" role="radiogroup" aria-label="Thème de l’application">
@@ -917,5 +924,5 @@ export default function App() {
       {toast&&<Toast key={`toast-${toast.sequence}`} notice={toast} onClose={()=>{clearTimeout(toastTimer.current);setToast(null);}}/>}
       {soundNotice&&<Toast key={`sound-${soundNotice.sequence}`} notice={soundNotice} icon={soundEnabled?Volume2:VolumeX} onClose={()=>{clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}}/>}
     </div>}
-  </div>{installationDialog}</>;
+  </div>{!adminModal&&installationDialog}</>;
 }
