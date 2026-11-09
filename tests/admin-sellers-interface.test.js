@@ -94,6 +94,9 @@ test('Magasins : ajout replié par défaut et formulaire conservé',async()=>{
     const disclosure=tree.root.findByProps({className:'admin-add-store'});
     assert.equal(disclosure.type,'details');assert.notEqual(disclosure.props.open,true,'le formulaire démarre fermé');
     assert.match(text(disclosure.findByType('summary')),/Ajouter un magasin/);
+    const message=text(tree.toJSON());
+    assert.match(message,/Vous pouvez sélectionner un magasin à gérer ou en ajouter un s’il manque\./);
+    assert.doesNotMatch(message,/Noms issus de l’annuaire Fnac|les copies manuelles ne sont pas certifiées|les noms remplacés à partir de cette version/);
     assert.equal(calls.filter(x=>x.path==='/api/admin/stores'&&x.method==='POST').length,0,'aucun ajout à l’ouverture');
     const name=disclosure.findByProps({placeholder:'Ex. Fnac Bordeaux'}),lat=disclosure.findByProps({placeholder:'44.8399'}),lon=disclosure.findByProps({placeholder:'−0.5740'});
     assert.equal(name.props.required,true);

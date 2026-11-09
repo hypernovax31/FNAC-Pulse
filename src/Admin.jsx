@@ -410,7 +410,7 @@ export default function Admin({onClose,data,session,onChanged}) {
             <button className="primary-button" disabled={busy}><Plus size={16}/> Ajouter le magasin</button>
           </form>
         </details>
-        <div className="admin-note"><Store size={15}/> Noms issus de l’annuaire Fnac ou ajoutés par l’administration ; les copies manuelles ne sont pas certifiées. Les coordonnées disponibles sont indicatives. Les magasins restent conservés ; les noms remplacés à partir de cette version restent recherchables.</div>
+        <div className="admin-note"><Store size={15}/> Vous pouvez sélectionner un magasin à gérer ou en ajouter un s’il manque.</div>
 
       </>}
       {CLOUD&&tab==='sellers'&&adminStore&&<div className="seller-access">
