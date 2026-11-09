@@ -15,7 +15,7 @@ export function SellerCard({seller,departments,storeId,token,busy,editing,editNa
           <button type="button" className="icon-button" aria-label={`${seller.active?'Archiver':'Restaurer'} ${seller.name}`} title={seller.active?'Archiver':'Restaurer'} disabled={busy||!!seller.deletingJob} onClick={onArchive}>{seller.active?<Archive size={15}/>:<RotateCcw size={15}/>}</button>
         </div></>}
     </div>
-    <div className="seller-card-department"><span>DÉPARTEMENT</span><div className="seller-department-value" aria-label={`Département de ${seller.name}`}><strong>{department?.name||'Département indisponible'}</strong>{department&&!department.active&&<span> · archivé</span>}<small>Affectation définitive</small></div></div>
+    <div className="seller-card-department"><span>DÉPARTEMENT</span><div className="seller-department-value" aria-label={`Département de ${seller.name}`}><strong>{department?.name||'Département indisponible'}</strong>{department&&!department.active&&<span> · archivé</span>}</div></div>
     <SellerWorkdays seller={seller} storeId={storeId} token={token} open={workdaysOpen} onToggle={onToggleWorkdays} disabled={busy} onBusy={onBusy} onChanged={onChanged}/>
   </article>;
 }

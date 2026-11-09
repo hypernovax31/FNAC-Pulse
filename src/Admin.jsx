@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, LockKeyhole, ArrowRight, Plus, Check, Pencil, Archive, RotateCcw, LogOut, ShieldCheck, Store, Info, ArrowUp, ArrowDown, Trash2 } from 'lucide-react';
+import { X, LockKeyhole, ArrowRight, Plus, Check, Pencil, Archive, RotateCcw, LogOut, ShieldCheck, Store, Info, ArrowUp, ArrowDown, Trash2, ChevronDown } from 'lucide-react';
 import { api } from './api';
 import { CLOUD, ADMIN_SESSION, adminLogin, adminLogout, claimAdminAccess, resendAdminVerification } from './cloud';
 import { AdminAccounts } from './AdminAccounts';
@@ -362,9 +362,9 @@ export default function Admin({onClose,data,session,onChanged}) {
         <div className="admin-note"><Info size={15}/> Les ventes déjà enregistrées restent attachées à leur département d’origine.</div>
       </>}
       {(tab==='sellers'||tab==='services')&&adminStore&&<>
-        <div className="admin-section-heading"><div><h3>{tab==='sellers'?'Vendeurs et accès':'Vos services'}</h3><p>{tab==='sellers'?'Ajoutez et gérez les vendeurs de ce magasin. L’archivage conserve leur historique.':'L’ordre et la suppression concernent ce magasin. Les noms des services restent communs à tous les magasins.'}</p></div></div>
+        <div className="admin-section-heading"><div><h3>{tab==='sellers'?'Vendeurs':'Vos services'}</h3><p>{tab==='sellers'?'Ajoutez et gérez les vendeurs de ce magasin. L’archivage conserve leur historique.':'L’ordre et la suppression concernent ce magasin. Les noms des services restent communs à tous les magasins.'}</p></div></div>
         {!adminStore?<div className="empty-admin">Choisissez d’abord le magasin à gérer.</div>:<>
-          <form className={`add-entity ${tab==='sellers'?'add-seller':''}`} onSubmit={e=>{e.preventDefault();if(!name.trim()||(tab==='sellers'&&!departmentForNewSeller))return;run(async()=>{await api(`/api/admin/entities/${tab}`,{method:'POST',token,body:{name,...(tab==='sellers'?{storeId:adminStore,departmentId:departmentForNewSeller}:{})}});setName('');},tab==='sellers'?'Vendeur ajouté dans ce magasin.':'Service ajouté dans tous les magasins.');}}>
+          <form className={`add-entity ${tab==='sellers'?'add-seller':''}`} onSubmit={e=>{e.preventDefault();if(!name.trim()||(tab==='sellers'&&!departmentForNewSeller))return;run(async()=>{await api(`/api/admin/entities/${tab}`,{method:'POST',token,body:{name,...(tab==='sellers'?{storeId:adminStore,departmentId:departmentForNewSeller}:{})}});setName('');if(tab==='sellers')setNewSellerDepartment('');},tab==='sellers'?'Vendeur ajouté dans ce magasin.':'Service ajouté dans tous les magasins.');}}>
             <input className="text-input" aria-label={tab==='sellers'?'Nom du vendeur':'Nom du service'} placeholder={tab==='sellers'?'Prénom du vendeur':'Intitulé du service'} value={name} onChange={e=>setName(e.target.value)} required maxLength={60}/>
             {tab==='sellers'&&<select className="text-input" aria-label="Département du nouveau vendeur" value={departmentForNewSeller} onChange={e=>setNewSellerDepartment(e.target.value)} disabled={busy||!activeDepartments.length} required><option value="">Choisir un département</option>{activeDepartments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select>}
             <button className="primary-button" disabled={busy||(tab==='sellers'&&!departmentForNewSeller)}><Plus size={16}/> Ajouter</button>
@@ -402,17 +402,19 @@ export default function Admin({onClose,data,session,onChanged}) {
           <p id="admin-store-search-hint">{storeDraftUnselected?(adminStoreName?`Magasin toujours géré : ${adminStoreDisplay}. Choisissez un résultat pour changer.`:'Choisissez un magasin dans les résultats.'):'Dans cet onglet, ce choix reste mémorisé jusqu’à votre déconnexion administrateur et s’applique aux ventes, objectifs, vendeurs, services et codes PIN.'}</p>
           {data.stores.find(s=>s.id===adminStore)?.directoryStatus==='regional-choice'&&<p className="regional-choice-notice">Mention régionale sans magasin précis : les bilans sont communs et les notifications partagées entre vendeurs d’un même département. Ajoutez des magasins distincts si nécessaire.</p>}
         </div>
-        <div className="admin-section-heading"><div><h3>Ajouter un magasin</h3><p>Un magasin absent de la liste ? Ajoutez-le à votre espace.</p></div></div>
-        <form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{await api('/api/admin/stores',{method:'POST',token,body:newStore});setNewStore({name:'',lat:'',lon:''});},'Magasin ajouté.')}}>
-          <label><span className="form-label">Nom du magasin</span><input className="text-input" required maxLength={60} placeholder="Ex. Fnac Bordeaux" value={newStore.name} onChange={e=>setNewStore(v=>({...v,name:e.target.value}))}/></label>
-          <div className="admin-selects"><label><span className="form-label">Latitude <span className="optional">(facultatif)</span></span><input className="text-input" type="number" step="any" placeholder="44.8399" value={newStore.lat} onChange={e=>setNewStore(v=>({...v,lat:e.target.value}))}/></label><label><span className="form-label">Longitude <span className="optional">(facultatif)</span></span><input className="text-input" type="number" step="any" placeholder="−0.5740" value={newStore.lon} onChange={e=>setNewStore(v=>({...v,lon:e.target.value}))}/></label></div>
-          <button className="primary-button" disabled={busy}><Plus size={16}/> Ajouter le magasin</button>
-        </form>
+        <details className="admin-add-store">
+          <summary><span className="admin-add-store-copy"><strong>Ajouter un magasin</strong><small>Un magasin absent de la liste ? Ajoutez-le à votre espace.</small></span><ChevronDown size={18} aria-hidden="true"/></summary>
+          <form className="store-form" onSubmit={e=>{e.preventDefault();run(async()=>{await api('/api/admin/stores',{method:'POST',token,body:newStore});setNewStore({name:'',lat:'',lon:''});},'Magasin ajouté.')}}>
+            <label><span className="form-label">Nom du magasin</span><input className="text-input" required maxLength={60} placeholder="Ex. Fnac Bordeaux" value={newStore.name} onChange={e=>setNewStore(v=>({...v,name:e.target.value}))}/></label>
+            <div className="admin-selects"><label><span className="form-label">Latitude <span className="optional">(facultatif)</span></span><input className="text-input" type="number" step="any" placeholder="44.8399" value={newStore.lat} onChange={e=>setNewStore(v=>({...v,lat:e.target.value}))}/></label><label><span className="form-label">Longitude <span className="optional">(facultatif)</span></span><input className="text-input" type="number" step="any" placeholder="−0.5740" value={newStore.lon} onChange={e=>setNewStore(v=>({...v,lon:e.target.value}))}/></label></div>
+            <button className="primary-button" disabled={busy}><Plus size={16}/> Ajouter le magasin</button>
+          </form>
+        </details>
         <div className="admin-note"><Store size={15}/> Noms issus de l’annuaire Fnac ou ajoutés par l’administration ; les copies manuelles ne sont pas certifiées. Les coordonnées disponibles sont indicatives. Les magasins restent conservés ; les noms remplacés à partir de cette version restent recherchables.</div>
 
       </>}
       {CLOUD&&tab==='sellers'&&adminStore&&<div className="seller-access">
-        <div className="admin-section-heading"><div><h3>Accès et codes PIN</h3><p>Chaque vendeur choisit son propre PIN lors de sa première connexion. Aucun code préalable n’est nécessaire.</p></div></div>
+        <div className="admin-section-heading"><div><h3>Réinitialisation codes PIN</h3><p>Chaque vendeur choisit son propre PIN lors de sa première connexion. Aucun code préalable n’est nécessaire.</p></div></div>
         <div className="admin-selects admin-selects-single">
           <label><span className="form-label">Vendeur</span><select aria-label="Vendeur à réinitialiser" className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>{setAdminSeller(e.target.value);setNotice('');}}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
         </div>

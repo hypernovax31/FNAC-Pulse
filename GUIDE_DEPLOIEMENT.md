@@ -6,6 +6,12 @@ Ce guide configure **GitHub Pages + Firebase Spark + Cloudflare Workers/Queues F
 >
 > Ne partagez jamais ici ou dans Git de mot de passe, PIN, fichier JSON de compte de service, clé privée VAPID, `PIN_PEPPER` ou jeton d'accès. La configuration Web Firebase, l'URL Worker et la **clé VAPID publique** ne sont pas des secrets. Les règles Firestore et les contrôles du Worker, et non la confidentialité de la configuration Web, protègent les données.
 
+## Mise à jour : panneau Magasins et Vendeurs
+
+Cette modification concerne **Pages uniquement** : publier le workflow manuel puis fermer et rouvrir la PWA en ligne pour charger le cache v55. Le Worker, les règles Firebase, les comptes, les PIN, les ventes, les objectifs et les sessions ne sont pas modifiés par ce déploiement.
+
+Dans **Magasins**, « Ajouter un magasin » est replié par défaut et s’ouvre pour accéder au formulaire. Dans **Vendeurs**, les titres sont « Vendeurs » et « Réinitialisation codes PIN » ; la phrase d’explication du PIN reste affichée. La mention « Affectation définitive » est retirée des fiches, mais le département reste affiché et verrouillé. L’avertissement reste visible à l’ajout, et le choix du département est demandé de nouveau après chaque création.
+
 ## Mise à jour : objectifs minimums, ventes rapides et interface
 
 Déployer d’abord le **Worker complet** avec les secrets et la Queue existants, sans modifier les règles Firebase, puis publier le workflow Pages manuel et rouvrir la PWA en ligne pour le cache v54. Cette publication ne réécrit pas les anciens objectifs, les ventes, les PIN, les comptes ou les sessions. Les tests automatiques utilisent uniquement des données fictives ; une recette sur deux appareils physiques reste à faire volontairement.
