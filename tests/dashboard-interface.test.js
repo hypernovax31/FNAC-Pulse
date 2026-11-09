@@ -9,7 +9,7 @@ import {build} from 'esbuild';
 const require=createRequire(import.meta.url);
 const bundled=await build({entryPoints:['src/App.jsx'],bundle:true,platform:'node',format:'cjs',external:['react','lucide-react'],write:false,logLevel:'silent',define:{'import.meta.env':JSON.stringify({BASE_URL:'/',VITE_BACKEND:'local'})}});
 const module={exports:{}};new Function('module','exports','require',bundled.outputFiles[0].text)(module,module.exports,require);
-const {Header,Sidebar,DateChip,ActivityCard,Summary,MobileNav,TodayOverview,TodayDetails,ServiceCard,default:App}=module.exports;
+const {Header,Sidebar,DateChip,ActivityCard,Summary,MobileNav,TodayOverview,TodayDetails,ServiceCard,Toast,default:App}=module.exports;
 const render=(component,props={})=>renderToStaticMarkup(React.createElement(component,props));
 
 test('En-tête : son séparé, cloche barrée et aucun point vert de direct',()=>{
@@ -159,4 +159,22 @@ test('Détail Aujourd’hui : chiffres personnels et équipe, zéro et données 
     assert.match(empty,/Détail par service/);assert.match(empty,/Aucune vente enregistrée/);assert.doesNotMatch(empty,/\d+ types?/);
   }
   assert.match(render(TodayDetails,{scope:'mine',stats:{mineTotal:2,day:{}},services:[],onClose(){}}),/détail des ventes est indisponible/);
+});
+
+test('Alerte de profil : variante limitée, annonce accessible, fermeture et action normale préservées',async()=>{
+  const {act}=TestRenderer;let tree,closed=0,undone=0;
+  const message='Choisissez d’abord votre magasin et votre profil.';
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Toast,{notice:{message,tone:'warning',variant:'profile-required'},onClose:()=>closed++}));});
+    let status=tree.root.findByProps({role:'status'});
+    assert.equal(status.props.className,'toast toast-warning toast-profile-required');
+    assert.equal(status.props['aria-atomic'],'true');
+    assert.equal(status.findByProps({className:'toast-message'}).children.join(''),message);
+    await act(async()=>status.findByProps({'aria-label':'Fermer la notification'}).props.onClick());assert.equal(closed,1);
+    await act(async()=>tree.update(React.createElement(Toast,{notice:{message:'Vente ajoutée.',tone:'success',actionLabel:'Annuler',action:()=>undone++},onClose:()=>closed++})));
+    status=tree.root.findByProps({role:'status'});
+    assert.equal(status.props.className,'toast toast-success','les autres retours ne prennent pas cette variante');
+    await act(async()=>status.findByProps({className:'toast-action'}).props.onClick());
+    assert.equal(closed,2);assert.equal(undone,1);
+  } finally {if(tree)await act(async()=>tree.unmount());}
 });

@@ -351,14 +351,14 @@ function readNotificationPermission() {return typeof Notification==='undefined'?
 function Toast({notice,onClose,icon}) {
   const Icon=icon||(notice.tone==='warning'?Info:CircleCheck),container=useRef(null);
   useLayoutEffect(()=>{const node=container.current;return ()=>{if(typeof document!=='undefined'&&node?.contains(document.activeElement))restoreDialogFocus({currentTarget:document.activeElement});};},[]);
-  return <div ref={container} className={`toast toast-${notice.tone||'default'}`} role="status" aria-atomic="true">
+  return <div ref={container} className={`toast toast-${notice.tone||'default'}${notice.variant==='profile-required'?' toast-profile-required':''}`} role="status" aria-atomic="true">
     <span className="toast-icon" aria-hidden="true"><Icon size={22}/></span><span className="toast-message">{notice.message}</span>
     {notice.action&&<button type="button" className="toast-action" onClick={event=>{restoreDialogFocus(event);onClose();notice.action();}}>{notice.actionLabel}</button>}
     <button type="button" className="toast-close" aria-label="Fermer la notification" onClick={event=>{restoreDialogFocus(event);onClose();}}><X size={19} aria-hidden="true"/></button>
   </div>;
 }
 
-export { Header, Sidebar, DateChip, ActivityCard, Summary, MobileNav, TodayOverview, TodayDetails, ServiceCard };
+export { Header, Sidebar, DateChip, ActivityCard, Summary, MobileNav, TodayOverview, TodayDetails, ServiceCard, Toast };
 export default function App() {
   const [session,setSession]=useState(()=>CLOUD?null:getSession());
   const [deviceProfile,setDeviceProfile]=useState(()=>CLOUD?readDeviceProfile(undefined,getSession()):null);
@@ -821,7 +821,7 @@ export default function App() {
   }
   function forgetSaleRetry(id) {updateSaleRetries(items=>items.filter(item=>item.requestId!==id));}
   async function addSale(service){
-    if(!session){flash('Choisissez d’abord votre magasin et votre profil.',{tone:'warning'});changeSession();return;}
+    if(!session){flash('Choisissez d’abord votre magasin et votre profil.',{tone:'warning',variant:'profile-required'});changeSession();return;}
     if(connection==='offline'){flash('Connexion interrompue : aucune nouvelle vente n’a été envoyée.',{tone:'warning'});return;}
     const targetOwner=goalOwnerKey(session),pendingKey=`${targetOwner}:${service.id}`,day=parisToday();
     if(pendingRef.current.has(pendingKey))return;
@@ -941,7 +941,7 @@ export default function App() {
     }
   }
   async function enableNotifications(){
-    if(!session){setNotificationsModal(false);flash('Choisissez d’abord votre magasin et votre profil.',{tone:'warning'});changeSession();return;}
+    if(!session){setNotificationsModal(false);flash('Choisissez d’abord votre magasin et votre profil.',{tone:'warning',variant:'profile-required'});changeSession();return;}
     if(!window.isSecureContext||!('serviceWorker' in navigator)||!('PushManager' in window)||!('Notification' in window)) {flash('Notifications indisponibles ici : utilisez une connexion HTTPS et un navigateur compatible.',{tone:'warning',duration:8000});return;}
     notificationAbort.current?.abort();setNotificationBusy(true);
     try {

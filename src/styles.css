@@ -1774,3 +1774,35 @@ p,h1,h2,h3 { margin:0; }
   .topbar { padding-left:6px; padding-right:6px; }
   .brand-compact img { width:31px; height:34px; }
 }
+
+/* Alerte de profil : discrète et toujours juste sous l'en-tête du tableau de bord. */
+.toast-profile-required {
+  min-height:58px;
+  padding:7px 8px 7px 11px;
+  gap:9px;
+  border:1px solid #dfe4da;
+  border-left:3px solid #c6b47a;
+  border-radius:10px;
+  background:rgba(251,252,248,.96);
+  color:#354035;
+  box-shadow:0 5px 16px rgba(28,37,27,.13);
+  font-size:14px;
+  font-weight:650;
+  line-height:1.4;
+  -webkit-backdrop-filter:blur(8px);
+  backdrop-filter:blur(8px);
+}
+.toast-profile-required .toast-icon { width:28px; height:28px; flex-basis:28px; background:#f1eedf; color:#786929; }
+.toast-profile-required .toast-close { border-color:#dce2d8; background:rgba(255,255,255,.75); color:#566052; box-shadow:none; }
+.toast-profile-required .toast-close:hover { background:#f0f3ed; border-color:#bbc6b6; }
+.toast-stack:not(.toast-stack-dialog) .toast-profile-required { position:fixed; top:78px; right:20px; width:min(420px,calc(100vw - 28px)); }
+/* Laisser un autre retour de page accessible s'il apparaît en même temps. */
+:root:has(.toast-stack:not(.toast-stack-dialog) .toast-profile-required) .visible-feedback-page { top:148px; }
+@media (max-width:800px) {
+  .toast-stack:not(.toast-stack-dialog) .toast-profile-required { top:72px; right:14px; }
+  :root:has(.toast-stack:not(.toast-stack-dialog) .toast-profile-required) .visible-feedback-page { top:142px; }
+}
+[data-theme='dark'] .toast-profile-required { border-color:#5b6958; border-left-color:#b8a468; background:rgba(41,48,40,.97); color:#eef2e9; box-shadow:0 5px 16px rgba(0,0,0,.3); }
+[data-theme='dark'] .toast-profile-required .toast-icon { background:#4a4734; color:#eadca8; }
+[data-theme='dark'] .toast-profile-required .toast-close { border-color:#677663; background:rgba(255,255,255,.06); color:#e0e9db; box-shadow:none; }
+[data-theme='dark'] .toast-profile-required .toast-close:hover { background:rgba(255,255,255,.12); }

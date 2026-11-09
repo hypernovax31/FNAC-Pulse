@@ -40,3 +40,22 @@ test('Correction mobile : grilles rétrécissables, champs de date et confirmati
   assert.match(css,/\.history-delete,\.history-confirm-delete\s*\{[^}]*min-height:44px/);
   assert.match(css,/\[data-theme='dark'\] \.history-confirm-add\s*\{/);
 });
+
+test('Alerte de profil : deux déclencheurs ciblés, bandeau discret sous l’en-tête et retours coexistants',()=>{
+  const app=readFileSync(new URL('../src/App.jsx',import.meta.url),'utf8');
+  const calls=[...app.matchAll(/flash\('Choisissez d’abord votre magasin et votre profil\.',\{tone:'warning',variant:'profile-required'\}\)/g)];
+  assert.equal(calls.length,2);
+  assert.equal((app.match(/variant:'profile-required'/g)||[]).length,2,'aucun autre message ne change de présentation');
+  assert.match(css,/\.toast-profile-required\s*\{[^}]*min-height:58px[^}]*border-left:3px[^}]*font-size:14px/);
+  assert.match(css,/\.toast-stack:not\(\.toast-stack-dialog\) \.toast-profile-required\s*\{[^}]*position:fixed;\s*top:78px/);
+  assert.match(css,/@media\s*\(max-width:800px\)\s*\{\s*\.toast-stack:not\(\.toast-stack-dialog\) \.toast-profile-required\s*\{\s*top:72px/);
+  assert.match(css,/:root:has\(\.toast-stack:not\(\.toast-stack-dialog\) \.toast-profile-required\) \.visible-feedback-page\s*\{\s*top:148px/);
+  assert.match(css,/\[data-theme='dark'\] \.toast-profile-required\s*\{[^}]*background:rgba\(41,48,40,\.97\)[^}]*color:#eef2e9/);
+  assert.match(css,/\.toast-close\s*\{\s*width:44px;\s*height:44px/);
+  // Contraste avec l’arrière-plan le plus défavorable à travers la légère transparence.
+  const luminance=rgb=>rgb.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
+  const ratio=(a,b)=>{const l=[luminance(a),luminance(b)].sort((x,y)=>x-y);return (l[1]+.05)/(l[0]+.05);};
+  const blend=(fg,bg,alpha)=>fg.map((c,i)=>c*alpha+bg[i]*(1-alpha));
+  assert(ratio([53,64,53],blend([251,252,248],[0,0,0],.96))>=4.5);
+  assert(ratio([238,242,233],blend([41,48,40],[255,255,255],.97))>=4.5);
+});
