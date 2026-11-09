@@ -21,6 +21,7 @@ const plugin={name:'admin-fixtures',setup(b){
     export const cancelAdminEnrollmentCode=(...x)=>globalThis.__adminTest.cancelCode(...x);
     export const changeFirstCodeAdminPassword=(...x)=>globalThis.__adminTest.firstCodePassword(...x);
     export const registerAdminWithCode=(...x)=>globalThis.__adminTest.registerCode(...x);
+    export const registerAdminForApproval=(...x)=>globalThis.__adminTest.registerManual(...x);
     export const requestAdminEmailChange=(...x)=>globalThis.__adminTest.address(...x);
     export const inspectAdminEmailChange=(...x)=>globalThis.__adminTest.inspect(...x);
     export const confirmAdminEmailChange=(...x)=>globalThis.__adminTest.confirm(...x);
@@ -35,7 +36,7 @@ async function load(entry){
   const out=await build({entryPoints:[entry],bundle:true,platform:'node',format:'cjs',write:false,external:['react','lucide-react'],plugins:[plugin],logLevel:'silent'});
   const mod={exports:{}};new Function('module','exports','require',out.outputFiles[0].text)(mod,mod.exports,require);return mod.exports;
 }
-const {AdminAccounts}=await load('src/AdminAccounts.jsx'),{AdminTestCleanup}=await load('src/AdminTestCleanup.jsx'),{LegacyAdminRequests}=await load('src/LegacyAdminRequests.jsx'),{AdminFirstPassword}=await load('src/AdminFirstPassword.jsx'),{AdminCodeRegistration}=await load('src/AdminCodeRegistration.jsx'),{AdminInvitationHelp}=await load('src/AdminInvitationHelp.jsx'),{DirectoryImport}=await load('src/DirectoryImport.jsx'),{AdminTabs}=await load('src/AdminTabs.jsx');
+const {AdminAccounts}=await load('src/AdminAccounts.jsx'),{AdminTestCleanup}=await load('src/AdminTestCleanup.jsx'),{LegacyAdminRequests}=await load('src/LegacyAdminRequests.jsx'),{AdminFirstPassword}=await load('src/AdminFirstPassword.jsx'),{AdminCodeRegistration}=await load('src/AdminCodeRegistration.jsx'),{AdminRegistration}=await load('src/AdminRegistration.jsx'),{AdminInvitationHelp}=await load('src/AdminInvitationHelp.jsx'),{DirectoryImport}=await load('src/DirectoryImport.jsx'),{AdminTabs}=await load('src/AdminTabs.jsx');
 const text=node=>typeof node==='string'||typeof node==='number'?String(node):!node?'':Array.isArray(node)?node.map(text).join(''):text(node.children);
 const form=(tree,id)=>tree.root.findByProps({'aria-labelledby':id}).findAllByType('form')[0];
 const change=async(input,value)=>act(async()=>{input.props.onChange({target:{value}});await tick();});
@@ -59,6 +60,7 @@ function setup(){
     async cancelCode(...args){e.calls.push(['cancelCode',...args]);return {ok:true};},
     async firstCodePassword(...args){e.calls.push(['firstCodePassword',...args]);},
     async registerCode(...args){e.calls.push(['registerCode',args[1]]);return {ok:true};},
+    async registerManual(...args){e.calls.push(['registerManual',args[1]]);return {status:'pending'};},
     async sendReset(...args){e.calls.push(['sendReset',...args]);},
     async inspectReset(...args){e.calls.push(['inspectReset',...args]);return {code:'reset-fictif',email:'invite@example.test'};},
     async confirmReset(...args){e.calls.push(['confirmReset',...args]);return {email:'invite@example.test'};},
@@ -186,6 +188,20 @@ test('Compatibilité hors panneau : nettoyage du test strictement ciblé et conf
     const deletion=details.findAllByType('form').at(-1);e.allow=false;await submit(deletion);assert.equal(deleteCalls,0);
     e.allow=true;await submit(deletion);assert.equal(deleteCalls,1);assert.equal(e.calls.find(x=>x[0]==='deleteTest')[1].uid,'test-uid-001');
     assert.match(text(details),/compte Firebase a été supprimé/);
+  } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
+});
+
+test('Compatibilité hors écran : ancien formulaire manuel inchangé, sans validation automatique',async()=>{
+  const e=setup(),registered=[],busy=[];let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(AdminRegistration,{onRegistered:async(...value)=>registered.push(value),onCancel(){},onBusy:x=>busy.push(x)}));await tick();});
+    assert.match(text(tree.toJSON()),/Aucun e-mail n’est envoyé/);assert.match(text(tree.toJSON()),/validera votre accès/);
+    const f=()=>tree.root.findByType('form'),inputs=()=>f().findAllByType('input');
+    await change(inputs()[0],'ANCIEN@example.test');await change(inputs()[1],'Personnel-test-2026!');await change(inputs()[2],'Personnel-test-2026!');
+    await submit(f());
+    assert.deepEqual(e.calls.find(x=>x[0]==='registerManual')[1],{email:'ancien@example.test',password:'Personnel-test-2026!'});
+    assert.deepEqual(registered,[['ancien@example.test','pending']]);assert.deepEqual(busy,[true,false]);
+    assert(!e.calls.some(x=>String(x[1]).includes('/approve')),'aucun droit attribué automatiquement');
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}
 });
 

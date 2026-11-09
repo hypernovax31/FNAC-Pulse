@@ -59,56 +59,53 @@ test('Première connexion directe : pas de session admin avant changement et rec
   } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
 });
 
-test('Parcours code à distance : aucun accès avant le mot de passe personnel',async()=>{
+test('Ancien compte par code : aucun accès avant le mot de passe personnel',async()=>{
   const names=['document','window','sessionStorage','__directLogin'],old=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)]));
   const values=new Map(),calls=[],put=(n,value)=>Object.defineProperty(globalThis,n,{configurable:true,writable:true,value});let changed=false,logins=0,tree;
   put('document',{body:{style:{overflow:''}},activeElement:null,addEventListener(){},removeEventListener(){}});put('window',{confirm:()=>true});
   put('sessionStorage',{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)});
   put('__directLogin',{
-    async register(_api,data){calls.push(['register',data]);return {ok:true};},
     async codeChange(next){calls.push(['codeChange',next]);changed=true;},
     async login(email,password){calls.push(['login',email,password]);logins++;return 'admin-session';},
     async logout(){calls.push(['logout']);},async change(){throw Error('ancien flux incorrect');},
     async api(path){
       calls.push(['api',path]);
-      if(path==='/api/auth/admin-account-status')return changed?(logins===0?{passwordChangeRequired:false,reauthenticate:true}:{passwordChangeRequired:false}):{passwordChangeRequired:true,method:'code'};
+      if(path==='/api/auth/admin-account-status')return changed?(logins===1?{passwordChangeRequired:false,reauthenticate:true}:{passwordChangeRequired:false}):{passwordChangeRequired:true,method:'code'};
       if(path==='/api/admin/all')return {sellers:[],services:[],serviceOrders:{},departmentsByStore:{}};
       return {ok:true};
     },
   });
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
-    await act(async()=>{tree.root.findAllByType('button').find(x=>text(x).includes('Aide à la connexion')).props.onClick();await tick();});
-    await act(async()=>{tree.root.findAllByType('button').find(x=>text(x).includes('Créer mon accès avec un code')).props.onClick();await tick();});
-    assert.match(text(tree.toJSON()),/6 caractères maximum/);
-    const form=()=>tree.root.findByType('form'),fields=()=>form().findAllByType('input');
-    await set(fields()[0],'ABCD-EFGH-JKLM-NPQR');await set(fields()[1],'nouveau@example.test');await set(fields()[2],'123456');await set(fields()[3],'123456');
-    await act(async()=>fields()[4].props.onChange({target:{checked:true}}));
-    await act(async()=>{form().props.onSubmit({preventDefault(){}});await tick();await tick();});
+    await set(tree.root.findByProps({id:'admin-email'}),'ancien@example.test');await set(tree.root.findByProps({id:'admin-password'}),'Cle-provisoire-fictive');
+    await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
     assert.match(text(tree.toJSON()),/Remplacez le mot de passe provisoire/);assert.equal(values.has('pulse-admin-token'),false);
     assert.equal(calls.filter(x=>x[0]==='api'&&x[1]==='/api/admin/all').length,0);
+    const form=()=>tree.root.findByType('form'),fields=()=>form().findAllByType('input');
     assert.equal(fields().length,2,'pas de ressaisie du code ni du provisoire');
     await set(fields()[0],'Personnel-test-2026!');await set(fields()[1],'Personnel-test-2026!');
     await act(async()=>{form().props.onSubmit({preventDefault(){}});await new Promise(r=>setTimeout(r,1250));await tick();await tick();});
     assert.deepEqual(calls.find(x=>x[0]==='codeChange').slice(1),['Personnel-test-2026!']);
-    assert.deepEqual(calls.filter(x=>x[0]==='login').map(x=>x[2]),['Personnel-test-2026!']);
+    assert.deepEqual(calls.filter(x=>x[0]==='login').map(x=>x[2]),['Cle-provisoire-fictive','Personnel-test-2026!']);
     assert.equal(values.get('pulse-admin-token'),'admin-session');assert(calls.some(x=>x[0]==='api'&&x[1]==='/api/admin/all'));
     await act(async()=>{tree.root.findAllByProps({role:'tab'}).find(x=>text(x).includes('Administrateurs')).props.onClick();await tick();await tick();});
     await act(async()=>{tree.root.findAllByType('button').find(x=>text(x).includes('Se déconnecter')).props.onClick();await tick();await tick();});
     assert.equal(values.has('pulse-admin-token'),false);assert(tree.root.findByProps({id:'admin-email'}));
-    assert.match(text(tree.toJSON()),/Mot de passe oublié \?/);assert.doesNotMatch(text(tree.toJSON()),/Aide à la connexionRetrouvez/);
+    assert.match(text(tree.toJSON()),/Mot de passe oublié \?/);assert.doesNotMatch(text(tree.toJSON()),/Aide à la connexion|Créer mon accès avec un code/);
   } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
 });
 
-test('Nouvelle première connexion : mot de passe personnel, aucun droit avant validation humaine',async()=>{
+test('Ancienne demande en attente : proposer une invitation et préserver la validation éventuelle',async()=>{
   const names=['document','window','sessionStorage','__directLogin'],old=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)]));
   const values=new Map(),calls=[],put=(n,value)=>Object.defineProperty(globalThis,n,{configurable:true,writable:true,value});let tree,approved=false;
   put('document',{body:{style:{overflow:''}},activeElement:null,addEventListener(){},removeEventListener(){}});put('window',{confirm:()=>true});
   put('sessionStorage',{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)});
   put('__directLogin',{
-    async manualRegister(_api,data){calls.push(['register',data]);return {status:'pending'};},
-    async logout(){calls.push(['logout']);},async login(){throw Error('unexpected');},async change(){},
+    async login(email,password){calls.push(['login',email,password]);return 'admin-session';},
+    async claim(){calls.push(['claim']);return {ok:true,status:'pending'};},
+    async logout(){calls.push(['logout']);},async change(){},
     async api(path){calls.push(['api',path]);
+      if(path==='/api/auth/admin-account-status'||path==='/api/auth/admin-invitations/accept')throw Object.assign(Error('Accès administrateur refusé.'),{status:403});
       if(path==='/api/auth/admin-access/status')return {ok:true,status:approved?'approved':'pending'};
       if(path==='/api/admin/all')return {sellers:[],services:[],serviceOrders:{},departmentsByStore:{}};
       return {ok:true};
@@ -117,14 +114,10 @@ test('Nouvelle première connexion : mot de passe personnel, aucun droit avant v
   const button=caption=>tree.root.findAllByType('button').find(x=>text(x).includes(caption));
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
-    await act(async()=>button('Aide à la connexion').props.onClick());
-    await act(async()=>button('Première connexion').props.onClick());
-    assert.match(text(tree.toJSON()),/Aucun e-mail n’est envoyé/);assert.doesNotMatch(text(tree.toJSON()),/code|mot de passe provisoire/);
-    const f=()=>tree.root.findByType('form'),fields=()=>f().findAllByType('input');
-    await set(fields()[0],'candidate@example.test');await set(fields()[1],'Personnel-test-2026!');await set(fields()[2],'Personnel-test-2026!');
-    await act(async()=>{f().props.onSubmit({preventDefault(){}});await tick();await tick();});
-    assert.deepEqual(calls.find(x=>x[0]==='register')[1],{email:'candidate@example.test',password:'Personnel-test-2026!'});
-    assert.match(text(tree.toJSON()),/Demande en attente/);assert.match(text(tree.toJSON()),/Montrez cet écran/);assert.equal(values.has('pulse-admin-token'),false);
+    await set(tree.root.findByProps({id:'admin-email'}),'ancien@example.test');await set(tree.root.findByProps({id:'admin-password'}),'Personnel-test-2026!');
+    await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
+    assert(calls.some(x=>x[0]==='claim'));assert.match(text(tree.toJSON()),/Demande en attente/);
+    assert.match(text(tree.toJSON()),/demandez à un administrateur de vous envoyer une invitation par e-mail/i);assert.equal(values.has('pulse-admin-token'),false);
     assert.equal(calls.filter(x=>x[1]==='/api/admin/all').length,0);
     await act(async()=>{button('Vérifier la validation').props.onClick();await tick();});assert.match(text(tree.toJSON()),/attend toujours/);
     assert.equal(values.has('pulse-admin-token'),false);approved=true;
@@ -203,12 +196,10 @@ test('Invitation par e-mail : une adresse non vérifiée ne reçoit aucun accès
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
     await set(tree.root.findByProps({id:'admin-email'}),'invite@example.test');await set(tree.root.findByProps({id:'admin-password'}),'Mot-de-passe-personnel-2026');
     await act(async()=>{tree.root.findAllByType('form')[0].props.onSubmit({preventDefault(){}});await tick();await tick();});
-    assert.match(text(tree.toJSON()),/Confirmez d’abord l’adresse e-mail/);assert.equal(values.has('pulse-admin-token'),false);
+    assert.match(text(tree.toJSON()),/Confirmez votre adresse avec le lien reçu/);assert.match(text(tree.toJSON()),/nouvelle invitation/);assert.equal(values.has('pulse-admin-token'),false);
     assert(calls.includes('logout'));assert(!calls.includes('/api/admin/all'));assert(!calls.includes('claim'),'la nouvelle invitation prime sur une ancienne demande manuelle');
-    const resend=tree.root.findAllByType('button').find(x=>text(x).includes('Renvoyer le lien de confirmation'));assert(resend);
-    await act(async()=>{resend.props.onClick();await tick();await tick();});
-    assert.deepEqual(calls.find(x=>Array.isArray(x)&&x[0]==='resend'),['resend','invite@example.test','Mot-de-passe-personnel-2026']);
-    assert.match(text(tree.toJSON()),/Nouveau lien envoyé/);
+    assert(!calls.some(x=>Array.isArray(x)&&x[0]==='resend'));
+    assert.doesNotMatch(text(tree.toJSON()),/Renvoyer le lien de confirmation|Aide à la connexion|Anciennes demandes/);
   } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
 });
 
@@ -226,8 +217,11 @@ test('Connexion simplifiée : demande de lien depuis une adresse préremplie, sa
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
     assert.match(text(tree.toJSON()),/Connectez-vous avec votre adresse e-mail et votre mot de passe/);
-    assert.doesNotMatch(text(tree.toJSON()),/Anciennes demandes|Gardez la main|Créer mon accès avec un code/);
-    assert(button('Mot de passe oublié ?'));assert(button('Aide à la connexion'));
+    assert.doesNotMatch(text(tree.toJSON()),/Anciennes demandes|Gardez la main|Créer mon accès avec un code|Aide à la connexion|Première connexion/);
+    assert(button('Mot de passe oublié ?'));assert(!button('Aide à la connexion'));
+    assert.deepEqual(tree.root.findAllByType('input').map(node=>node.props.id),['admin-email','admin-password']);
+    assert.deepEqual(tree.root.findAllByType('button').map(node=>text(node).trim()||node.props['aria-label']),['Fermer','Se connecter','Mot de passe oublié ?']);
+    assert.equal(tree.root.findAllByType('a').length,0,'aucun lien de secours visible');
     await set(tree.root.findByProps({id:'admin-email'}),' admin@example.test ');
     await set(tree.root.findByProps({id:'admin-password'}),'secret-fictif');
     await act(async()=>button('Mot de passe oublié ?').props.onClick());
@@ -242,7 +236,8 @@ test('Connexion simplifiée : demande de lien depuis une adresse préremplie, sa
     await act(async()=>button('Retour à la connexion').props.onClick());
     assert.equal(tree.root.findByProps({id:'admin-email'}).props.value,'admin@example.test');
     assert.equal(tree.root.findByProps({id:'admin-password'}).props.value,'');
-    assert.doesNotMatch(text(tree.toJSON()),/secret-fictif|Anciennes demandes/);
+    assert.doesNotMatch(text(tree.toJSON()),/secret-fictif|Anciennes demandes|Aide à la connexion/);
+    assert.deepEqual(tree.root.findAllByType('button').map(node=>text(node).trim()||node.props['aria-label']),['Fermer','Se connecter','Mot de passe oublié ?']);
   } finally {if(tree)await act(async()=>tree.unmount());for(const [name,descriptor] of old)if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];}
 });
 
@@ -264,4 +259,42 @@ test('Mot de passe oublié : erreur et même erreur réaffichée au nouvel essai
     assert.equal(tree.root.findAllByProps({className:'visible-feedback visible-feedback-dialog is-error'}).length,0);
     await submit();assert.equal(attempts,2);popup=tree.root.findByProps({className:'visible-feedback visible-feedback-dialog is-error'});assert.match(text(popup),/Trop de demandes/);
   } finally {if(tree)await act(async()=>tree.unmount());for(const [name,descriptor] of old)if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];}
+});
+
+test('Session administrateur existante : ouverture et fermeture ne la modifient pas',async()=>{
+  const names=['document','window','sessionStorage','__directLogin'],old=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)]));
+  const values=new Map([['pulse-admin-token','admin-session']]),calls=[],put=(n,value)=>Object.defineProperty(globalThis,n,{configurable:true,writable:true,value});let tree,closed=0;
+  put('document',{body:{style:{overflow:''}},activeElement:null,addEventListener(){},removeEventListener(){}});put('window',{confirm:()=>true});
+  put('sessionStorage',{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)});
+  put('__directLogin',{
+    async login(){calls.push('login');throw Error('aucune nouvelle connexion');},
+    async logout(){calls.push('logout');throw Error('aucune déconnexion');},
+    async api(path,options={}){calls.push([path,options.method||'GET']);if(path==='/api/admin/all')return {sellers:[],services:[],serviceOrders:{},departmentsByStore:{}};throw Error('requête inattendue');},
+  });
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){closed++;},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();await tick();});
+    assert(tree.root.findByProps({'aria-label':'Administration'}));assert.equal(values.get('pulse-admin-token'),'admin-session');
+    await act(async()=>tree.root.findByProps({'aria-label':'Fermer'}).props.onClick());
+    assert.equal(closed,1);assert.equal(values.get('pulse-admin-token'),'admin-session');
+    assert(!calls.includes('login')&&!calls.includes('logout'));assert.deepEqual(calls.filter(x=>Array.isArray(x)).map(x=>x[0]),['/api/admin/all']);
+  } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
+});
+
+test('Compte déjà administrateur non vérifié : expliquer le blocage sans promettre une invitation',async()=>{
+  const names=['document','window','sessionStorage','__directLogin'],old=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)]));
+  const values=new Map(),calls=[],put=(n,value)=>Object.defineProperty(globalThis,n,{configurable:true,writable:true,value});let tree;
+  put('document',{body:{style:{overflow:''}},activeElement:null,addEventListener(){},removeEventListener(){}});put('window',{confirm:()=>true});
+  put('sessionStorage',{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)});
+  put('__directLogin',{
+    async login(){return 'admin-session';},async logout(){calls.push('logout');},
+    async api(path){calls.push(path);if(path==='/api/auth/admin-account-status')throw Object.assign(Error('Confirmez votre adresse e-mail avec le lien reçu avant de vous connecter.'),{status:403});throw Error('aucune donnée admin avant vérification');},
+  });
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
+    await set(tree.root.findByProps({id:'admin-email'}),'admin@example.test');await set(tree.root.findByProps({id:'admin-password'}),'Personnel-test-2026!');
+    await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
+    assert.match(text(tree.toJSON()),/Confirmez votre adresse avec le lien reçu/);assert.match(text(tree.toJSON()),/contactez le responsable de Fnac Pulse/);
+    assert.doesNotMatch(text(tree.toJSON()),/nouvelle invitation|Renvoyer le lien de confirmation|Aide à la connexion/);
+    assert.equal(values.has('pulse-admin-token'),false);assert(calls.includes('logout'));assert(!calls.includes('/api/admin/all'));
+  } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
 });
