@@ -119,9 +119,15 @@ test('Aujourd’hui : les cartes ouvrent le détail correspondant et restent ina
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(TodayOverview,{stats,hasSession:true,onShow:value=>selected.push(value)}));});
     const buttons=tree.root.findAllByType('button');assert.equal(buttons.length,2);assert(buttons.every(button=>!button.props.disabled));
-    for(const button of buttons)await act(async()=>button.props.onClick());assert.deepEqual(selected,['mine','team']);
+    for(const button of buttons) {
+      assert.match(button.props['aria-label'],/Voir le détail/);
+      assert.equal(button.findAllByProps({className:'stat-detail-action'}).length,1,'le détail est aussi proposé visuellement');
+      await act(async()=>button.props.onClick());
+    }
+    assert.deepEqual(selected,['mine','team']);
     await act(async()=>tree.update(React.createElement(TodayOverview,{stats:null,hasSession:false,onShow:value=>selected.push(value)})));
     assert(tree.root.findAllByType('button').every(button=>button.props.disabled));
+    assert.equal(tree.root.findAllByProps({className:'stat-detail-action'}).length,0,'aucune invitation à appuyer si les données sont indisponibles');
   }finally{if(tree)await act(async()=>tree.unmount());}
 });
 

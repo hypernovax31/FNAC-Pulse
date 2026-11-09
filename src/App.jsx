@@ -263,7 +263,8 @@ function StatCard({label,value,detail,Icon,tone,onClick}) {
   return <button type="button" className={`stat-card stat-card-${tone}`} onClick={onClick} disabled={!available} aria-label={available?`${label} : ${value} ${value>1?'services':'service'}. Voir le détail.`:`${label} : données indisponibles`}>
     <span className="stat-top"><span>{label}</span><span className={`stat-icon ${tone}`} aria-hidden="true"><Icon size={18}/></span></span>
     <span className="stat-value">{value??'—'}<span>{value===undefined||value===null?'':value>1?'services':'service'}</span></span>
-    <span className="stat-detail"><span>{detail}</span>{available&&<ChevronRight size={14} aria-hidden="true"/>}</span>
+    <span className="stat-detail"><span>{detail}</span></span>
+    {available&&<span className="stat-detail-action" aria-hidden="true">Voir le détail <ChevronRight size={14}/></span>}
   </button>;
 }
 function TodayOverview({stats,hasSession,onShow}) {

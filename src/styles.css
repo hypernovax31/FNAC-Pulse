@@ -1444,3 +1444,267 @@ p,h1,h2,h3 { margin:0; }
   .admin-invite-confirm-actions { display:grid; grid-template-columns:minmax(0,1fr); }
   .admin-invite-confirm-actions .primary-button { order:-1; }
 }
+
+/* Boutons : surfaces nettes et léger relief, sans modifier les actions ni la navigation. */
+:root {
+  --button-face:#fff;
+  --button-border:#c4cabd;
+  --button-ink:#343a31;
+  --button-hover:#f4f7f1;
+  --button-shadow:0 2px 0 rgba(55,65,48,.16),0 3px 7px rgba(42,48,37,.05);
+  --button-gold:#f1c326;
+  --button-gold-border:#b98c08;
+  --button-gold-shadow:0 2px 0 #aa8007,0 3px 8px rgba(112,82,0,.12);
+}
+[data-theme='dark'] {
+  --button-face:#30362e;
+  --button-border:#707b69;
+  --button-ink:#f0f3e9;
+  --button-hover:#3c4439;
+  --button-shadow:0 2px 0 rgba(0,0,0,.42),0 3px 7px rgba(0,0,0,.14);
+  --button-gold:#f1c326;
+  --button-gold-border:#e0b83a;
+  --button-gold-shadow:0 2px 0 #9b7813,0 3px 8px rgba(0,0,0,.22);
+}
+
+/* Jaune pour l'action principale, blanc pour les actions secondaires. */
+:is(.primary-button,.startup-start,.history-add-button,.history-confirm-add-button,.admin-request-review) {
+  min-height:44px;
+  padding:9px 15px;
+  border:1px solid var(--button-gold-border);
+  border-radius:9px;
+  background:var(--button-gold);
+  color:#302700;
+  box-shadow:var(--button-gold-shadow);
+  font-size:12px;
+  font-weight:800;
+  line-height:1.3;
+  text-align:center;
+  white-space:normal;
+  transition:background .15s,box-shadow .15s,transform .15s;
+}
+.startup-start { min-height:52px; padding:9px 42px; font-size:13px; }
+:is(.primary-button,.startup-start,.history-add-button,.history-confirm-add-button,.admin-request-review):hover:not(:disabled) { background:#f7ce43; }
+[data-theme='dark'] :is(.primary-button,.startup-start,.history-add-button,.history-confirm-add-button,.admin-request-review):not(:disabled) {
+  border-color:var(--button-gold-border);
+  background:var(--button-gold);
+  color:#302700;
+  box-shadow:var(--button-gold-shadow);
+}
+[data-theme='dark'] :is(.primary-button,.startup-start,.history-add-button,.history-confirm-add-button,.admin-request-review):hover:not(:disabled) { background:#f7ce43; }
+:is(.primary-button,.startup-start,.history-add-button,.history-confirm-add-button,.admin-request-review):disabled {
+  border-color:#ddd8c5;
+  background:#ebe8db;
+  color:#858477;
+  box-shadow:none;
+  opacity:1;
+  cursor:not-allowed;
+}
+[data-theme='dark'] :is(.primary-button,.startup-start,.history-add-button,.history-confirm-add-button,.admin-request-review):disabled {
+  border-color:#59584a;
+  background:#444438;
+  color:#c0bca8;
+}
+
+:is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-permission-action,.startup-active-profile button) {
+  min-height:44px;
+  padding:8px 13px;
+  border:1px solid var(--button-border);
+  border-radius:9px;
+  background:var(--button-face);
+  color:var(--button-ink);
+  box-shadow:var(--button-shadow);
+  font-size:12px;
+  font-weight:750;
+  line-height:1.3;
+  text-align:center;
+  text-decoration:none;
+  transition:background .15s,border-color .15s,box-shadow .15s,transform .15s;
+}
+.small-outline-button { height:auto; }
+:is(.profile-status-error,.startup-profile-status) .text-button { padding:8px 13px; }
+:is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-permission-action,.startup-active-profile button):hover:not(:disabled) {
+  border-color:#8c9a82;
+  background:var(--button-hover);
+}
+:is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-permission-action,.startup-active-profile button):disabled {
+  box-shadow:none;
+  opacity:.55;
+  cursor:not-allowed;
+}
+[data-theme='dark'] :is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-permission-action,.startup-active-profile button) {
+  border-color:var(--button-border);
+  background:var(--button-face);
+  color:var(--button-ink);
+}
+[data-theme='dark'] :is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-permission-action,.startup-active-profile button):hover:not(:disabled) { background:var(--button-hover); }
+
+/* Petites actions et boutons à icône restent identifiables, y compris dans les cartes. */
+:is(.icon-button,.locate-button,.admin-requests-refresh,.admin-tabs-arrow,.profile-trigger,.minus-button) {
+  border:1px solid var(--button-border);
+  border-radius:9px;
+  background:var(--button-face);
+  color:var(--button-ink);
+  box-shadow:var(--button-shadow);
+  transition:background .15s,border-color .15s,box-shadow .15s,transform .15s;
+}
+.profile-trigger { min-height:44px; padding:4px 7px; }
+:is(.icon-button,.locate-button,.admin-requests-refresh,.admin-tabs-arrow,.profile-trigger,.minus-button):hover:not(:disabled) { border-color:#8c9a82; background:var(--button-hover); }
+:is(.icon-button,.locate-button,.admin-requests-refresh,.admin-tabs-arrow,.minus-button):disabled { box-shadow:none; opacity:.5; cursor:not-allowed; }
+.icon-button.service-delete-icon { color:#a74738; }
+[data-theme='dark'] :is(.icon-button,.locate-button,.admin-requests-refresh,.admin-tabs-arrow,.profile-trigger,.minus-button) { border-color:var(--button-border); background:var(--button-face); color:var(--button-ink); }
+[data-theme='dark'] :is(.icon-button,.locate-button,.admin-requests-refresh,.admin-tabs-arrow,.profile-trigger,.minus-button):hover:not(:disabled) { background:var(--button-hover); }
+[data-theme='dark'] .icon-button.service-delete-icon { color:#ffc1b4; }
+
+/* Les retraits sont annoncés par un contour rouge ; la confirmation est pleine. */
+:is(.sales-reset-button,.history-delete,.goal-remove,.logout-button) {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  min-height:44px;
+  padding:8px 12px;
+  border:1px solid #c98275;
+  border-radius:9px;
+  background:#fff5f2;
+  color:#8e382b;
+  box-shadow:0 2px 0 rgba(139,63,49,.19);
+  font-size:12px;
+  font-weight:750;
+  line-height:1.3;
+}
+:is(.sales-reset-danger,.history-confirm-delete) {
+  min-height:44px;
+  padding:8px 12px;
+  border:1px solid #87392e;
+  border-radius:9px;
+  background:#a84334;
+  color:#fff;
+  box-shadow:0 2px 0 #7b3026;
+  font-size:12px;
+  font-weight:800;
+  line-height:1.3;
+}
+:is(.sales-reset-button,.history-delete,.goal-remove,.logout-button):hover:not(:disabled) { background:#ffebe6; }
+:is(.sales-reset-danger,.history-confirm-delete):hover:not(:disabled) { background:#91382c; }
+:is(.sales-reset-button,.history-delete,.goal-remove,.logout-button,.sales-reset-danger,.history-confirm-delete):disabled { opacity:.5; box-shadow:none; cursor:not-allowed; }
+[data-theme='dark'] :is(.sales-reset-button,.history-delete,.goal-remove,.logout-button) { border-color:#bf8175; background:#3b2926; color:#ffd5cd; box-shadow:0 2px 0 rgba(0,0,0,.4); }
+[data-theme='dark'] :is(.sales-reset-button,.history-delete,.goal-remove,.logout-button):hover:not(:disabled) { background:#51332f; }
+[data-theme='dark'] :is(.sales-reset-danger,.history-confirm-delete) { border-color:#df8474; background:#a84334; color:#fff; }
+[data-theme='dark'] :is(.sales-reset-danger,.history-confirm-delete):hover:not(:disabled) { background:#bb5140; }
+
+/* Les changements de période restent des commandes groupées, avec choix actif visible. */
+:is(.admin-tabs button,.goal-periods button,.period-tabs button,.history-modes button) {
+  border:1px solid var(--button-border);
+  border-radius:7px;
+  background:var(--button-face);
+  color:var(--button-ink);
+  box-shadow:0 1px 0 rgba(55,65,48,.13);
+}
+.period-tabs { gap:3px; }
+.period-tabs button { min-height:40px; }
+:is(.admin-tabs button.active,.goal-periods button.is-active,.period-tabs button.selected,.history-modes button.active) {
+  border-color:#c7a536;
+  background:#fff3c7;
+  color:#514008;
+  box-shadow:0 2px 0 rgba(170,131,18,.24);
+}
+[data-theme='dark'] :is(.admin-tabs button,.goal-periods button,.period-tabs button,.history-modes button) { border-color:#6b7464; background:#30362e; color:#e4e9dd; }
+[data-theme='dark'] :is(.admin-tabs button.active,.goal-periods button.is-active,.period-tabs button.selected,.history-modes button.active) { border-color:#c4a344; background:#5a4a22; color:#fff1bf; box-shadow:0 2px 0 rgba(0,0,0,.35); }
+:is(.admin-tabs button,.goal-periods button,.period-tabs button,.history-modes button):disabled { opacity:.55; box-shadow:none; cursor:not-allowed; }
+
+/* Cartes tactiles : la carte reste elle-même le bouton d'ajout. */
+.service-card { border-color:#cdd3c7; box-shadow:0 2px 0 rgba(55,65,48,.12),0 4px 10px rgba(42,48,37,.05); }
+.service-add-label { border:1px solid #bc920b; box-shadow:0 2px 0 #b1860a; }
+.service-add:active:not(:disabled) .service-add-label { transform:translateY(1px); box-shadow:0 1px 0 #b1860a; }
+.service-add:disabled .service-add-label { box-shadow:none; }
+[data-theme='dark'] .service-card { border-color:#697365; box-shadow:0 2px 0 rgba(0,0,0,.4); }
+[data-theme='dark'] .service-add-label { border-color:#d2a930; background:#f1c326; color:#302700; box-shadow:0 2px 0 #9b7813; }
+.goal-card-edit,.seller-workdays-toggle {
+  min-height:44px;
+  padding:7px 9px;
+  border:1px solid var(--button-border);
+  border-radius:8px;
+  background:var(--button-face);
+  color:var(--button-ink);
+  box-shadow:var(--button-shadow);
+}
+.goal-card-edit strong { color:var(--button-ink); }
+.goal-card-edit:disabled,.seller-workdays-toggle:disabled { opacity:.55; box-shadow:none; }
+.seller-workdays-toggle { margin-top:8px; }
+[data-theme='dark'] .goal-card-edit,[data-theme='dark'] .seller-workdays-toggle { background:var(--button-face); border-color:var(--button-border); color:var(--button-ink); }
+[data-theme='dark'] .goal-card-edit strong { color:var(--button-ink); }
+
+/* Une indication explicite distingue les cartes de chiffres ouvrant un détail. */
+.stat-detail-action {
+  display:inline-flex;
+  align-items:center;
+  align-self:flex-start;
+  gap:3px;
+  min-height:29px;
+  margin-top:9px;
+  padding:3px 8px;
+  border:1px solid #d1bd7b;
+  border-radius:7px;
+  background:#fffdf6;
+  color:#64500d;
+  box-shadow:0 1px 0 rgba(145,119,36,.16);
+  font-size:10px;
+  font-weight:750;
+  line-height:1.25;
+}
+.stat-detail-action svg { flex:0 0 auto; }
+[data-theme='dark'] .stat-detail-action { background:#40391f; border-color:#a39054; color:#f8e5a4; box-shadow:0 1px 0 rgba(0,0,0,.4); }
+
+/* Réessais, volets repliables et messages : les actions ne se confondent plus avec le texte. */
+:is(.startup-admin-status button,.admin-inline-link,.notification-card button,.offline-banner button,.goals-empty button,.goal-sync-warning button,.goal-conflict button,.seller-workdays-error button,.summary-warning button,.history-error button,.sales-reset-error button) {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:4px;
+  min-height:36px;
+  max-width:100%;
+  padding:6px 10px;
+  border:1px solid var(--button-border);
+  border-radius:7px;
+  background:var(--button-face);
+  color:var(--button-ink);
+  box-shadow:0 1px 0 rgba(55,65,48,.16);
+  font-size:11px;
+  font-weight:750;
+  line-height:1.3;
+  text-decoration:none;
+}
+[data-theme='dark'] :is(.startup-admin-status button,.admin-inline-link,.notification-card button,.offline-banner button,.goals-empty button,.goal-sync-warning button,.goal-conflict button,.seller-workdays-error button,.summary-warning button,.history-error button,.sales-reset-error button) { border-color:var(--button-border); background:var(--button-face); color:var(--button-ink); }
+:is(.activity-more summary,.goal-planning summary,.goal-form-details summary,.startup-location-help summary) { min-height:44px; padding:8px 10px; border:1px solid var(--button-border); border-radius:8px; background:var(--button-face); color:var(--button-ink); box-shadow:var(--button-shadow); }
+[data-theme='dark'] :is(.activity-more summary,.goal-planning summary,.goal-form-details summary,.startup-location-help summary) { border-color:var(--button-border); background:var(--button-face); color:var(--button-ink); }
+:is(.visible-feedback-action,.visible-feedback-close,.toast-action,.toast-close) { border:1px solid currentColor; background:rgba(255,255,255,.82); box-shadow:0 2px 0 rgba(34,48,30,.13); }
+[data-theme='dark'] :is(.visible-feedback-action,.visible-feedback-close,.toast-action,.toast-close) { background:rgba(0,0,0,.2); box-shadow:0 2px 0 rgba(0,0,0,.28); }
+
+/* Appui et navigation clavier visibles sans mouvement prolongé. */
+:is(.primary-button,.startup-start,.history-add-button,.history-confirm-add-button,.admin-request-review,.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-permission-action,.icon-button,.locate-button,.admin-requests-refresh,.admin-tabs-arrow,.profile-trigger,.minus-button,.sales-reset-button,.history-delete,.goal-remove,.logout-button,.sales-reset-danger,.history-confirm-delete,.goal-card-edit,.seller-workdays-toggle):active:not(:disabled) { transform:translateY(1px); box-shadow:0 1px 0 rgba(42,48,37,.22); }
+:is(button,summary):focus-visible { outline:3px solid #a77c00; outline-offset:2px; }
+[data-theme='dark'] :is(button,summary):focus-visible { outline-color:#f2ce54; }
+@media (prefers-reduced-motion:reduce) {
+  :is(button,summary) { transition:none !important; }
+}
+@media (max-width:800px) {
+  .mobile-nav button { margin:0 2px; border:1px solid #dfe4da; border-radius:9px; background:#fafbf9; color:#596055; }
+  .mobile-nav button.active { border-color:#d9b74a; background:#fff3cb; color:#594500; }
+  [data-theme='dark'] .mobile-nav button { border-color:#525c4e; background:#292f28; color:#d4dacd; }
+  [data-theme='dark'] .mobile-nav button.active { border-color:#b79a45; background:#52441f; color:#ffebaa; }
+}
+@media (min-width:801px) and (max-width:1100px) {
+  .topbar { padding-left:20px; padding-right:20px; }
+  .topbar-actions { flex-shrink:0; gap:9px; }
+  .breadcrumbs { min-width:0; overflow:hidden; white-space:nowrap; }
+  .profile-text { min-width:0; max-width:110px; }
+}
+/* Garder des cibles confortables même dans les variantes compactes existantes. */
+.workdays-actions .outline-button,.profile-unavailable .outline-button,
+.admin-approval .outline-button,.admin-approval .primary-button,
+.admin-add-address .primary-button,.admin-request-actions button { min-height:44px; padding:8px 12px; }
+.period-tabs button,.history-modes button { min-height:44px; }
+.entity-actions .icon-button,.service-entity-row .entity-actions .icon-button,
+.seller-card .entity-actions .icon-button,.edit-entity .icon-button { width:44px; height:44px; flex:0 0 44px; }
+.edit-entity,.edit-entity .text-input { min-width:0; }
