@@ -15,6 +15,9 @@ test('Accueil tactile : profil, administration et accès, sans bouton son ni tex
   const html=render({status:'ready'});
   assert.match(html,/<main[^>]*aria-labelledby="startup-title"/);
   assert.match(html,/FNAC-Pulse\/icons\/icon-192-v3\.png/);
+  assert.match(html,/<h1 id="startup-title">Bienvenue sur<br\/><span>Fnac Pulse/);
+  assert.match(html,/<div class="startup-kicker">L’APPLICATION DES SERVICES<\/div>/);
+  assert(html.indexOf('id="startup-title"')<html.indexOf('class="startup-kicker"'),'la bienvenue précède la signature');
   assert.match(html,/<button type="button" class="startup-start"[^>]*>Plus tard · Accéder aux services/);
   assert.doesNotMatch(html,/Appuyez sur le bouton pour accéder à l’application des services|startup-sound-toggle|Activer le son Fnac|Désactiver le son Fnac/);
   assert.match(html,/aria-label="Sélection du profil vendeur"/);assert.match(html,/aria-label="Ouvrir l’administration"/);

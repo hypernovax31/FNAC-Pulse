@@ -18,8 +18,8 @@ export function StartupGate({base='/',ready=true,status='ready',authReady=false,
       <section className="startup-card">
         <div className="startup-intro">
           <img className="startup-logo" src={`${base}icons/icon-192-v3.png`} width="92" height="92" alt=""/>
-          <div className="startup-kicker">L’APPLICATION DES SERVICES</div>
           <h1 id="startup-title">Bienvenue sur<br/><span>Fnac Pulse<span className="startup-dot">.</span></span></h1>
+          <div className="startup-kicker">L’APPLICATION DES SERVICES</div>
         </div>
         <div className="startup-workspace">
           <section className="startup-launch-profile" aria-label="Sélection du profil vendeur">
