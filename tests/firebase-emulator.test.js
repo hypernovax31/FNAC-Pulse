@@ -1101,3 +1101,40 @@ test('Émulateur Firestore : minimum admin non rétroactif, contrôles vendeur e
   assert.equal(entry.month,60);assert.equal((await seller(month(59),entry.revision)).status,403);
   assert.deepEqual((await db.get(`pulseAccess/${uid}`)).data,access);assert.deepEqual((await db.get(`pulseGoals/${uid}`)).data.workdays,[1,2,3,4,5,6]);
 });
+
+test('Émulateur Firestore : création admin atomique avec département et planning',{skip:!enabled},async()=>{
+  const project='demo-fnac-seller-planning',store=LEGACY_STORE_ID;
+  const db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'});
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'admin-fictif'})});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:'admin-fictif'},ctx={waitUntil(){}};
+  const call=async(path,method='GET',body)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,
+    headers:{authorization:'Bearer admin',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:r.status,body:await r.json()};};
+  // Seulement le projet de démonstration de l'émulateur local.
+  await fetch(`http://127.0.0.1:8085/emulator/v1/projects/${project}/databases/(default)/documents`,{method:'DELETE'});
+  assert.equal((await call('/api/bootstrap')).status,200);
+  const existingUid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;
+  const existingGoal={storeId:store,sellerId:1,goals:{s1:{month:33}},workdays:[1,2],workdaysRevision:'planning-existant'};
+  const existingAccess={storeId:store,sellerId:1,active:true,version:'session-existante'};
+  await db.commit([db.write(`pulseGoals/${existingUid}`,existingGoal),db.write(`pulseAccess/${existingUid}`,existingAccess)]);
+  const route='/api/admin/entities/sellers',input={storeId:store,name:'Vendeur test émulateur',departmentId:'editorial',workdays:[0,6,2]};
+  const base=(await db.get('pulse/catalog')).data;
+  assert.equal((await call(route,'POST',{...input,departmentId:undefined})).status,400);
+  assert.equal((await call(route,'POST',{...input,workdays:[]})).status,400);
+  assert.equal((await call(route,'POST',{...input,workdays:[1,1]})).status,400);
+  assert.deepEqual((await db.get('pulse/catalog')).data,base);
+  const created=await call(route,'POST',input);assert.equal(created.status,200);const id=created.body.id;
+  const uid=`seller-${(await digestBase64(`${store}:${id}`)).slice(0,28)}`,plan=(await db.get(`pulseGoals/${uid}`)).data;
+  assert.deepEqual(plan.workdays,[2,6,0]);assert.deepEqual(plan.goals,{});assert(plan.workdaysRevision);
+  assert.equal((await db.get('pulse/catalog')).data.sellers.find(s=>s.id===id).departmentId,'editorial');
+  assert.deepEqual((await call(`/api/admin/goals?storeId=${store}&sellerId=${id}`)).body.workdays,[2,6,0]);
+  assert.equal(await db.get(`pulseAccess/${uid}`),null);assert.equal(await db.get(`pulseStatus/${uid}`),null);
+  assert.deepEqual((await db.get(`pulseGoals/${existingUid}`)).data,existingGoal);
+  assert.deepEqual((await db.get(`pulseAccess/${existingUid}`)).data,existingAccess);
+  // Un document préexistant provoque un refus du commit entier côté Firestore.
+  const before=(await db.get('pulse/catalog')).data,nextId=before.nextSellerId;
+  const occupied=`seller-${(await digestBase64(`${store}:${nextId}`)).slice(0,28)}`,protectedDoc={workdays:[1],marker:'conserver'};
+  await db.commit([db.write(`pulseGoals/${occupied}`,protectedDoc)]);
+  const failed=await call(route,'POST',{...input,name:'Ne pas créer'});assert.equal(failed.status,409);
+  assert.deepEqual((await db.get('pulse/catalog')).data,before);assert.deepEqual((await db.get(`pulseGoals/${occupied}`)).data,protectedDoc);
+});

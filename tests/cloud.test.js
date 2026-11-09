@@ -67,8 +67,8 @@ test('Cloud : PIN, isolation, corrections, administration et notifications en fi
   assert.equal(sellersForStore(base.sellers,store).length,12);assert.equal(sellersForStore(base.sellers,other).length,0);
   assert.deepEqual(base.sellers.map(x=>x.name),[...base.sellers].sort((a,b)=>a.name.localeCompare(b.name,'fr',{sensitivity:'base'})).map(x=>x.name));
   assert.equal((await req('/api/admin/pin-reset','POST',{storeId:other,sellerId:1},'admin-token')).status,400);
-  assert.equal((await req('/api/admin/entities/sellers','POST',{name:'Morgan',storeId:other},'admin-token')).status,200);
-  assert.equal((await req('/api/admin/entities/sellers','POST',{name:'morgan',storeId:other},'admin-token')).status,409);
+  assert.equal((await req('/api/admin/entities/sellers','POST',{name:'Morgan',storeId:other,departmentId:'tech',workdays:[1,2,3,4,5]},'admin-token')).status,200);
+  assert.equal((await req('/api/admin/entities/sellers','POST',{name:'morgan',storeId:other,departmentId:'tech',workdays:[1,2,3,4,5]},'admin-token')).status,409);
   assert.equal((await req('/api/admin/entities/sellers','POST',{name:'Nouveau'},'admin-token')).status,400);
   const orderedIds=base.services.map(x=>x.id);[orderedIds[0],orderedIds[4]]=[orderedIds[4],orderedIds[0]];
   assert.equal((await req('/api/admin/services/order','POST',{storeId:store,serviceIds:orderedIds})).status,401);
@@ -504,7 +504,7 @@ test('Cloud départements : affectations, agrégats privés, historique et notif
   await db.commit([db.write('pulse/catalog',prior)]);
   assert.equal((await req('/api/admin/departments/editorial','PATCH',{storeId:store,active:false},'admin')).status,409);
   assert.equal((await req('/api/admin/entities/sellers/3','PATCH',{storeId:other,departmentId:'editorial'},'admin')).status,400);
-  assert.equal((await req('/api/admin/entities/sellers','POST',{storeId:other,name:'Autre équipe',departmentId:'tech'},'admin')).status,200);
+  assert.equal((await req('/api/admin/entities/sellers','POST',{storeId:other,name:'Autre équipe',departmentId:'tech',workdays:[1,2,3,4,5]},'admin')).status,200);
   const otherSeller=(await req(`/api/bootstrap?storeId=${other}`)).body.sellers.find(s=>s.storeId===other).id;
   const pins={1:'73628519',2:'59386271',3:'67289415',4:'78234691',[otherSeller]:'48275196'};
   for(const [id,pin] of Object.entries(pins)) {
@@ -1267,7 +1267,7 @@ test('Suppression vendeur cloud : ciblage, accès révoqué, lots, reprise, sauv
   assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'target-after-delete-1'},'target')).status,403);
   assert.equal((await req('/api/goals','GET',undefined,'target')).status,403);
   assert.equal((await req('/api/admin/entities/sellers/1','PATCH',{storeId:store,active:true})).status,409);
-  assert.equal((await req('/api/admin/entities/sellers','POST',{name:targetName,storeId:store})).status,409);
+  assert.equal((await req('/api/admin/entities/sellers','POST',{name:targetName,storeId:store,departmentId:'tech',workdays:[1,2,3,4,5]})).status,409);
   assert.equal((await req('/api/admin/sales/reset','POST',{storeId:store,jobId:'sales-blocked-job-1',confirmation:'SUPPRIMER'})).status,409);
   assert.equal((await req('/api/admin/goals/reset','POST',{storeId:store,departmentId:'tech',jobId:'goals-blocked-job-1',confirmation:'SUPPRIMER'})).status,409);
   assert.equal((await req('/api/admin/sellers/delete','POST',{...deletion,jobId:'seller-delete-job-0002',sellerId:2})).status,409);
@@ -1309,7 +1309,7 @@ test('Suppression vendeur cloud : ciblage, accès révoqué, lots, reprise, sauv
   }
   assert.equal((await req('/api/admin/sellers/delete','POST',deletion)).body.status,'done');
   assert.equal((await req('/api/admin/sellers/delete','POST',{...deletion,sellerId:2})).status,409);
-  const recreated=await req('/api/admin/entities/sellers','POST',{name:targetName,storeId:store});assert.equal(recreated.status,200);assert.notEqual(recreated.body.id,1);
+  const recreated=await req('/api/admin/entities/sellers','POST',{name:targetName,storeId:store,departmentId:'tech',workdays:[1,2,3,4,5]});assert.equal(recreated.status,200);assert.notEqual(recreated.body.id,1);
   assert.equal((await req('/api/admin/sellers/delete','POST',deletion)).body.status,'done');
   assert((await db.get('pulse/catalog')).data.sellers.some(s=>s.id===recreated.body.id));
 });
@@ -2552,7 +2552,7 @@ test('Département vendeur définitif : création, anciennes interfaces, archiva
   const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator'},ctx={waitUntil(){}};
   const call=async(path,method='GET',body)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{authorization:'Bearer admin',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
   await call('/api/bootstrap');const store=LEGACY_STORE_ID;
-  const created=await call('/api/admin/entities/sellers','POST',{storeId:store,name:'Vendeur fictif',departmentId:'editorial'});
+  const created=await call('/api/admin/entities/sellers','POST',{storeId:store,name:'Vendeur fictif',departmentId:'editorial',workdays:[1,2,3,4,5]});
   assert.equal(created.status,200);const id=created.body.id,path=`/api/admin/entities/sellers/${id}`;
   const goal={storeId:store,sellerId:id,goals:{s1:{month:22}}},sale={id:'legacy-fictif-0001',storeId:store,sellerId:id,departmentId:'editorial'};
   await db.commit([db.write('pulseGoals/fictif',goal),db.write(`pulseStores/${store}/sales/${sale.id}`,sale)]);
@@ -2570,4 +2570,85 @@ test('Département vendeur définitif : création, anciennes interfaces, archiva
   assert.equal((await call(path,'PATCH',{storeId:store,active:true})).status,200);
   const after=(await db.get('pulse/catalog')).data.sellers.find(s=>s.id===id);assert.equal(after.departmentId,'editorial');assert.equal(after.name,'Nom modifié');
   assert.deepEqual((await db.get('pulseGoals/fictif')).data,goal);assert.deepEqual((await db.get(`pulseStores/${store}/sales/${sale.id}`)).data,sale);
+});
+
+test('Création vendeur admin cloud : département et jours obligatoires, planning privé enregistré ensemble',async()=>{
+  const db=new MemoryDb(),identities=new Map([['admin',{sub:'administrator'}]]);
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,token)=>{const id=identities.get(token);if(!id)throw Error('invalid');return id;},
+    makeCustomToken:async(_env,sub,claims)=>{identities.set('nouveau-vendeur',{sub,...claims});return 'nouveau-vendeur';}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator',PIN_PEPPER:Buffer.alloc(32,7).toString('base64url'),
+    LOGIN_LIMITER:{async limit(){return {success:true}}}},ctx={waitUntil(){}};
+  const call=async(path,method='GET',body,token='admin')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,
+    headers:{...(token?{authorization:`Bearer ${token}`}:{}) ,...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+    return {status:r.status,body:await r.json()};};
+  await call('/api/bootstrap');const store=LEGACY_STORE_ID,route='/api/admin/entities/sellers';
+  const initial=(await db.get('pulse/catalog')).data,oldUid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;
+  const oldGoal={storeId:store,sellerId:1,goals:{s1:{month:50}},workdays:[1,3,5],workdaysRevision:'revision-existante'};
+  const oldAccess={storeId:store,sellerId:1,active:true,version:'session-existante'};
+  const oldSale={id:'vente-existante',storeId:store,sellerId:1,serviceId:1,businessDate:'2026-10-26'};
+  await db.commit([db.write(`pulseGoals/${oldUid}`,oldGoal),db.write(`pulseAccess/${oldUid}`,oldAccess),db.write(`pulseStores/${store}/sales/${oldSale.id}`,oldSale)]);
+  const input={name:'Vendeur test',storeId:store,departmentId:'editorial',workdays:[0,6,2]};
+  assert.equal((await call(route,'POST',input,'')).status,401);
+  for(const departmentId of [undefined,'','absent',null,42]) {
+    const result=await call(route,'POST',{...input,departmentId});assert.equal(result.status,400);assert.match(result.body.error,/département/i);
+  }
+  for(const workdays of [undefined,[],[1,1],[7],[-1],['2'],[null],[0,1,2,3,4,5,6,0]]) {
+    const result=await call(route,'POST',{...input,workdays});assert.equal(result.status,400);assert.match(result.body.error,/jour travaillé/i);
+  }
+  assert.deepEqual((await db.get('pulse/catalog')).data,initial,'les validations ne créent rien');
+  const created=await call(route,'POST',input);assert.equal(created.status,200);const id=created.body.id;
+  const uid=`seller-${(await digestBase64(`${store}:${id}`)).slice(0,28)}`,planning=(await db.get(`pulseGoals/${uid}`)).data;
+  assert.equal(planning.storeId,store);assert.equal(planning.sellerId,id);assert.deepEqual(planning.goals,{});
+  assert.deepEqual(planning.workdays,[2,6,0]);assert.match(planning.workdaysRevision,/^[A-Za-z0-9_-]{8,80}$/);
+  assert.equal(await db.get(`pulseAccess/${uid}`),null,'aucun PIN ou accès créé par l’administrateur');
+  assert.equal(await db.get(`pulseStatus/${uid}`),null,'aucune session créée');
+  const person=(await db.get('pulse/catalog')).data.sellers.find(s=>s.id===id);
+  assert.equal(person.departmentId,'editorial');assert.equal(person.storeId,store);
+  assert.deepEqual((await call(`/api/admin/goals?storeId=${store}&sellerId=${id}`)).body.workdays,[2,6,0]);
+  assert.equal((await call(`/api/admin/entities/sellers/${id}`,'PATCH',{storeId:store,departmentId:'tech'})).status,409);
+  assert.deepEqual((await db.get(`pulseGoals/${oldUid}`)).data,oldGoal);
+  assert.deepEqual((await db.get(`pulseAccess/${oldUid}`)).data,oldAccess);
+  assert.deepEqual((await db.get(`pulseStores/${store}/sales/${oldSale.id}`)).data,oldSale);
+  // Le planning reste modifiable ultérieurement, avec sa protection habituelle.
+  assert.equal((await call('/api/admin/workdays','POST',{storeId:store,sellerId:id,workdays:[1,4],revision:null})).status,409);
+  const edited=await call('/api/admin/workdays','POST',{storeId:store,sellerId:id,workdays:[1,4],revision:planning.workdaysRevision});
+  assert.equal(edited.status,200);assert.deepEqual(edited.body.workdays,[1,4]);assert.notEqual(edited.body.workdaysRevision,planning.workdaysRevision);
+  // Première revendication du PIN : le planning préparé reste intact.
+  const proof=await pinProof('demo-fnac',store,id,'4829');
+  const claimed=await call('/api/auth/claim','POST',{storeId:store,sellerId:id,departmentId:'editorial',pinLength:4,newProof:proof},'');
+  assert.equal(claimed.status,200);assert.equal(claimed.body.customToken,'nouveau-vendeur');
+  const personal=await call('/api/goals','GET',undefined,'nouveau-vendeur');
+  assert.equal(personal.status,200);assert.deepEqual(personal.body.workdays,[1,4]);assert.deepEqual(personal.body.goals,{});
+  assert.equal(personal.body.workdaysRevision,edited.body.workdaysRevision);
+});
+
+test('Création vendeur admin cloud : aucun demi-vendeur sur conflit ou document préexistant',async()=>{
+  for(const scenario of ['catalogue-concurrent','planning-existant']) {
+    const db=new MemoryDb(),worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'administrator'})});
+    const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator'},ctx={waitUntil(){}};
+    const call=async(path,method='GET',body)=>{const response=await worker.fetch(new Request(`https://worker.test${path}`,{method,
+      headers:{authorization:'Bearer admin',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);
+      return {status:response.status,body:await response.json()};};
+    await call('/api/bootstrap');const store=LEGACY_STORE_ID,base=(await db.get('pulse/catalog')).data,id=base.nextSellerId;
+    const uid=`seller-${(await digestBase64(`${store}:${id}`)).slice(0,28)}`,path=`pulseGoals/${uid}`;
+    if(scenario==='planning-existant')await db.commit([db.write(path,{ancien:'ne pas écraser',workdays:[1]})]);
+    else {
+      const commit=db.commit.bind(db);let injected=false;
+      db.commit=async writes=>{
+        if(!injected&&writes.some(w=>w.path===path)) {
+          injected=true;const current=await db.get('pulse/catalog'),concurrent=structuredClone(current.data);
+          concurrent.stores.push({id:'concurrent-fictif',name:'Magasin concurrent',active:true});
+          await commit([db.write('pulse/catalog',concurrent,{updateTime:current.updateTime})]);
+        }
+        return commit(writes);
+      };
+    }
+    const result=await call('/api/admin/entities/sellers','POST',{storeId:store,name:'Création à refuser',departmentId:'tech',workdays:[2,3,4,5,6]});
+    assert.equal(result.status,409,scenario);
+    const after=(await db.get('pulse/catalog')).data;
+    assert(!after.sellers.some(s=>s.name==='Création à refuser'));assert.equal(after.nextSellerId,id);
+    if(scenario==='planning-existant')assert.deepEqual((await db.get(path)).data,{ancien:'ne pas écraser',workdays:[1]});
+    else {assert.equal(await db.get(path),null);assert(after.stores.some(s=>s.id==='concurrent-fictif'));}
+    assert.equal(await db.get(`pulseAccess/${uid}`),null);assert.equal(await db.get(`pulseStatus/${uid}`),null);
+  }
 });

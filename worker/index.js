@@ -1118,16 +1118,28 @@ export function createWorker(deps={}) {
     const duplicate=(row,name)=>list.some(x=>x.id!==row?.id&&(x.active||x.deletingJob)&&
       (kind!=='sellers'||sellerStoreId(x)===sellerStoreId(row))&&
       x.name.localeCompare(name,'fr',{sensitivity:'base'})===0);
+    let initialPlanning=null;
     if(method==='POST') {
       const name=cleanName(body.name);if(!name)fail(400,'Saisissez un nom valide.');
       if(list.length>=(kind==='sellers'?1000:200))fail(400,'Nombre maximal atteint.');
       if(kind==='sellers'&&!validStore(d,body.storeId))fail(400,'Choisissez d’abord un magasin valide.');
-      const departmentId=body.departmentId||TECH_DEPARTMENT_ID;
-      if(kind==='sellers'&&!departmentsForStore(d,body.storeId).some(x=>x.id===departmentId))fail(400,'Choisissez un département actif de ce magasin.');
+      const departmentId=body.departmentId;
+      if(kind==='sellers'&&(typeof departmentId!=='string'||!departmentsForStore(d,body.storeId).some(x=>x.id===departmentId)))
+        fail(400,'Choisissez un département actif de ce magasin.');
+      // Une ancienne PWA ne peut plus créer silencieusement un planning par défaut.
+      if(kind==='sellers'&&!validWorkdays(body.workdays))
+        fail(400,'Choisissez au moins un jour travaillé. Si ce choix n’apparaît pas, mettez l’application à jour.');
       const row={name,...(kind==='sellers'?{storeId:body.storeId}:{})};
       if(duplicate(row,name))fail(409,'Ce nom existe déjà dans cette liste.');
       const next=kind==='sellers'?'nextSellerId':'nextServiceId', newId=d[next]++;
+      if(kind==='sellers'&&(!isId(newId)||list.some(s=>Number(s.id)===Number(newId))))
+        fail(503,'Création du vendeur indisponible. Réessayez.');
       list.push({id:newId,name,active:true,...(kind==='services'?{icon:'other'}:{storeId:body.storeId,departmentId})});id=newId;
+      if(kind==='sellers') {
+        const uid=await sellerUid(body.storeId,newId);
+        initialPlanning={path:`pulseGoals/${uid}`,data:{storeId:body.storeId,sellerId:newId,goals:{},
+          workdays:normalizeWorkdays(body.workdays),workdaysRevision:crypto.randomUUID()}};
+      }
     } else {
       const row=list.find(x=>x.id===Number(id));if(!row)fail(404,'Élément introuvable.');
       if(kind==='sellers'&&row.deletingJob)fail(409,'La suppression définitive de ce vendeur est en cours.');
@@ -1141,8 +1153,12 @@ export function createWorker(deps={}) {
       if(kind==='sellers'&&row.active&&!departmentsForStore(d,sellerStoreId(row)).some(x=>x.id===sellerDepartmentId(row)))fail(409,'Restaurez d’abord le département de ce vendeur.');
       if(row.active&&duplicate(row,row.name))fail(409,'Ce nom existe déjà dans cette liste.');
     }
-    try{await db.commit([db.write('pulse/catalog',withFlags(d),{updateTime:c.updateTime})]);}
-    catch(e){if(conflict(e))fail(409,'Une modification simultanée a eu lieu. Réessayez.');throw e;}
+    // Création atomique : le vendeur n'apparaît jamais sans son planning.
+    // La précondition protège également un éventuel document préexistant.
+    const writes=[db.write('pulse/catalog',withFlags(d),{updateTime:c.updateTime})];
+    if(initialPlanning)writes.push(db.write(initialPlanning.path,initialPlanning.data,{exists:false}));
+    try{await db.commit(writes);}
+    catch(e){if(conflict(e))fail(409,initialPlanning?'Une modification simultanée ou des données préexistantes empêchent la création. Rechargez et réessayez.':'Une modification simultanée a eu lieu. Réessayez.');throw e;}
     return {id:Number(id),ok:true};
   }
   async function mutateDepartment(db,id,body,method) {

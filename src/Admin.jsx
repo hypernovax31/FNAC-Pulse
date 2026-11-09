@@ -16,7 +16,7 @@ import { GoalsResetPanel } from './GoalsReset';
 import { SellerDeletePanel } from './SellerDelete';
 import { ServiceDeletePanel } from './ServiceDelete';
 import { AdminTabs } from './AdminTabs';
-import { normalizeWorkdays } from './goals.js';
+import { normalizeWorkdays, validWorkdays, WORKDAY_NAMES, WORKDAY_ORDER } from './goals.js';
 import { displayStoreName, isSelectableStore, storeSelectionGroups } from './store-directory.js';
 import { StoreSearch } from './StoreSearch';
 import { AdminInvitationHelp } from './AdminInvitationHelp';
@@ -76,6 +76,8 @@ export default function Admin({onClose,data,session,onChanged}) {
   const goalScope=useRef('');goalScope.current=`${adminStore}:${adminSeller}:${tab}`;
   const [name,setName]=useState('');
   const [newSellerDepartment,setNewSellerDepartment]=useState('');
+  // Aucun planning précoché : chaque création exige un choix explicite.
+  const [newSellerWorkdays,setNewSellerWorkdays]=useState([]);
   const [expandedSeller,setExpandedSeller]=useState(null);
   const [serviceDeleteRequest,setServiceDeleteRequest]=useState(null);
   const [serviceDeleteReady,setServiceDeleteReady]=useState(false);
@@ -247,7 +249,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   }
   async function logout() {
     try {if(CLOUD)await adminLogout();else await api('/api/admin/logout',{method:'POST',token,body:{}})} catch {}
-    sessionStorage.removeItem('pulse-admin-token');rememberStore('');setAdminStore('');setStoreDraft('');setAdminSeller('');setToken('');setNotice('');
+    sessionStorage.removeItem('pulse-admin-token');rememberStore('');setAdminStore('');setStoreDraft('');setAdminSeller('');setName('');setNewSellerDepartment('');setNewSellerWorkdays([]);setToken('');setNotice('');
   }
   async function run(work, success) {
     setBusy(true);setError('');setNotice('');
@@ -255,10 +257,13 @@ export default function Admin({onClose,data,session,onChanged}) {
     catch(e){setError(e.message);} finally{setBusy(false);}
   }
   function closeAdministration(){onClose();}
-  function switchTab(next){if(next!==tab)setServiceDeleteReady(false);if(next==='stores')setStoreDraft(adminStore);setTab(next);setError('');setNotice('');setEditing(null);setName('');setExpandedSeller(null);setServiceDeleteRequest(null);}
+  function switchTab(next){if(next!==tab)setServiceDeleteReady(false);if(next==='stores')setStoreDraft(adminStore);setTab(next);setError('');setNotice('');setEditing(null);setName('');setNewSellerDepartment('');setNewSellerWorkdays([]);setExpandedSeller(null);setServiceDeleteRequest(null);}
   function changeStore(value){
     if(!isSelectableStore(data.stores.find(s=>s.id===value)))return;
-    setAdminStore(value);setStoreDraft(value);rememberStore(value);setAdminSeller('');setEditing(null);setNewSellerDepartment('');setExpandedSeller(null);setServiceDeleteRequest(null);setServiceDeleteReady(false);setError('');setNotice('');
+    setAdminStore(value);setStoreDraft(value);rememberStore(value);setAdminSeller('');setEditing(null);setName('');setNewSellerDepartment('');setNewSellerWorkdays([]);setExpandedSeller(null);setServiceDeleteRequest(null);setServiceDeleteReady(false);setError('');setNotice('');
+  }
+  function toggleNewSellerWorkday(day) {
+    setNewSellerWorkdays(current=>WORKDAY_ORDER.filter(value=>value===day?!current.includes(value):current.includes(value)));
   }
   const activeSellers=sellersForStore(all.sellers,adminStore);
   const storeSellers=sellersForStore(all.sellers,adminStore,{activeOnly:false});
@@ -364,12 +369,30 @@ export default function Admin({onClose,data,session,onChanged}) {
       {(tab==='sellers'||tab==='services')&&adminStore&&<>
         <div className="admin-section-heading"><div><h3>{tab==='sellers'?'Vendeurs':'Vos services'}</h3><p>{tab==='sellers'?'Ajoutez et gérez les vendeurs de ce magasin. L’archivage conserve leur historique.':'L’ordre et la suppression concernent ce magasin. Les noms des services restent communs à tous les magasins.'}</p></div></div>
         {!adminStore?<div className="empty-admin">Choisissez d’abord le magasin à gérer.</div>:<>
-          <form className={`add-entity ${tab==='sellers'?'add-seller':''}`} onSubmit={e=>{e.preventDefault();if(!name.trim()||(tab==='sellers'&&!departmentForNewSeller))return;run(async()=>{await api(`/api/admin/entities/${tab}`,{method:'POST',token,body:{name,...(tab==='sellers'?{storeId:adminStore,departmentId:departmentForNewSeller}:{})}});setName('');if(tab==='sellers')setNewSellerDepartment('');},tab==='sellers'?'Vendeur ajouté dans ce magasin.':'Service ajouté dans tous les magasins.');}}>
-            <input className="text-input" aria-label={tab==='sellers'?'Nom du vendeur':'Nom du service'} placeholder={tab==='sellers'?'Prénom du vendeur':'Intitulé du service'} value={name} onChange={e=>setName(e.target.value)} required maxLength={60}/>
-            {tab==='sellers'&&<select className="text-input" aria-label="Département du nouveau vendeur" value={departmentForNewSeller} onChange={e=>setNewSellerDepartment(e.target.value)} disabled={busy||!activeDepartments.length} required><option value="">Choisir un département</option>{activeDepartments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select>}
-            <button className="primary-button" disabled={busy||(tab==='sellers'&&!departmentForNewSeller)}><Plus size={16}/> Ajouter</button>
-          </form>
-          {tab==='sellers'&&<p className="seller-department-hint">Vérifiez le département : il ne pourra plus être modifié après la création du vendeur.</p>}
+          {tab==='sellers'?<form className="add-seller" onSubmit={e=>{
+            e.preventDefault();if(busy||!allLoaded||!name.trim()||!departmentForNewSeller||!validWorkdays(newSellerWorkdays))return;
+            run(async()=>{
+              await api('/api/admin/entities/sellers',{method:'POST',token,body:{name,storeId:adminStore,departmentId:departmentForNewSeller,workdays:newSellerWorkdays}});
+              setName('');setNewSellerDepartment('');setNewSellerWorkdays([]);
+            },'Vendeur ajouté dans ce magasin.');
+          }}>
+            <div className="add-seller-fields">
+              <label><span className="form-label">PRÉNOM</span><input className="text-input" aria-label="Nom du vendeur" placeholder="Prénom du vendeur" value={name} onChange={e=>setName(e.target.value)} disabled={busy} required maxLength={60}/></label>
+              <label><span className="form-label">DÉPARTEMENT</span><select className={`text-input ${departmentForNewSeller?'':'is-placeholder'}`} aria-label="Département du nouveau vendeur" value={departmentForNewSeller} onChange={e=>setNewSellerDepartment(e.target.value)} disabled={busy||!activeDepartments.length} required><option value="">Choisir un département</option>{activeDepartments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
+            </div>
+            <fieldset className="add-seller-workdays" aria-describedby="new-seller-workdays-hint" disabled={busy}>
+              <legend>JOURS TRAVAILLÉS</legend>
+              <div className="workdays-list">{WORKDAY_ORDER.map(day=><label key={day} className={`workday-option ${newSellerWorkdays.includes(day)?'is-selected':''}`}>
+                <input type="checkbox" checked={newSellerWorkdays.includes(day)} onChange={()=>toggleNewSellerWorkday(day)}/><span>{WORKDAY_NAMES[day][0].toUpperCase()+WORKDAY_NAMES[day].slice(1)}</span>
+              </label>)}</div>
+              <p id="new-seller-workdays-hint">Sélectionnez au moins un jour habituel de travail.</p>
+            </fieldset>
+            <p className="seller-department-hint">Vérifiez le département : il ne pourra plus être modifié après la création du vendeur.</p>
+            <button className="primary-button" disabled={busy||!allLoaded||!name.trim()||!departmentForNewSeller||!validWorkdays(newSellerWorkdays)}><Plus size={16}/> Ajouter le vendeur</button>
+          </form>:<form className="add-entity" onSubmit={e=>{e.preventDefault();if(!name.trim())return;run(async()=>{await api('/api/admin/entities/services',{method:'POST',token,body:{name}});setName('');},'Service ajouté dans tous les magasins.');}}>
+            <input className="text-input" aria-label="Nom du service" placeholder="Intitulé du service" value={name} onChange={e=>setName(e.target.value)} required maxLength={60}/>
+            <button className="primary-button" disabled={busy}><Plus size={16}/> Ajouter</button>
+          </form>}
           {tab==='sellers' ? (storeSellers.length===0?<div className="empty-admin">Aucun vendeur dans ce magasin. Ajoutez le premier prénom ci-dessus.</div>:<div className="seller-card-list">{storeSellers.map(item=><SellerCard key={item.id}
             seller={item} departments={storeDepartments} storeId={adminStore} token={token} busy={busy}
             editing={editing===item.id} editName={editName} onEditName={setEditName}

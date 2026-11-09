@@ -89,8 +89,8 @@ test('API Fnac Pulse : saisie, isolation, administration, push et persistance',a
     assert.deepEqual((await request(`/api/goals?storeId=${store.id}&sellerId=${s2}`)).value.workdays,[1,2,3,4,5]);
 
     const name=first.value.sellers[0].name;
-    assert.equal((await request('/api/admin/entities/sellers','POST',{name,storeId:other.id},token)).status,201);
-    assert.equal((await request('/api/admin/entities/sellers','POST',{name:name.toLowerCase(),storeId:other.id},token)).status,409);
+    assert.equal((await request('/api/admin/entities/sellers','POST',{name,storeId:other.id,departmentId:'tech',workdays:[1,2,3,4,5]},token)).status,201);
+    assert.equal((await request('/api/admin/entities/sellers','POST',{name:name.toLowerCase(),storeId:other.id,departmentId:'tech',workdays:[1,2,3,4,5]},token)).status,409);
     const ids=first.value.services.map(x=>x.id);[ids[0],ids[4]]=[ids[4],ids[0]];
     assert.equal((await request('/api/admin/services/order','POST',{storeId:store.id,serviceIds:ids},token)).status,200);
     assert.equal((await request(`/api/bootstrap?storeId=${store.id}`)).value.services[0].id,5);
@@ -242,7 +242,7 @@ test('SQLite reset ventes : confirmation, toutes dates, isolation et reprise san
     const data=(await request('/api/bootstrap')).body,store=LEGACY_STORE_ID,other=data.stores.find(s=>s.name==='Fnac Bordeaux').id;
     const [one,two]=data.sellers.slice(0,2).map(x=>x.id),service=data.services[0].id;
     const admin=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
-    const otherSeller=(await request('/api/admin/entities/sellers','POST',{name:'Autre équipe',storeId:other},admin)).body.id;
+    const otherSeller=(await request('/api/admin/entities/sellers','POST',{name:'Autre équipe',storeId:other,departmentId:'tech',workdays:[1,2,3,4,5]},admin)).body.id;
     assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:store,departmentId:'editorial'},admin)).status,409);
     historicalDepartment(folder,two,'editorial');
     assert.equal((await request('/api/admin/goals','POST',{storeId:store,sellerId:one,serviceId:service,values:{day:null,week:null,month:25},revision:null},admin)).status,200);
@@ -287,7 +287,7 @@ test('SQLite reset objectifs : département isolé, objectifs non renseignés, r
     const data=(await request('/api/bootstrap')).body,store=LEGACY_STORE_ID,other=data.stores.find(s=>s.name==='Fnac Bordeaux').id;
     const [one,two,archived]=data.sellers.slice(0,3).map(x=>x.id),service=data.services[0].id,service2=data.services[1].id;
     const token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
-    const otherSeller=(await request('/api/admin/entities/sellers','POST',{name:'Autre équipe',storeId:other},token)).body.id;
+    const otherSeller=(await request('/api/admin/entities/sellers','POST',{name:'Autre équipe',storeId:other,departmentId:'tech',workdays:[1,2,3,4,5]},token)).body.id;
     assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:store,departmentId:'editorial'},token)).status,409);
     historicalDepartment(folder,two,'editorial');
     const save=(sellerId,serviceId=service,storeId=store,month=20)=>request('/api/admin/goals','POST',{storeId,sellerId,serviceId,values:{day:null,week:null,month},revision:null},token);
@@ -350,7 +350,7 @@ test('SQLite : suppression définitive ciblée, toutes dates, vendeur archivé e
     const base=(await request('/api/bootstrap')).body,store=LEGACY_STORE_ID,otherStore=base.stores.find(s=>s.name==='Fnac Bordeaux').id;
     const target=base.sellers[0],neighbor=base.sellers[1],service=base.services[0].id;
     let token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
-    const otherId=(await request('/api/admin/entities/sellers','POST',{name:'Autre magasin',storeId:otherStore},token)).body.id;
+    const otherId=(await request('/api/admin/entities/sellers','POST',{name:'Autre magasin',storeId:otherStore,departmentId:'tech',workdays:[1,2,3,4,5]},token)).body.id;
     const targetSale={storeId:store,sellerId:target.id,serviceId:service,requestId:'local-delete-target-001'};
     assert.equal((await request('/api/sales','POST',targetSale)).status,201);
     assert.equal((await request('/api/sales','POST',{...targetSale,requestId:'local-delete-target-002'})).status,201);
@@ -358,7 +358,8 @@ test('SQLite : suppression définitive ciblée, toutes dates, vendeur archivé e
     assert.equal((await request('/api/sales','POST',{...targetSale,storeId:otherStore,sellerId:otherId,requestId:'local-delete-other-store-001'})).status,201);
     for(const [id,st] of [[target.id,store],[neighbor.id,store],[otherId,otherStore]]) {
       assert.equal((await request('/api/admin/goals','POST',{storeId:st,sellerId:id,serviceId:service,values:{day:null,week:null,month:15},revision:null},token)).status,200);
-      assert.equal((await request('/api/admin/workdays','POST',{storeId:st,sellerId:id,workdays:[1,3,6],revision:null},token)).status,200);
+      const planning=(await request(`/api/admin/goals?storeId=${st}&sellerId=${id}`,'GET',undefined,token)).body;
+      assert.equal((await request('/api/admin/workdays','POST',{storeId:st,sellerId:id,workdays:[1,3,6],revision:planning.workdaysRevision},token)).status,200);
     }
     let raw=new Database(path.join(folder,'pulse.sqlite'));
     raw.prepare("UPDATE sales SET business_date='2020-01-01',deleted_at='2020-01-02' WHERE request_id='local-delete-target-001'").run();
@@ -386,7 +387,7 @@ test('SQLite : suppression définitive ciblée, toutes dates, vendeur archivé e
     assert.equal((await request(`/api/goals?storeId=${otherStore}&sellerId=${otherId}`)).body.goals[`s${service}`].month,15);
     assert.equal((await request('/api/admin/sellers/delete','POST',job,token)).body.status,'done');
     assert.equal((await request('/api/admin/sellers/delete','POST',{...job,sellerId:neighbor.id},token)).status,409);
-    const created=(await request('/api/admin/entities/sellers','POST',{name:target.name,storeId:store},token)).body.id;assert.notEqual(created,target.id);
+    const created=(await request('/api/admin/entities/sellers','POST',{name:target.name,storeId:store,departmentId:'tech',workdays:[1,2,3,4,5]},token)).body.id;assert.notEqual(created,target.id);
     assert.equal((await request('/api/sales','POST',{...targetSale,sellerId:created})).status,409);
     await stop(server);server=await start(port,folder);token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
     assert.equal((await request('/api/admin/sellers/delete','POST',job,token)).body.status,'done');
@@ -403,7 +404,7 @@ test('SQLite : suppression définitive d’un service uniquement dans le magasin
     const base=(await request('/api/bootstrap')).body,store=base.stores.find(s=>s.id===LEGACY_STORE_ID),other=base.stores.find(s=>s.name==='Fnac Bordeaux');
     const [one,two]=base.sellers.slice(0,2).map(s=>s.id),first=base.services[0],second=base.services[1];
     const token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
-    const added=await request('/api/admin/entities/sellers','POST',{name:'Vendeur Bordeaux',storeId:other.id,departmentId:'tech'},token);assert.equal(added.status,201);const otherSeller=added.body.id;
+    const added=await request('/api/admin/entities/sellers','POST',{name:'Vendeur Bordeaux',storeId:other.id,departmentId:'tech',workdays:[1,2,3,4,5]},token);assert.equal(added.status,201);const otherSeller=added.body.id;
     const goal=(sellerId,storeId,serviceId,month)=>({sellerId,storeId,serviceId,values:{day:null,week:null,month},revision:null});
     for(const g of [goal(one,store.id,first.id,12),goal(two,store.id,first.id,22),goal(one,store.id,second.id,30),goal(otherSeller,other.id,first.id,40)])
       assert.equal((await request('/api/admin/goals','POST',g,token)).status,200);
@@ -559,4 +560,47 @@ test('SQLite : migration sans minimum rétroactif, plancher serveur et changemen
     assert.equal((await personal(month(9999),entry.revision)).status,403);
     assert.equal((await personal(week(8),entry.revision)).status,200);
   } finally {db?.close();await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
+});
+
+test('SQLite : ajout admin avec département et jours obligatoires, transaction et conservation',async()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'fnac-pulse-create-planning-')),port=await freePort(),url=`http://127.0.0.1:${port}`;let server;
+  async function request(route,method='GET',body,token) {
+    const r=await fetch(url+route,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});
+    const raw=await r.text();let value;try{value=JSON.parse(raw);}catch{value={};}return {status:r.status,body:value};
+  }
+  try {
+    server=await start(port,folder);const base=(await request('/api/bootstrap')).body,store=LEGACY_STORE_ID;
+    const old=base.sellers[0].id,service=base.services[0].id,token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
+    assert.equal((await request('/api/admin/goals','POST',{storeId:store,sellerId:old,serviceId:service,values:{day:null,week:null,month:25},revision:null},token)).status,200);
+    assert.equal((await request('/api/sales','POST',{storeId:store,sellerId:old,serviceId:service,requestId:'existing-before-admin-create'})).status,201);
+    const route='/api/admin/entities/sellers',input={storeId:store,name:'Vendeur planning fictif',departmentId:'editorial',workdays:[0,6,2]};
+    assert.equal((await request(route,'POST',input)).status,401);
+    for(const departmentId of [undefined,'',null,'absent']) {
+      const result=await request(route,'POST',{...input,departmentId},token);assert.equal(result.status,400);assert.match(result.body.error,/département/i);
+    }
+    for(const workdays of [undefined,[],[1,1],[7],[-1],['2'],[null],[0,1,2,3,4,5,6,0]]) {
+      const result=await request(route,'POST',{...input,workdays},token);assert.equal(result.status,400);assert.match(result.body.error,/jour travaillé/i);
+    }
+    assert(!(await request('/api/bootstrap')).body.sellers.some(s=>s.name===input.name));
+    const result=await request(route,'POST',input,token);assert.equal(result.status,201);const id=result.body.id;
+    const payload=(await request(`/api/admin/goals?storeId=${store}&sellerId=${id}`,'GET',undefined,token)).body;
+    assert.deepEqual(payload.goals,{});assert.deepEqual(payload.workdays,[2,6,0]);assert(payload.workdaysRevision);
+    const person=(await request('/api/bootstrap')).body.sellers.find(s=>s.id===id);
+    assert.equal(person.departmentId,'editorial');assert.equal(person.storeId,store);
+    assert.equal((await request(`/api/admin/entities/sellers/${id}`,'PATCH',{storeId:store,departmentId:'tech'},token)).status,409);
+    assert.equal((await request(route,'POST',{...input,name:'VENDEUR PLANNING FICTIF'},token)).status,409);
+    const revised=await request('/api/admin/workdays','POST',{storeId:store,sellerId:id,workdays:[0],revision:payload.workdaysRevision},token);
+    assert.equal(revised.status,200);assert.deepEqual(revised.body.workdays,[0]);
+    // Une erreur d'insertion du planning annule aussi l'insertion du vendeur.
+    const raw=new Database(path.join(folder,'pulse.sqlite'));
+    raw.exec("CREATE TRIGGER fail_test_new_planning BEFORE INSERT ON seller_workdays BEGIN SELECT RAISE(ABORT,'insertion-test-refusée'); END");
+    assert.equal((await request(route,'POST',{...input,name:'Échec fictif'},token)).status,500);
+    assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM sellers WHERE name=?').get('Échec fictif').n,0);
+    assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM seller_workdays WHERE seller_id=?').get(id).n,1);
+    raw.exec('DROP TRIGGER fail_test_new_planning');raw.close();
+    assert.equal((await request(`/api/goals?storeId=${store}&sellerId=${old}`)).body.goals[`s${service}`].month,25);
+    assert.equal((await request(`/api/bootstrap?storeId=${store}&sellerId=${old}`)).body.stats.day.total,1);
+    await stop(server);server=await start(port,folder);
+    assert.deepEqual((await request(`/api/goals?storeId=${store}&sellerId=${id}`)).body.workdays,[0]);
+  } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
 });

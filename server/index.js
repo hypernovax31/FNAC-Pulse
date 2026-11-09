@@ -663,11 +663,19 @@ app.post('/api/admin/entities/:kind',requireAdmin,(req,res) => {
   const table=entityTable(req.params.kind), name=cleanName(req.body?.name),storeId=req.body?.storeId;
   if (!table || !name) return failure(res,'Saisissez un nom valide.');
   if(table==='sellers'&&!activeStore(storeId))return failure(res,'Choisissez d’abord un magasin valide.');
-  const departmentId=req.body?.departmentId||TECH_DEPARTMENT_ID;
-  if(table==='sellers'&&!localDepartments(storeId).some(d=>d.id===departmentId))return failure(res,'Choisissez un département actif de ce magasin.');
+  const departmentId=req.body?.departmentId,workdays=req.body?.workdays;
+  if(table==='sellers'&&(typeof departmentId!=='string'||!localDepartments(storeId).some(d=>d.id===departmentId)))return failure(res,'Choisissez un département actif de ce magasin.');
+  if(table==='sellers'&&!validWorkdays(workdays))return failure(res,'Choisissez au moins un jour travaillé. Si ce choix n’apparaît pas, mettez l’application à jour.');
   if(duplicateEntity(table,name,storeId))return failure(res,'Ce nom existe déjà dans cette liste.',409);
   const order=db.prepare(`SELECT COALESCE(MAX(sort_order),-1)+1 AS n FROM ${table}`).get().n;
-  const result=table==='sellers'?db.prepare('INSERT INTO sellers(name,sort_order,store_id,department_id) VALUES (?,?,?,?)').run(name,order,storeId,departmentId):db.prepare('INSERT INTO services(name,sort_order) VALUES (?,?)').run(name,order);
+  // Les deux insertions sont indivisibles : aucun vendeur sans planning ne
+  // subsiste si l'enregistrement des jours échoue.
+  const result=table==='sellers'?db.transaction(()=>{
+    const created=db.prepare('INSERT INTO sellers(name,sort_order,store_id,department_id) VALUES (?,?,?,?)').run(name,order,storeId,departmentId);
+    db.prepare('INSERT INTO seller_workdays(store_id,seller_id,days,revision) VALUES (?,?,?,?)')
+      .run(storeId,Number(created.lastInsertRowid),JSON.stringify(normalizeWorkdays(workdays)),crypto.randomUUID());
+    return created;
+  })():db.prepare('INSERT INTO services(name,sort_order) VALUES (?,?)').run(name,order);
   broadcast(null,{kind:'config'});
   res.status(201).json({id:Number(result.lastInsertRowid)});
 });
