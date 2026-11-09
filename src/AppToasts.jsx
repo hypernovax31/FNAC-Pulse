@@ -1,4 +1,6 @@
 import React,{createContext,useCallback,useContext,useEffect,useMemo,useRef,useState} from 'react';
+import {createPortal} from 'react-dom';
+import {usePageFeedbackRail} from './VisibleFeedback';
 
 const ToastContext=createContext(null);
 
@@ -8,11 +10,12 @@ export function AppToastProvider({children,items}) {
   const [dialogs,setDialogs]=useState([]);
   const register=useCallback(id=>setDialogs(list=>list.includes(id)?list:[...list,id]),[]);
   const unregister=useCallback(id=>setDialogs(list=>list.filter(item=>item!==id)),[]);
-  const active=dialogs[dialogs.length-1];
+  const active=dialogs[dialogs.length-1],rail=usePageFeedbackRail();
   const context=useMemo(()=>({register,unregister,active,items}),[register,unregister,active,items]);
+  const stack=items&&<div className="toast-stack">{items}</div>;
   return <ToastContext.Provider value={context}>
     {children}
-    {!active&&items&&<div className="toast-stack">{items}</div>}
+    {!active&&stack&&(rail?createPortal(stack,rail):stack)}
   </ToastContext.Provider>;
 }
 

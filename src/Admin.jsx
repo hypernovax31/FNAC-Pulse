@@ -27,7 +27,7 @@ const MANAGED_STORE_KEY='pulse-admin-managed-store-v1';
 function rememberedStore() {try{return sessionStorage.getItem(MANAGED_STORE_KEY)||'';}catch{return '';}}
 function rememberStore(id) {try{if(id)sessionStorage.setItem(MANAGED_STORE_KEY,id);else sessionStorage.removeItem(MANAGED_STORE_KEY);}catch{}}
 
-function Modal({title,subtitle,onClose,children,wide=false,fixedTabs=false}) {
+function Modal({title,subtitle,onClose,children,wide=false,fixedTabs=false,toolbar=null}) {
   const dialog=useRef(null),close=useRef(onClose);
   close.current=onClose;
   useEffect(()=>{
@@ -47,10 +47,9 @@ function Modal({title,subtitle,onClose,children,wide=false,fixedTabs=false}) {
   },[]);
   return <div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget) onClose();}}>
     <div ref={dialog} role="dialog" aria-modal="true" aria-label={title} className={`modal ${wide?'modal-wide':''} ${fixedTabs?'admin-modal':''}`}>
-      <VisibleFeedbackProvider>
-        <div className="modal-head"><div><h2>{title}</h2>{subtitle&&<p>{subtitle}</p>}</div><button className="icon-button close-button" aria-label="Fermer" onClick={onClose}><X size={19}/></button></div>
-        <div className={`modal-content ${fixedTabs?'modal-content-fixed-tabs':''}`}>{children}</div>
+      <VisibleFeedbackProvider header={<><div className="modal-head"><div><h2>{title}</h2>{subtitle&&<p>{subtitle}</p>}</div><button className="icon-button close-button" aria-label="Fermer" onClick={onClose}><X size={19}/></button></div>{toolbar}</>}>
         <ModalToastOutlet/>
+        <div className={`modal-content ${fixedTabs?'modal-content-fixed-tabs':''}`}>{children}</div>
       </VisibleFeedbackProvider>
     </div>
   </div>;
@@ -342,8 +341,7 @@ export default function Admin({onClose,data,session,onChanged}) {
     {CLOUD&&<AdminInvitationHelp email={email} busy={busy} onBusy={setBusy} onCompleted={address=>{setEmail(address);setPassword('');}} onVerified={setEmail}/>}
   </Modal>;
 
-  return <Modal title="Administration" subtitle={adminStoreDisplay?`Magasin sélectionné : ${adminStoreDisplay}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={closeAdministration} wide fixedTabs>
-    <AdminTabs tab={tab} onSelect={switchTab} disabled={busy}/>
+  return <Modal title="Administration" subtitle={adminStoreDisplay?`Magasin sélectionné : ${adminStoreDisplay}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={closeAdministration} wide fixedTabs toolbar={<AdminTabs tab={tab} onSelect={switchTab} disabled={busy}/>}>
     <div key={tab} className="admin-scroll-content">
     <VisibleFeedback message={notice} revision={noticeRevision}/><VisibleFeedback message={error} tone="error" revision={errorRevision}/>
     {error&&<div className="admin-alert error" role="alert">{error}</div>}

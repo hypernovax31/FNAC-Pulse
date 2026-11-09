@@ -183,7 +183,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
   const nameId=`seller-name-${modal?'dialog':'welcome'}`;
   return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={submit}>
     <VisibleFeedback message={formError} tone="error" revision={formErrorRevision}/>
-    <VisibleFeedback message={mode==='error'?statusError:''} tone="error" actionLabel="Vérifier" onAction={()=>{clearSecrets();onRefreshProfile?.();setStatusRetry(x=>x+1);}}/>
+    <VisibleFeedback message={mode==='error'?statusError:''} tone="error" revision={statusRetry} actionLabel="Vérifier" onAction={()=>{clearSecrets();onRefreshProfile?.();setStatusRetry(x=>x+1);}}/>
     <VisibleFeedback message={!geoBusy?geoText:''} tone={/refusée|indisponible|pas disponible|Aucun magasin/.test(geoText)?'error':'success'}/>
     {fixed&&<div className="remembered-profile"><Avatar name={rememberedPerson.name} id={rememberedPerson.id}/><div><span>VOTRE PROFIL SUR CET APPAREIL</span><strong>{rememberedPerson.name}</strong><small>{displayStoreName(rememberedStore)} · {departments.find(d=>d.id===department)?.name||'Votre département'}</small></div></div>}
     <div className="session-fields">

@@ -13,24 +13,28 @@ export function restoreDialogFocus(event) {
 
 // Chaque dialogue possède sa propre zone visible, indépendante de son contenu
 // défilant. Sur la page, la même zone reste fixe pendant le défilement.
-export function VisibleFeedbackProvider({children,placement='dialog'}) {
-  const [entries,setEntries]=useState([]);
+export function VisibleFeedbackProvider({children,placement='dialog',header=null}) {
+  const [entries,setEntries]=useState([]),[rail,setRail]=useState(null);
   const show=useCallback((owner,entry)=>setEntries(previous=>[...previous.filter(item=>item.owner!==owner),{owner,...entry}]),[]);
   const remove=useCallback(owner=>setEntries(previous=>previous.filter(item=>item.owner!==owner)),[]);
   const current=entries[entries.length-1],container=useRef(null);
   useLayoutEffect(()=>{if(!current)return;const node=container.current;return ()=>{if(typeof document!=='undefined'&&node?.contains(document.activeElement))restoreDialogFocus({currentTarget:document.activeElement});};},[!!current]);
-  const context=useMemo(()=>({show,remove}),[show,remove]);
+  const context=useMemo(()=>({show,remove,rail:placement==='page'?rail:null}),[show,remove,rail,placement]);
   const Icon=current?.tone==='error'?Info:Check;
+  const feedback=current&&<aside ref={container} className={`visible-feedback visible-feedback-${placement} ${current.tone==='error'?'is-error':'is-success'}`} aria-label="Message" aria-live="off">
+    <span className="visible-feedback-icon" aria-hidden="true"><Icon size={19}/></span>
+    <div className="visible-feedback-text">{current.message}</div>
+    {current.actionLabel&&<button type="button" className="visible-feedback-action" onClick={event=>{restoreDialogFocus(event);current.onAction?.();remove(current.owner);}}>{current.actionLabel}</button>}
+    <button type="button" className="visible-feedback-close" aria-label="Fermer ce message" onClick={event=>{restoreDialogFocus(event);remove(current.owner);}}><X size={18} aria-hidden="true"/></button>
+  </aside>;
   return <FeedbackContext.Provider value={context}>
-    {children}
-    {current&&<aside ref={container} className={`visible-feedback visible-feedback-${placement} ${current.tone==='error'?'is-error':'is-success'}`} aria-label="Message" aria-live="off">
-      <span className="visible-feedback-icon" aria-hidden="true"><Icon size={19}/></span>
-      <div className="visible-feedback-text">{current.message}</div>
-      {current.actionLabel&&<button type="button" className="visible-feedback-action" onClick={event=>{restoreDialogFocus(event);current.onAction?.();remove(current.owner);}}>{current.actionLabel}</button>}
-      <button type="button" className="visible-feedback-close" aria-label="Fermer ce message" onClick={event=>{restoreDialogFocus(event);remove(current.owner);}}><X size={18} aria-hidden="true"/></button>
-    </aside>}
+    {placement==='page'?<>{children}<div className="feedback-rail"><div ref={setRail} className="feedback-toast-slot"/>{feedback}</div></>:<>{header}{feedback}{children}</>}
   </FeedbackContext.Provider>;
 }
+
+// Les toasts et les rappels de la page partagent une même colonne : leur
+// hauteur réelle détermine leur position, sans masquer les actions voisines.
+export function usePageFeedbackRail() {return useContext(FeedbackContext)?.rail||null;}
 
 // Conserver le message initial à proximité de son formulaire, notamment ses
 // éventuelles actions, et le rappeler dans la zone visible du dialogue. Le

@@ -78,6 +78,6 @@ test('En-tête : mêmes dimensions de toutes les commandes et adaptation mobile'
 test('Page e-mail : actions et fermeture visibles en clair comme en sombre',()=>{
   assert.match(html,/\.email-action-content button,\.email-action-content \.email-action-button\s*\{[^}]*border:1px solid #b98c08[^}]*box-shadow:/);
   assert.match(html,/\.email-action-content \.email-action-secondary\s*\{[^}]*border:1px solid #c4cabd[^}]*box-shadow:/);
-  assert.match(html,/\.email-action-feedback button\s*\{[^}]*border:1px solid currentColor[^}]*box-shadow:/);
+  assert.match(html,/\.email-action-feedback button\s*\{[^}]*border:1px solid #758171[^}]*box-shadow:/);
   assert.match(html,/\[data-theme='dark'\] \.email-action-content \.email-action-secondary\s*\{[^}]*background:#30362e/);
 });

@@ -6,14 +6,14 @@ import TestRenderer from 'react-test-renderer';
 import {build} from 'esbuild';
 
 const require=createRequire(import.meta.url),{act}=TestRenderer;
-const output=await build({entryPoints:['src/App.jsx'],bundle:true,platform:'node',format:'cjs',write:false,external:['react','lucide-react'],define:{'import.meta.env':'{"BASE_URL":"/"}'},logLevel:'silent',plugins:[{name:'onboarding-mocks',setup(b){
+const output=await build({stdin:{contents:"export {SessionForm} from './src/App.jsx'; export {VisibleFeedbackProvider} from './src/VisibleFeedback.jsx';",resolveDir:process.cwd(),loader:'js'},bundle:true,platform:'node',format:'cjs',write:false,external:['react','lucide-react'],define:{'import.meta.env':'{"BASE_URL":"/"}'},logLevel:'silent',plugins:[{name:'onboarding-mocks',setup(b){
   b.onResolve({filter:/^\.\/api$/},()=>({path:'api',namespace:'mock'}));
   b.onResolve({filter:/^\.\/cloud$/},()=>({path:'cloud',namespace:'mock'}));
   b.onLoad({filter:/^api$/,namespace:'mock'},()=>({contents:`export const api=(...x)=>globalThis.__onboardingApi(...x); export const uid=()=>"test-uid";export const dateLabel=()=>"";export const timeLabel=()=>"";export const kmBetween=()=>0;`,loader:'js'}));
   b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`export const claimAdminAccess=(...x)=>globalThis.__directLogin?.claim?.(...x),registerAdminForApproval=(...x)=>globalThis.__directLogin?.manualRegister?.(...x),deleteTestFirebaseAccount=()=>{}; export const CLOUD=true,ADMIN_SESSION='admin'; export const adminLogin=()=>{};export const adminLogout=()=>{};export const changeAdminPassword=()=>{}; export const adminAccountEmail=async()=>"admin@example.test"; export const createAdministrator=()=>{}; export const createDirectAdministrator=()=>{}; export const createAdminEnrollmentCode=()=>{},cancelAdminEnrollmentCode=()=>{},registerAdminWithCode=()=>{},changeFirstCodeAdminPassword=()=>{}; export const inviteAdministrator=()=>{},requestAdminPasswordReset=()=>{},inspectAdminPasswordReset=()=>{},confirmAdminPasswordReset=()=>{},inspectAdminVerification=()=>{},confirmAdminVerification=()=>{}; export const requestAdminEmailChange=()=>{};export const inspectAdminEmailChange=()=>{};export const confirmAdminEmailChange=()=>{}; export const resendAdminVerification=()=>{}; export const observeVendor=()=>{}; export const sellerLogin=()=>{};export const sellerChoosePin=()=>{};export const sellerMigratePin=()=>{};export const sellerRegister=()=>{};export const sellerLogout=()=>{};export const listenStore=()=>{};export const prepareFcm=()=>{};export const subscribeFcm=()=>{};export const unsubscribeFcm=()=>{};export const notificationsWanted=()=>false;`,loader:'js'}));
 }}]});
 const module={exports:{}};new Function('module','exports','require',output.outputFiles[0].text)(module,module.exports,require);
-const {SessionForm}=module.exports;
+const {SessionForm,VisibleFeedbackProvider}=module.exports;
 const data={stores:[{id:'store-1',name:'Fnac Test',active:true}],sellers:[{id:1,name:'Morgan',storeId:'store-1',departmentId:'tech',active:true},{id:2,name:'Élodie',storeId:'store-1',departmentId:'editorial',active:true}],services:[],departmentsByStore:{'store-1':[{id:'tech',name:'Technique',active:true},{id:'editorial',name:'Éditorial',active:true}]}};
 const text=node=>typeof node==='string'?node:!node?'':Array.isArray(node)?node.map(text).join(''):text(node.children);
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
@@ -192,4 +192,19 @@ test('Département : l’indication vide reste distincte jusqu’à une sélecti
     await change(tree,'Votre département','tech');assert.equal(field(tree,'Votre département').props.value,'tech');assert.equal(field(tree,'Votre département').props.className,'');
     await change(tree,'Votre département','');assert.equal(field(tree,'Votre département').props.className,'is-placeholder');
   } finally {if(tree)await act(async()=>tree.unmount());restore();}
+});
+
+test('Une vérification de profil échouée se réaffiche après chaque nouvelle tentative',async()=>{
+  let calls=0,tree;const restore=apiMock(async()=>{calls++;return {};});
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(VisibleFeedbackProvider,null,React.createElement(SessionForm,{data,onSubmit:async()=>{}})));});
+    await chooseScope(tree);await change(tree,'Votre prénom','Morgan');
+    const feedback=()=>tree.root.findByProps({'aria-label':'Message'});
+    assert.match(text(feedback()),/Vérification du profil impossible/);assert.equal(calls,1);
+    for(let i=0;i<2;i++){
+      const retry=feedback().findAllByType('button').find(button=>text(button)==='Vérifier');
+      await act(async()=>{retry.props.onClick();await tick();});
+      assert.match(text(feedback()),/Vérification du profil impossible/);assert.equal(calls,i+2);
+    }
+  }finally{if(tree)await act(async()=>tree.unmount());restore();}
 });
