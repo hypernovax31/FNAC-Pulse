@@ -13,6 +13,14 @@ test('Tactile : deux ou trois colonnes selon le conteneur et retrait de 44 px',(
   assert.match(css,/\.service-card-name\s*\{[^}]*overflow-wrap:anywhere/);
 });
 
+test('Tableau de bord : objectifs à pleine largeur et périodes du récapitulatif réparties également',()=>{
+  assert.match(css,/\.goals-panel\s*\{[^}]*width:100%/);
+  assert.match(css,/\.period-tabs\s*\{[^}]*display:grid;[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\);[^}]*width:100%/);
+  assert.match(css,/\.period-tabs button\s*\{[^}]*min-width:0;[^}]*text-align:center;[^}]*white-space:normal/);
+  assert.doesNotMatch(css,/\.period-tabs\s*\{[^}]*width:max-content/);
+  assert.match(css,/\.period-tabs button,\.history-modes button\s*\{\s*min-height:44px/);
+});
+
 test('Notifications : texte lisible, actions tactiles et messages longs défilables',()=>{
   assert.match(css,/\.toast\s*\{[^}]*min-height:60px[^}]*border-left:3px[^}]*font-size:14px/);
   assert.match(css,/@keyframes\s+toast-appear/);

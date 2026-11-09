@@ -36,3 +36,26 @@ test('Nouveaux administrateurs : e-mail de connexion sans création préalable n
   const before=events.filter(e=>e[0]==='send').length;await inviteAdministrator(async()=>({status:'accepted'}),{email:'ancien@example.test',requestId:'request-client-003'});assert.equal(events.filter(e=>e[0]==='send').length,before,'pas de second envoi pour un accès déjà accepté');
  }finally{if(previous.window===undefined)delete globalThis.window;else globalThis.window=previous.window;if(previous.__inviteFake===undefined)delete globalThis.__inviteFake;else globalThis.__inviteFake=previous.__inviteFake;}
 });
+
+test('Mot de passe oublié : demande Firebase uniquement, réponse discrète et sessions préservées',async()=>{
+ const previous={window:globalThis.window,__inviteFake:globalThis.__inviteFake},events=[];let sendError=null;
+ globalThis.window={location:{origin:'https://app.test'}};
+ globalThis.__inviteFake={
+  initializeApp:(_config,name)=>({name:name||'default'}),getAuth:app=>({app}),getFirestore:()=>({}),
+  signOut:async auth=>events.push(['signOut',auth.app.name]),
+  sendPasswordResetEmail:async(auth,address)=>{events.push(['reset',auth.app.name,auth.languageCode,address]);if(sendError)throw sendError;},
+ };
+ try {
+  const {requestAdminPasswordReset}=await cloud();
+  await assert.rejects(requestAdminPasswordReset(''),/adresse e-mail de votre compte administrateur/);
+  await assert.rejects(requestAdminPasswordReset('a'.repeat(255)),/adresse e-mail/);
+  await requestAdminPasswordReset('  admin@example.test  ');
+  assert.deepEqual(events,[['reset','fnac-pulse-admin','fr','admin@example.test']]);
+  for(const code of ['auth/user-not-found','auth/user-disabled']){sendError=Object.assign(Error('confidentiel'),{code});await requestAdminPasswordReset('personne@example.test');}
+  sendError=Object.assign(Error('mauvais format'),{code:'auth/invalid-email'});await assert.rejects(requestAdminPasswordReset('mauvais'),/adresse e-mail valide/);
+  for(const code of ['auth/too-many-requests','auth/quota-exceeded']){sendError=Object.assign(Error('quota'),{code});await assert.rejects(requestAdminPasswordReset('admin@example.test'),/Trop de demandes/);}
+  sendError=Object.assign(Error('réponse perdue'),{code:'auth/network-request-failed'});await assert.rejects(requestAdminPasswordReset('admin@example.test'),/pas pu être confirmée.*boîte e-mail avant de réessayer/);
+  assert(!events.some(event=>event[0]==='signOut'),'aucune session actuelle n’est déconnectée');
+  assert(events.every(event=>event[0]==='reset'),'aucune création, révocation ou modification de compte');
+ }finally{if(previous.window===undefined)delete globalThis.window;else globalThis.window=previous.window;if(previous.__inviteFake===undefined)delete globalThis.__inviteFake;else globalThis.__inviteFake=previous.__inviteFake;}
+});

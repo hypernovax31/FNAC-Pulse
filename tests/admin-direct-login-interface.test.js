@@ -15,7 +15,7 @@ const out=await build({entryPoints:['src/Admin.jsx'],bundle:true,platform:'node'
     export const adminLogin=(...x)=>globalThis.__directLogin.login(...x),adminLogout=()=>globalThis.__directLogin.logout(),changeAdminPassword=(...x)=>globalThis.__directLogin.change(...x);
     export const adminAccountEmail=async()=>"nouveau@example.test",createDirectAdministrator=()=>{},inviteAdministrator=()=>{},resendAdminVerification=(...x)=>globalThis.__directLogin?.resend?.(...x);
     export const createAdminEnrollmentCode=()=>{},cancelAdminEnrollmentCode=()=>{},registerAdminWithCode=(...x)=>globalThis.__directLogin.register?.(...x),changeFirstCodeAdminPassword=(...x)=>globalThis.__directLogin.codeChange?.(...x);
-    export const requestAdminPasswordReset=()=>{},inspectAdminPasswordReset=()=>{},confirmAdminPasswordReset=()=>{},inspectAdminVerification=()=>{},confirmAdminVerification=()=>{};
+    export const requestAdminPasswordReset=(...x)=>globalThis.__directLogin?.reset?.(...x),inspectAdminPasswordReset=()=>{},confirmAdminPasswordReset=()=>{},inspectAdminVerification=()=>{},confirmAdminVerification=()=>{};
   `,loader:'js'}));
 }}]});
 const module={exports:{}};new Function('module','exports','require',out.outputFiles[0].text)(module,module.exports,require);
@@ -78,6 +78,7 @@ test('Parcours code à distance : aucun accès avant le mot de passe personnel',
   });
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
+    await act(async()=>{tree.root.findAllByType('button').find(x=>text(x).includes('Aide à la connexion')).props.onClick();await tick();});
     await act(async()=>{tree.root.findAllByType('button').find(x=>text(x).includes('Créer mon accès avec un code')).props.onClick();await tick();});
     assert.match(text(tree.toJSON()),/6 caractères maximum/);
     const form=()=>tree.root.findByType('form'),fields=()=>form().findAllByType('input');
@@ -92,6 +93,10 @@ test('Parcours code à distance : aucun accès avant le mot de passe personnel',
     assert.deepEqual(calls.find(x=>x[0]==='codeChange').slice(1),['Personnel-test-2026!']);
     assert.deepEqual(calls.filter(x=>x[0]==='login').map(x=>x[2]),['Personnel-test-2026!']);
     assert.equal(values.get('pulse-admin-token'),'admin-session');assert(calls.some(x=>x[0]==='api'&&x[1]==='/api/admin/all'));
+    await act(async()=>{tree.root.findAllByProps({role:'tab'}).find(x=>text(x).includes('Administrateurs')).props.onClick();await tick();await tick();});
+    await act(async()=>{tree.root.findAllByType('button').find(x=>text(x).includes('Se déconnecter')).props.onClick();await tick();await tick();});
+    assert.equal(values.has('pulse-admin-token'),false);assert(tree.root.findByProps({id:'admin-email'}));
+    assert.match(text(tree.toJSON()),/Mot de passe oublié \?/);assert.doesNotMatch(text(tree.toJSON()),/Aide à la connexionRetrouvez/);
   } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
 });
 
@@ -112,6 +117,7 @@ test('Nouvelle première connexion : mot de passe personnel, aucun droit avant v
   const button=caption=>tree.root.findAllByType('button').find(x=>text(x).includes(caption));
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
+    await act(async()=>button('Aide à la connexion').props.onClick());
     await act(async()=>button('Première connexion').props.onClick());
     assert.match(text(tree.toJSON()),/Aucun e-mail n’est envoyé/);assert.doesNotMatch(text(tree.toJSON()),/code|mot de passe provisoire/);
     const f=()=>tree.root.findByType('form'),fields=()=>f().findAllByType('input');
@@ -166,8 +172,9 @@ test('Invitation par e-mail : connexion automatique après vérification, même 
   });
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
-    assert.match(text(tree.toJSON()),/Créez votre mot de passe depuis le lien ou connectez-vous ici avec votre mot de passe habituel/i);
-    assert.doesNotMatch(text(tree.toJSON()),/Accepter mon invitation/);
+    assert.match(text(tree.toJSON()),/Connectez-vous avec votre adresse e-mail et votre mot de passe/);
+    assert.match(text(tree.toJSON()),/Mot de passe oublié \?/);
+    assert.doesNotMatch(text(tree.toJSON()),/Anciennes demandes|Accepter mon invitation/);
     await set(tree.root.findByProps({id:'admin-email'}),'invite@example.test');await set(tree.root.findByProps({id:'admin-password'}),'Mot-de-passe-personnel-2026');
     await act(async()=>{tree.root.findAllByType('form')[0].props.onSubmit({preventDefault(){}});await tick();await tick();});
     assert.equal(attempts,2);assert.equal(values.get('pulse-admin-token'),'admin-session');
@@ -203,4 +210,58 @@ test('Invitation par e-mail : une adresse non vérifiée ne reçoit aucun accès
     assert.deepEqual(calls.find(x=>Array.isArray(x)&&x[0]==='resend'),['resend','invite@example.test','Mot-de-passe-personnel-2026']);
     assert.match(text(tree.toJSON()),/Nouveau lien envoyé/);
   } finally {if(tree)await act(async()=>tree.unmount());for(const [n,d] of old)if(d)Object.defineProperty(globalThis,n,d);else delete globalThis[n];}
+});
+
+test('Connexion simplifiée : demande de lien depuis une adresse préremplie, sans changement de session',async()=>{
+  const names=['document','window','sessionStorage','__directLogin'],old=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)]));
+  const values=new Map(),calls=[],put=(name,value)=>Object.defineProperty(globalThis,name,{configurable:true,writable:true,value});let tree,resolveReset;
+  put('document',{body:{style:{overflow:''}},activeElement:null,addEventListener(){},removeEventListener(){}});put('window',{confirm:()=>true});
+  put('sessionStorage',{getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)});
+  put('__directLogin',{
+    reset(address){calls.push(['reset',address]);return new Promise(resolve=>{resolveReset=resolve;});},
+    async login(...args){calls.push(['login',...args]);throw Error('aucune connexion automatique');},async logout(){calls.push(['logout']);},
+    async api(...args){calls.push(['api',...args]);throw Error('aucune requête Worker');},
+  });
+  const button=label=>tree.root.findAllByType('button').find(node=>text(node).trim()===label);
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
+    assert.match(text(tree.toJSON()),/Connectez-vous avec votre adresse e-mail et votre mot de passe/);
+    assert.doesNotMatch(text(tree.toJSON()),/Anciennes demandes|Gardez la main|Créer mon accès avec un code/);
+    assert(button('Mot de passe oublié ?'));assert(button('Aide à la connexion'));
+    await set(tree.root.findByProps({id:'admin-email'}),' admin@example.test ');
+    await set(tree.root.findByProps({id:'admin-password'}),'secret-fictif');
+    await act(async()=>button('Mot de passe oublié ?').props.onClick());
+    const input=tree.root.findByProps({id:'admin-reset-email'});assert.equal(input.props.value,' admin@example.test ');assert.equal(input.props.type,'email');
+    assert.equal(input.props.required,true);assert.equal(input.props.autoComplete,'email');assert.match(text(tree.toJSON()),/reconnexion peut être nécessaire sur vos autres appareils/);
+    const form=()=>tree.root.findByType('form');
+    await act(async()=>{form().props.onSubmit({preventDefault(){}});form().props.onSubmit({preventDefault(){}});await tick();});
+    assert.deepEqual(calls,[['reset','admin@example.test']]);assert.equal(button('Demande en cours…').props.disabled,true);
+    await act(async()=>{resolveReset();await tick();await tick();});
+    assert.match(text(tree.toJSON()),/Si un compte compatible existe/);assert.match(text(tree.toJSON()),/courriers indésirables/);
+    assert.equal(values.has('pulse-admin-token'),false);assert.deepEqual(calls,[['reset','admin@example.test']]);
+    await act(async()=>button('Retour à la connexion').props.onClick());
+    assert.equal(tree.root.findByProps({id:'admin-email'}).props.value,'admin@example.test');
+    assert.equal(tree.root.findByProps({id:'admin-password'}).props.value,'');
+    assert.doesNotMatch(text(tree.toJSON()),/secret-fictif|Anciennes demandes/);
+  } finally {if(tree)await act(async()=>tree.unmount());for(const [name,descriptor] of old)if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];}
+});
+
+test('Mot de passe oublié : erreur et même erreur réaffichée au nouvel essai',async()=>{
+  const names=['document','window','sessionStorage','__directLogin'],old=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)]));
+  const put=(name,value)=>Object.defineProperty(globalThis,name,{configurable:true,writable:true,value});let tree,attempts=0;
+  put('document',{body:{style:{overflow:''}},activeElement:null,addEventListener(){},removeEventListener(){}});put('window',{confirm:()=>true});
+  put('sessionStorage',{getItem:()=>null,setItem(){},removeItem(){}});
+  put('__directLogin',{async reset(){attempts++;throw Error('Trop de demandes. Réessayez plus tard.');},async logout(){},async api(){throw Error('aucune requête Worker');}});
+  const button=label=>tree.root.findAllByType('button').find(node=>text(node)===label);
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();});
+    await act(async()=>button('Mot de passe oublié ?').props.onClick());
+    await set(tree.root.findByProps({id:'admin-reset-email'}),'admin@example.test');
+    const submit=async()=>act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
+    await submit();assert.equal(attempts,1);assert.match(text(tree.toJSON()),/Trop de demandes/);
+    let popup=tree.root.findByProps({className:'visible-feedback visible-feedback-dialog is-error'});assert.match(text(popup),/Trop de demandes/);
+    await act(async()=>popup.findByProps({'aria-label':'Fermer ce message'}).props.onClick({currentTarget:{}}));
+    assert.equal(tree.root.findAllByProps({className:'visible-feedback visible-feedback-dialog is-error'}).length,0);
+    await submit();assert.equal(attempts,2);popup=tree.root.findByProps({className:'visible-feedback visible-feedback-dialog is-error'});assert.match(text(popup),/Trop de demandes/);
+  } finally {if(tree)await act(async()=>tree.unmount());for(const [name,descriptor] of old)if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];}
 });

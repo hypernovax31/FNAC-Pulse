@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { VisibleFeedback, VisibleFeedbackProvider, useFeedbackState } from './VisibleFeedback';
 import { ModalToastOutlet } from './AppToasts';
-import { X, LockKeyhole, ArrowRight, Plus, Check, Pencil, Archive, RotateCcw, LogOut, ShieldCheck, Store, Info, ArrowUp, ArrowDown, Trash2, ChevronDown } from 'lucide-react';
+import { X, ArrowRight, Plus, Check, Pencil, Archive, RotateCcw, LogOut, ShieldCheck, Store, Info, ArrowUp, ArrowDown, Trash2, ChevronDown } from 'lucide-react';
 import { api } from './api';
-import { CLOUD, ADMIN_SESSION, adminLogin, adminLogout, claimAdminAccess, resendAdminVerification } from './cloud';
+import { CLOUD, ADMIN_SESSION, adminLogin, adminLogout, claimAdminAccess, resendAdminVerification, requestAdminPasswordReset } from './cloud';
 import { AdminAccounts } from './AdminAccounts';
 import { AdminRegistration } from './AdminRegistration';
 import { AdminFirstPassword } from './AdminFirstPassword';
@@ -21,7 +21,6 @@ import { AdminTabs } from './AdminTabs';
 import { normalizeWorkdays, validWorkdays, WORKDAY_NAMES, WORKDAY_ORDER } from './goals.js';
 import { displayStoreName, isSelectableStore, storeSelectionGroups } from './store-directory.js';
 import { StoreSearch } from './StoreSearch';
-import { AdminInvitationHelp } from './AdminInvitationHelp';
 
 const MANAGED_STORE_KEY='pulse-admin-managed-store-v1';
 function rememberedStore() {try{return sessionStorage.getItem(MANAGED_STORE_KEY)||'';}catch{return '';}}
@@ -61,6 +60,8 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [email,setEmail]=useState('');
   const [firstPassword,setFirstPassword]=useState(false),[firstTemporary,setFirstTemporary]=useState(''),[firstBusy,setFirstBusy]=useState(false),[codeRegistration,setCodeRegistration]=useState(false);
   const [manualRegistration,setManualRegistration]=useState(false),[approvalWaiting,setApprovalWaiting]=useState(false);
+  const [authView,setAuthView]=useState('login');
+  const resetInFlight=useRef(false);
   const [error,setError,errorRevision]=useFeedbackState('');
   const [notice,setNotice,noticeRevision]=useFeedbackState('');
   const [busy,setBusy]=useState(false);
@@ -139,6 +140,23 @@ export default function Admin({onClose,data,session,onChanged}) {
     }
     onChanged();
   }
+  function switchAuthView(view) {
+    if(busy||resetInFlight.current)return;
+    setError('');setNotice('');setAuthView(view);
+    if(view==='reset')setPassword('');
+  }
+  async function sendPasswordReset(event) {
+    event.preventDefault();
+    if(busy||resetInFlight.current)return;
+    const address=email.trim();
+    if(!address){setError('Indiquez l’adresse e-mail de votre compte administrateur.');return;}
+    resetInFlight.current=true;setBusy(true);setError('');setNotice('');
+    try {
+      await requestAdminPasswordReset(address);setEmail(address);
+      setNotice('Si un compte compatible existe pour cette adresse, un lien de réinitialisation sera envoyé. Vérifiez aussi les courriers indésirables.');
+    } catch(e){setError(e.message||'La demande n’a pas pu être confirmée. Vérifiez votre connexion et réessayez.');}
+    finally{resetInFlight.current=false;setBusy(false);}
+  }
   async function login(e,acceptInvitation=false) {
     e?.preventDefault();if(busy)return;
     if(acceptInvitation&&(!email.trim()||!password)){setError('Renseignez l’e-mail invité et votre mot de passe.');return;}
@@ -197,7 +215,7 @@ export default function Admin({onClose,data,session,onChanged}) {
     catch(e){setError(e.message);} finally{setBusy(false);}
   }
   async function manualRegistered(address) {
-    setEmail(address);setPassword('');setError('');setNotice('');setManualRegistration(false);setApprovalWaiting(true);
+    setEmail(address);setPassword('');setError('');setNotice('');setManualRegistration(false);setAuthView('login');setApprovalWaiting(true);
   }
   async function verifyApproval() {
     if(busy)return;
@@ -214,18 +232,18 @@ export default function Admin({onClose,data,session,onChanged}) {
   }
   async function leaveApproval(close=false) {
     try{await adminLogout();}catch{}
-    setApprovalWaiting(false);setError('');setNotice('');setPassword('');
+    setApprovalWaiting(false);setAuthView('login');setError('');setNotice('');setPassword('');
     if(close)onClose();
   }
   async function codeRegistered(address) {
     const status=await api('/api/auth/admin-account-status',{method:'POST',token:ADMIN_SESSION,body:{}});
     if(!status.passwordChangeRequired||status.method!=='code')throw new Error('La première connexion n’a pas pu être confirmée. Reprenez avec le même code et les mêmes informations.');
-    setEmail(address);setPassword('');setFirstTemporary('');setCodeRegistration(false);setFirstPassword('code');
+    setEmail(address);setPassword('');setFirstTemporary('');setCodeRegistration(false);setAuthView('login');setFirstPassword('code');
   }
   async function cancelCodeRegistration() {
     if(firstBusy)return;
     try{await adminLogout();}catch{}
-    setCodeRegistration(false);setError('');
+    setCodeRegistration(false);setAuthView('login');setError('');
   }
   async function finishFirstPassword(newPassword) {
     let status=await api('/api/auth/admin-account-status',{method:'POST',token:ADMIN_SESSION,body:{}});
@@ -249,11 +267,11 @@ export default function Admin({onClose,data,session,onChanged}) {
   async function cancelFirstPassword() {
     if(firstBusy)return;
     try{await adminLogout();}catch{}
-    setFirstPassword(false);setFirstTemporary('');setPassword('');setError('');
+    setFirstPassword(false);setAuthView('login');setFirstTemporary('');setPassword('');setError('');
   }
   async function logout() {
     try {if(CLOUD)await adminLogout();else await api('/api/admin/logout',{method:'POST',token,body:{}})} catch {}
-    sessionStorage.removeItem('pulse-admin-token');rememberStore('');setAdminStore('');setStoreDraft('');setAdminSeller('');setName('');setNewSellerDepartment('');setNewSellerWorkdays([]);setToken('');setNotice('');
+    sessionStorage.removeItem('pulse-admin-token');rememberStore('');setAdminStore('');setStoreDraft('');setAdminSeller('');setName('');setNewSellerDepartment('');setNewSellerWorkdays([]);setToken('');setAuthView('login');setNotice('');
   }
   async function run(work, success) {
     setBusy(true);setError('');setNotice('');
@@ -300,7 +318,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   </Modal>;
 
   if(manualRegistration&&!token) return <Modal title="Première connexion" subtitle="Créez votre compte administrateur." onClose={()=>{if(!firstBusy){setManualRegistration(false);onClose();}}}>
-    <AdminRegistration initialEmail={email} onRegistered={manualRegistered} onCancel={()=>{setManualRegistration(false);setError('');setNotice('');}} onBusy={setFirstBusy}/>
+    <AdminRegistration initialEmail={email} onRegistered={manualRegistered} onCancel={()=>{setManualRegistration(false);setAuthView('login');setError('');setNotice('');}} onBusy={setFirstBusy}/>
   </Modal>;
 
   if(approvalWaiting&&!token) return <Modal title="Demande en attente" subtitle="Votre accès doit être validé." onClose={()=>leaveApproval(true)}>
@@ -316,12 +334,36 @@ export default function Admin({onClose,data,session,onChanged}) {
     </div>
   </Modal>;
 
-  if(!token) return <Modal title="Espace administrateur" subtitle="Un accès réservé pour gérer votre espace." onClose={onClose}>
-    <div className="admin-login-illustration"><div className="admin-lock"><LockKeyhole size={24}/></div><div><strong>Gardez la main sur votre équipe.</strong><p>Gérez les vendeurs, les services et les ventes du jour.</p></div></div>
+  if(!token&&CLOUD&&authView==='reset') return <Modal title="Mot de passe oublié ?" subtitle="Recevez un lien pour choisir un nouveau mot de passe." onClose={onClose}>
+    <form className="admin-login-form" onSubmit={sendPasswordReset}>
+      <label className="form-label" htmlFor="admin-reset-email">Adresse e-mail du compte administrateur</label>
+      <input id="admin-reset-email" className="text-input" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} maxLength={254} value={email} onChange={e=>setEmail(e.target.value)} disabled={busy} required autoFocus/>
+      <p className="admin-reset-note">Après modification, une reconnexion peut être nécessaire sur vos autres appareils.</p>
+      <VisibleFeedback message={notice} revision={noticeRevision}/><VisibleFeedback message={error} tone="error" revision={errorRevision}/>
+      {error&&<span className="sr-only" role="alert">{error}</span>}
+      {notice&&<span className="sr-only" role="status">{notice}</span>}
+      <button className="primary-button full-button" type="submit" disabled={busy}>{busy?'Demande en cours…':'Envoyer le lien'} <ArrowRight size={16}/></button>
+    </form>
+    <button type="button" className="text-button admin-auth-back" disabled={busy} onClick={()=>switchAuthView('login')}>Retour à la connexion</button>
+  </Modal>;
+
+  if(!token&&CLOUD&&authView==='help') return <Modal title="Aide à la connexion" subtitle="Retrouvez les solutions pour accéder à votre compte." onClose={onClose}>
+    <div className="admin-access-help">
+      <p>Vous avez reçu une invitation par e-mail ? Ouvrez le lien personnel pour activer votre accès.</p>
+      <a className="outline-button full-button admin-help-link" href="?aide-invitation=1" target="_blank" rel="noopener noreferrer">Le lien reçu ne s’ouvre pas</a>
+      <p>Votre adresse a été ajoutée sans invitation par e-mail ?</p>
+      <button type="button" className="outline-button full-button" onClick={()=>{setError('');setNotice('');setManualRegistration(true);}}>Première connexion · Créer mon compte</button>
+      <p>Vous avez reçu un code administrateur ?</p>
+      <button type="button" className="outline-button full-button" onClick={()=>{setError('');setNotice('');setCodeRegistration(true);}}>Créer mon accès avec un code</button>
+      <button type="button" className="text-button admin-auth-back" onClick={()=>switchAuthView('login')}>Retour à la connexion</button>
+    </div>
+  </Modal>;
+
+  if(!token) return <Modal title="Espace administrateur" subtitle={CLOUD?'Connectez-vous avec votre adresse e-mail et votre mot de passe.':'Saisissez votre mot de passe administrateur.'} onClose={onClose}>
     <form onSubmit={login} className="admin-login-form">
-      {CLOUD&&<><label className="form-label" htmlFor="admin-email">E-mail administrateur</label><input id="admin-email" className="text-input" type="email" autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)} required autoFocus/></>}
-      <label className="form-label" htmlFor="admin-password">Mot de passe administrateur</label>
-      <input id="admin-password" className="text-input" type="password" placeholder="Votre mot de passe" value={password} onChange={e=>setPassword(e.target.value)} required autoFocus={!CLOUD} autoComplete="current-password" />
+      {CLOUD&&<><label className="form-label" htmlFor="admin-email">Adresse e-mail</label><input id="admin-email" className="text-input" type="email" autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={254} value={email} onChange={e=>setEmail(e.target.value)} disabled={busy} required autoFocus/></>}
+      <label className="form-label" htmlFor="admin-password">Mot de passe</label>
+      <input id="admin-password" className="text-input" type="password" value={password} onChange={e=>setPassword(e.target.value)} disabled={busy} required autoFocus={!CLOUD} autoComplete="current-password" />
       <VisibleFeedback message={notice} revision={noticeRevision}/><VisibleFeedback message={error} tone="error" revision={errorRevision}/>
       {error&&<div className="form-error" role="alert">{error}</div>}
       {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
@@ -331,14 +373,11 @@ export default function Admin({onClose,data,session,onChanged}) {
         catch(e){setError(e.message);}finally{setBusy(false);}
       }}>Renvoyer le lien de confirmation</button>}
       <button className="primary-button full-button" type="submit" disabled={busy}>{busy?'Connexion…':'Se connecter'} <ArrowRight size={16}/></button>
-      {CLOUD&&<p className="admin-login-hint">Vous avez reçu une invitation ? Créez votre mot de passe depuis le lien ou connectez-vous ici avec votre mot de passe habituel.</p>}
-      {CLOUD&&<details className="admin-legacy-invitations"><summary>Anciennes demandes</summary>
-        <div className="admin-invitation-accept"><strong>Demande sans e-mail</strong><p>Pour une adresse ajoutée avant cette mise à jour.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>{setError('');setNotice('');setManualRegistration(true);}}>Première connexion · Créer mon compte</button></div>
-        <div className="admin-invitation-accept"><strong>Invitation avec un code</strong><p>Utilisez cette option uniquement pour un code reçu précédemment.</p><button type="button" className="outline-button full-button" disabled={busy} onClick={()=>{setError('');setNotice('');setCodeRegistration(true);}}>Créer mon accès avec un code</button></div>
-      </details>}
-      <p className="form-footnote"><ShieldCheck size={14}/> L’accès administrateur est protégé par mot de passe.</p>
     </form>
-    {CLOUD&&<AdminInvitationHelp email={email} busy={busy} onBusy={setBusy} onCompleted={address=>{setEmail(address);setPassword('');}} onVerified={setEmail}/>}
+    {CLOUD&&<div className="admin-login-secondary">
+      <button type="button" className="text-button" disabled={busy} onClick={()=>switchAuthView('reset')}>Mot de passe oublié ?</button>
+      <button type="button" className="text-button" disabled={busy} onClick={()=>switchAuthView('help')}>Aide à la connexion</button>
+    </div>}
   </Modal>;
 
   return <Modal title="Administration" subtitle={adminStoreDisplay?`Magasin sélectionné : ${adminStoreDisplay}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={closeAdministration} wide fixedTabs toolbar={<AdminTabs tab={tab} onSelect={switchTab} disabled={busy}/>}>

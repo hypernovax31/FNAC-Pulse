@@ -109,6 +109,26 @@ test('Récapitulatif : périmètre avant les périodes',()=>{
   assert(html.indexOf('PÉRIMÈTRE DU RÉCAP’')<html.indexOf('Période du récapitulatif'));
 });
 
+test('Récapitulatif : les trois périodes gardent leur sélection et leurs chiffres selon le périmètre',async()=>{
+  const recap=(day,week,month)=>Object.fromEntries(Object.entries({day,week,month}).map(([key,total])=>[key,{total,byService:[],start:'2026-10-26',end:'2026-10-26'}]));
+  const stats={summary:{store:recap(2,7,21),departments:{tech:recap(1,4,9)}}}, {act}=TestRenderer;let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Summary,{stats,hasSession:true,storeId:'magasin',departments:[{id:'tech',name:'Technique',active:true}]}));});
+    const tabs=()=>tree.root.findAllByProps({role:'tab'}),total=()=>Number(tree.root.findByProps({className:'summary-total'}).findByType('strong').children[0]);
+    assert.deepEqual(tabs().map(tab=>tab.children.join('')),['Aujourd’hui','Cette semaine','Ce mois']);
+    assert.equal(total(),2);
+    for(const [index,value] of [[1,7],[2,21],[0,2]]) {
+      await act(async()=>tabs()[index].props.onClick());
+      assert.equal(total(),value);assert.deepEqual(tabs().map(tab=>tab.props['aria-selected']),[0,1,2].map(i=>i===index));
+    }
+    await act(async()=>tree.root.findByProps({'aria-label':'Périmètre du récapitulatif'}).props.onChange({target:{value:'tech'}}));
+    assert.equal(total(),1);
+    await act(async()=>tabs()[2].props.onClick());assert.equal(total(),9);
+    await act(async()=>tree.root.findByProps({'aria-label':'Périmètre du récapitulatif'}).props.onChange({target:{value:'store'}}));
+    assert.equal(total(),21,'la période sélectionnée reste active lors du changement de périmètre');
+  }finally{if(tree)await act(async()=>tree.unmount());}
+});
+
 test('Aujourd’hui : total personnel en premier, ventes de l’équipe en second',()=>{
   const period={total:7,byService:[],bySeller:[],mineByService:[],start:'2026-10-29',end:'2026-10-29'};
   const stats={day:period,week:period,month:period,mine:[],mineTotal:3,leaderboard:[],activity:[]};

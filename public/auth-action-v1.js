@@ -264,7 +264,7 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
       another.addEventListener('click',()=>showHelper());
       content.append(another);
     }
-    const help=element(doc,'p',{},'Pour obtenir un nouveau lien, contactez votre administrateur ou utilisez « Mot de passe oublié ou lien bloqué ? » dans l’écran de connexion administrateur.');
+    const help=element(doc,'p',{},'Pour obtenir une nouvelle invitation, contactez votre administrateur. Pour réinitialiser votre mot de passe, utilisez « Mot de passe oublié ? » sur l’écran de connexion.');
     content.append(help,loginButton());
   }
 

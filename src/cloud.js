@@ -275,12 +275,14 @@ export async function inviteAdministrator(api,{email,currentPassword,requestId})
 }
 export async function requestAdminPasswordReset(email) {
   const address=String(email||'').trim();
-  if(!address||address.length>254)throw new Error('Indiquez l’adresse e-mail du compte invité.');
+  if(!address||address.length>254)throw new Error('Indiquez l’adresse e-mail de votre compte administrateur.');
   try {adminAuth.languageCode='fr';await firebaseDeadline(sendPasswordResetEmail(adminAuth,address));}
   catch(error){
+    // Ne pas révéler si une adresse possède ou non un compte Firebase.
+    if(['auth/user-not-found','auth/user-disabled'].includes(error?.code))return;
     if(error?.code==='auth/invalid-email')throw new Error('Indiquez une adresse e-mail valide.');
-    if(error?.code==='auth/too-many-requests')throw new Error('Trop de demandes. Réessayez plus tard.');
-    throw new Error('La demande n’a pas pu être confirmée. Vérifiez votre connexion et réessayez.');
+    if(['auth/too-many-requests','auth/quota-exceeded'].includes(error?.code))throw new Error('Trop de demandes. Réessayez plus tard.');
+    throw new Error('La demande n’a pas pu être confirmée. Consultez votre boîte e-mail avant de réessayer.');
   }
 }
 function resetLinkFailure(error,{applying=false}={}) {

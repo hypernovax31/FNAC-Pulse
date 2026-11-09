@@ -19,7 +19,7 @@
             const referrer = document.createElement('meta');
             referrer.name = 'referrer'; referrer.content = 'origin'; document.head.appendChild(referrer);
             const script = document.createElement('script');
-            script.type = 'module'; script.src = '%BASE_URL%auth-action-v1.js?v=5';
+            script.type = 'module'; script.src = '%BASE_URL%auth-action-v1.js?v=6';
             script.onerror = function () { window.__fnacEmailActionLoadFailed = true; window.__fnacShowActionLoadError?.(); };
             document.head.appendChild(script);
           } else if (p.get('administration') === 'invitation') {
