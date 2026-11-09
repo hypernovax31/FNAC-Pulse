@@ -1137,7 +1137,7 @@ export function createWorker(deps={}) {
       list.push({id:newId,name,active:true,...(kind==='services'?{icon:'other'}:{storeId:body.storeId,departmentId})});id=newId;
       if(kind==='sellers') {
         const uid=await sellerUid(body.storeId,newId);
-        initialPlanning={path:`pulseGoals/${uid}`,data:{storeId:body.storeId,sellerId:newId,goals:{},
+        initialPlanning={uid,path:`pulseGoals/${uid}`,data:{storeId:body.storeId,sellerId:newId,goals:{},
           workdays:normalizeWorkdays(body.workdays),workdaysRevision:crypto.randomUUID()}};
       }
     } else {
@@ -1154,9 +1154,10 @@ export function createWorker(deps={}) {
       if(row.active&&duplicate(row,row.name))fail(409,'Ce nom existe déjà dans cette liste.');
     }
     // Création atomique : le vendeur n'apparaît jamais sans son planning.
-    // La précondition protège également un éventuel document préexistant.
+    // Un éventuel ancien planning ou accès ne doit ni être écrasé ni rattaché.
     const writes=[db.write('pulse/catalog',withFlags(d),{updateTime:c.updateTime})];
-    if(initialPlanning)writes.push(db.write(initialPlanning.path,initialPlanning.data,{exists:false}));
+    if(initialPlanning)writes.push(db.verify(`pulseAccess/${initialPlanning.uid}`,{exists:false}),
+      db.verify(`pulseStatus/${initialPlanning.uid}`,{exists:false}),db.write(initialPlanning.path,initialPlanning.data,{exists:false}));
     try{await db.commit(writes);}
     catch(e){if(conflict(e))fail(409,initialPlanning?'Une modification simultanée ou des données préexistantes empêchent la création. Rechargez et réessayez.':'Une modification simultanée a eu lieu. Réessayez.');throw e;}
     return {id:Number(id),ok:true};

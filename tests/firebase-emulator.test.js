@@ -1137,4 +1137,13 @@ test('Émulateur Firestore : création admin atomique avec département et plann
   await db.commit([db.write(`pulseGoals/${occupied}`,protectedDoc)]);
   const failed=await call(route,'POST',{...input,name:'Ne pas créer'});assert.equal(failed.status,409);
   assert.deepEqual((await db.get('pulse/catalog')).data,before);assert.deepEqual((await db.get(`pulseGoals/${occupied}`)).data,protectedDoc);
+  // Même protection pour un ancien accès ou statut isolé, dans deux magasins fictifs différents.
+  const [other,third]=before.stores.filter(s=>s.active&&s.id!==store).slice(0,2);assert(other&&third);
+  for(const [shop,collection] of [[other,'pulseAccess'],[third,'pulseStatus']]) {
+    const orphan=`seller-${(await digestBase64(`${shop.id}:${nextId}`)).slice(0,28)}`,marker={active:true,version:'session-fictive-à-préserver'};
+    await db.commit([db.write(`${collection}/${orphan}`,marker)]);
+    assert.equal((await call(route,'POST',{...input,storeId:shop.id,name:'Ne pas rattacher'})).status,409);
+    assert.deepEqual((await db.get('pulse/catalog')).data,before);assert.deepEqual((await db.get(`${collection}/${orphan}`)).data,marker);
+    assert.equal(await db.get(`pulseGoals/${orphan}`),null);
+  }
 });

@@ -2623,7 +2623,7 @@ test('Création vendeur admin cloud : département et jours obligatoires, planni
 });
 
 test('Création vendeur admin cloud : aucun demi-vendeur sur conflit ou document préexistant',async()=>{
-  for(const scenario of ['catalogue-concurrent','planning-existant']) {
+  for(const scenario of ['catalogue-concurrent','planning-existant','accès-existant','statut-existant']) {
     const db=new MemoryDb(),worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'administrator'})});
     const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator'},ctx={waitUntil(){}};
     const call=async(path,method='GET',body)=>{const response=await worker.fetch(new Request(`https://worker.test${path}`,{method,
@@ -2632,6 +2632,7 @@ test('Création vendeur admin cloud : aucun demi-vendeur sur conflit ou document
     await call('/api/bootstrap');const store=LEGACY_STORE_ID,base=(await db.get('pulse/catalog')).data,id=base.nextSellerId;
     const uid=`seller-${(await digestBase64(`${store}:${id}`)).slice(0,28)}`,path=`pulseGoals/${uid}`;
     if(scenario==='planning-existant')await db.commit([db.write(path,{ancien:'ne pas écraser',workdays:[1]})]);
+    else if(scenario==='accès-existant'||scenario==='statut-existant')await db.commit([db.write(`${scenario==='accès-existant'?'pulseAccess':'pulseStatus'}/${uid}`,{ancien:'ne pas rattacher',active:true,version:'session-existante'})]);
     else {
       const commit=db.commit.bind(db);let injected=false;
       db.commit=async writes=>{
@@ -2648,7 +2649,11 @@ test('Création vendeur admin cloud : aucun demi-vendeur sur conflit ou document
     const after=(await db.get('pulse/catalog')).data;
     assert(!after.sellers.some(s=>s.name==='Création à refuser'));assert.equal(after.nextSellerId,id);
     if(scenario==='planning-existant')assert.deepEqual((await db.get(path)).data,{ancien:'ne pas écraser',workdays:[1]});
-    else {assert.equal(await db.get(path),null);assert(after.stores.some(s=>s.id==='concurrent-fictif'));}
-    assert.equal(await db.get(`pulseAccess/${uid}`),null);assert.equal(await db.get(`pulseStatus/${uid}`),null);
+    else assert.equal(await db.get(path),null);
+    if(scenario==='catalogue-concurrent')assert(after.stores.some(s=>s.id==='concurrent-fictif'));
+    for(const [collection,occupied] of [['pulseAccess',scenario==='accès-existant'],['pulseStatus',scenario==='statut-existant']]) {
+      const doc=await db.get(`${collection}/${uid}`);
+      if(occupied)assert.deepEqual(doc.data,{ancien:'ne pas rattacher',active:true,version:'session-existante'});else assert.equal(doc,null);
+    }
   }
 });
