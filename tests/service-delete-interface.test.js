@@ -51,8 +51,8 @@ test('Suppression service : réponse perdue, reprise de la même demande sans no
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(ServiceDeletePanel,{...base,onUpdate:()=>{}}));await tick();});await request(tree);await confirm(tree);
     await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();});
-    assert(button(tree,'Vérifier ou reprendre'));assert.equal(g.values.size,1);assert.match(text(tree.toJSON()),/Garantie/);
-    await act(async()=>{button(tree,'Vérifier ou reprendre').props.onClick();await tick();});assert.equal(sent.length,2);assert.deepEqual(sent[0],sent[1]);assert.equal(g.values.size,0);
+    assert(button(tree,'Vérifier ou reprendre'));assert.equal(g.values.size,2);assert(g.values.has('fnac-pulse-service-delete:magasin-test'));assert.equal(g.values.get('fnac-pulse-feedback-job:service-delete:magasin-test'),'service-interface-job-0001');assert.match(text(tree.toJSON()),/Garantie/);
+    await act(async()=>{button(tree,'Vérifier ou reprendre').props.onClick();await tick();});assert.equal(sent.length,2);assert.deepEqual(sent[0],sent[1]);assert.equal(g.values.size,1);assert(!g.values.has('fnac-pulse-service-delete:magasin-test'));assert.equal(g.values.get('fnac-pulse-feedback-job:service-delete:magasin-test'),sent[0].jobId);
   } finally {if(tree)await act(async()=>tree.unmount());g.restore();}
 });
 
@@ -77,7 +77,7 @@ test('Suppression service : délai ou limitation intermédiaire conservent la de
     try {
       await act(async()=>{tree=TestRenderer.create(React.createElement(ServiceDeletePanel,base));await tick();});await request(tree);await confirm(tree);
       await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();});
-      assert(button(tree,'Vérifier ou reprendre'));assert.equal(g.values.size,1);
+      assert(button(tree,'Vérifier ou reprendre'));assert.equal(g.values.size,2);assert(g.values.has('fnac-pulse-service-delete:magasin-test'));assert.equal(g.values.get('fnac-pulse-feedback-job:service-delete:magasin-test'),'service-interface-job-0001');
       await act(async()=>{button(tree,'Vérifier ou reprendre').props.onClick();await tick();});assert.deepEqual(sent[0],sent[1]);
     } finally {if(tree)await act(async()=>tree.unmount());g.restore();}
   }

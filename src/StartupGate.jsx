@@ -1,4 +1,5 @@
 import React from 'react';
+import { VisibleFeedback } from './VisibleFeedback';
 import { ArrowRight, Check, Settings2, UserRound } from 'lucide-react';
 
 // Le profil et l'administration restent accessibles avant l'accueil. Le geste
@@ -6,6 +7,8 @@ import { ArrowRight, Check, Settings2, UserRound } from 'lucide-react';
 export function StartupGate({base='/',ready=true,status='ready',authReady=false,hasSession=false,profileName='',profileContext='',profileContent,onChangeProfile,onAdmin,adminAvailable=false,adminPending=false,adminError=false,onRetry,onStart,onContinue}) {
   const busy=!ready||status==='starting',failed=status==='unavailable';
   return <main className="startup-screen" aria-labelledby="startup-title">
+    <VisibleFeedback message={failed?'Le son n’a pas pu être lu. Vérifiez le volume et le mode silencieux, puis réessayez ou continuez sans son.':''} tone="error" actionLabel="Réessayer" onAction={onStart}/>
+    <VisibleFeedback message={adminError&&!adminAvailable?'Administration indisponible. Vérifiez votre connexion.':''} tone="error" actionLabel="Réessayer" onAction={onRetry}/>
     <header className="startup-topbar">
       <div className="startup-brand" aria-label="Fnac Pulse"><img src={`${base}fnac.svg`} width="34" height="35" alt=""/><strong>pulse<span>.</span></strong></div>
       <div className="startup-top-actions">

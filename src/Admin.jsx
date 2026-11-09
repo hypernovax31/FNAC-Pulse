@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { VisibleFeedback, VisibleFeedbackProvider, useFeedbackState } from './VisibleFeedback';
+import { ModalToastOutlet } from './AppToasts';
 import { X, LockKeyhole, ArrowRight, Plus, Check, Pencil, Archive, RotateCcw, LogOut, ShieldCheck, Store, Info, ArrowUp, ArrowDown, Trash2, ChevronDown } from 'lucide-react';
 import { api } from './api';
 import { CLOUD, ADMIN_SESSION, adminLogin, adminLogout, claimAdminAccess, resendAdminVerification } from './cloud';
@@ -45,8 +47,11 @@ function Modal({title,subtitle,onClose,children,wide=false,fixedTabs=false}) {
   },[]);
   return <div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget) onClose();}}>
     <div ref={dialog} role="dialog" aria-modal="true" aria-label={title} className={`modal ${wide?'modal-wide':''} ${fixedTabs?'admin-modal':''}`}>
-      <div className="modal-head"><div><h2>{title}</h2>{subtitle&&<p>{subtitle}</p>}</div><button className="icon-button close-button" aria-label="Fermer" onClick={onClose}><X size={19}/></button></div>
-      <div className={`modal-content ${fixedTabs?'modal-content-fixed-tabs':''}`}>{children}</div>
+      <VisibleFeedbackProvider>
+        <div className="modal-head"><div><h2>{title}</h2>{subtitle&&<p>{subtitle}</p>}</div><button className="icon-button close-button" aria-label="Fermer" onClick={onClose}><X size={19}/></button></div>
+        <div className={`modal-content ${fixedTabs?'modal-content-fixed-tabs':''}`}>{children}</div>
+        <ModalToastOutlet/>
+      </VisibleFeedbackProvider>
     </div>
   </div>;
 }
@@ -57,8 +62,8 @@ export default function Admin({onClose,data,session,onChanged}) {
   const [email,setEmail]=useState('');
   const [firstPassword,setFirstPassword]=useState(false),[firstTemporary,setFirstTemporary]=useState(''),[firstBusy,setFirstBusy]=useState(false),[codeRegistration,setCodeRegistration]=useState(false);
   const [manualRegistration,setManualRegistration]=useState(false),[approvalWaiting,setApprovalWaiting]=useState(false);
-  const [error,setError]=useState('');
-  const [notice,setNotice]=useState('');
+  const [error,setError,errorRevision]=useFeedbackState('');
+  const [notice,setNotice,noticeRevision]=useFeedbackState('');
   const [busy,setBusy]=useState(false);
   const [all,setAll]=useState({sellers:[],services:[],serviceOrders:{},serviceRemovalsByStore:{},departmentsByStore:{}});
   const [adminStore,setAdminStore]=useState(()=>{
@@ -304,6 +309,7 @@ export default function Admin({onClose,data,session,onChanged}) {
       <div className="admin-account-current"><ShieldCheck size={18}/><div><strong>Demande en attente</strong><p>{email}</p></div></div>
       <p>Montrez cet écran à un administrateur, qui vérifiera votre identité par un autre moyen avant de valider votre accès. Votre adresse n’est pas vérifiée automatiquement.</p>
       <p>Vous n’avez pas encore accès à l’administration. Aucun e-mail ne sera envoyé.</p>
+      <VisibleFeedback message={notice} revision={noticeRevision}/><VisibleFeedback message={error} tone="error" revision={errorRevision}/>
       {error&&<div className="form-error" role="alert">{error}</div>}
       {notice&&<div className="admin-alert success" role="status">{notice}</div>}
       <button type="button" className="primary-button full-button" disabled={busy} onClick={verifyApproval}>{busy?'Vérification…':'Vérifier la validation'} <ArrowRight size={16}/></button>
@@ -317,6 +323,7 @@ export default function Admin({onClose,data,session,onChanged}) {
       {CLOUD&&<><label className="form-label" htmlFor="admin-email">E-mail administrateur</label><input id="admin-email" className="text-input" type="email" autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)} required autoFocus/></>}
       <label className="form-label" htmlFor="admin-password">Mot de passe administrateur</label>
       <input id="admin-password" className="text-input" type="password" placeholder="Votre mot de passe" value={password} onChange={e=>setPassword(e.target.value)} required autoFocus={!CLOUD} autoComplete="current-password" />
+      <VisibleFeedback message={notice} revision={noticeRevision}/><VisibleFeedback message={error} tone="error" revision={errorRevision}/>
       {error&&<div className="form-error" role="alert">{error}</div>}
       {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
       {CLOUD&&/Confirmez (votre adresse|d’abord l’adresse) e-mail/.test(error)&&<button type="button" className="outline-button full-button" disabled={busy} onClick={async()=>{
@@ -338,6 +345,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   return <Modal title="Administration" subtitle={adminStoreDisplay?`Magasin sélectionné : ${adminStoreDisplay}`:'Choisissez un magasin dans l’onglet Magasins.'} onClose={closeAdministration} wide fixedTabs>
     <AdminTabs tab={tab} onSelect={switchTab} disabled={busy}/>
     <div key={tab} className="admin-scroll-content">
+    <VisibleFeedback message={notice} revision={noticeRevision}/><VisibleFeedback message={error} tone="error" revision={errorRevision}/>
     {error&&<div className="admin-alert error" role="alert">{error}</div>}
     {notice&&<div className="admin-alert success" role="status"><Check size={15}/>{notice}</div>}
     <div className="admin-body">

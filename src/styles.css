@@ -809,6 +809,23 @@ p,h1,h2,h3 { margin:0; }
 @media (max-width:390px) { .admin-modal { height:min(760px,calc(100vh - 20px)); height:min(760px,calc(100dvh - 20px)); } }
 .modal-content-fixed-tabs { display:flex; flex-direction:column; overflow:hidden; flex:1; }
 .admin-scroll-content { min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:0 2px 2px; }
+/* Les notifications ne couvrent ni la fermeture ni le retour d'un dialogue. */
+.toast-stack-dialog { position:static; z-index:auto; width:100%; max-height:25vh; max-height:25dvh; flex:0 0 auto; margin-top:12px; overflow-y:auto; overscroll-behavior:contain; pointer-events:auto; }
+.toast-stack-dialog .toast { min-height:58px; padding:8px; font-size:13px; box-shadow:none; }
+.toast-stack-dialog .toast-message { max-height:min(18vh,6em); max-height:min(18dvh,6em); }
+/* Les retours d'action restent dans la partie visible, hors du défilement. */
+.visible-feedback { display:flex; align-items:center; gap:10px; min-width:0; padding:10px 8px 10px 12px; border:1px solid #bed8b7; border-left:4px solid #659766; border-radius:10px; background:#f1f8ee; color:#294d2e; box-shadow:0 4px 18px rgba(30,42,27,.09); }
+.visible-feedback-dialog { flex:0 0 auto; margin-top:12px; }
+.visible-feedback-page { position:fixed; top:calc(12px + env(safe-area-inset-top)); right:14px; z-index:40; width:min(440px,calc(100vw - 28px)); box-shadow:0 8px 28px rgba(30,42,27,.18); }
+.visible-feedback.is-error { border-color:#e6b7aa; border-left-color:#bc5d48; background:#fff2ef; color:#83382b; }
+.visible-feedback-icon { flex:0 0 24px; display:grid; place-items:center; }
+.visible-feedback-text { flex:1; min-width:0; max-height:min(25vh,9em); max-height:min(25dvh,9em); overflow-y:auto; overscroll-behavior:contain; overflow-wrap:anywhere; font-size:13px; font-weight:700; line-height:1.45; }
+.visible-feedback-action { flex:0 0 auto; min-height:44px; padding:6px 9px; border:1px solid currentColor; border-radius:7px; background:transparent; color:inherit; font-size:12px; font-weight:750; }
+.visible-feedback-close { flex:0 0 44px; width:44px; height:44px; display:grid; place-items:center; border-radius:7px; background:transparent; color:inherit; }
+.visible-feedback-close:hover,.visible-feedback-action:hover { background:rgba(0,0,0,.06); }
+[data-theme='dark'] .visible-feedback { background:#263c2b; border-color:#527e55; border-left-color:#a2d09f; color:#dbf2d8; }
+[data-theme='dark'] .visible-feedback.is-error { background:#4a2925; border-color:#97645b; border-left-color:#ffc5b9; color:#ffe0d9; }
+[data-theme='dark'] .visible-feedback-close:hover,[data-theme='dark'] .visible-feedback-action:hover { background:rgba(255,255,255,.08); }
 .admin-store-scope .store-search { margin-top:7px; }
 .admin-store-scope .store-search-dropdown { position:static; margin-top:5px; }
 .admin-store-scope .store-search-input input { font-size:16px; }

@@ -1,10 +1,12 @@
 import React,{useRef,useState} from 'react';
+import {VisibleFeedback,useFeedbackState} from './VisibleFeedback';
 import {ArrowRight,ShieldCheck} from 'lucide-react';
 import {api} from './api';
 import {registerAdminForApproval} from './cloud';
 
 export function AdminRegistration({initialEmail='',onRegistered,onCancel,onBusy}) {
-  const [form,setForm]=useState({email:initialEmail,password:'',confirm:''}),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [form,setForm]=useState({email:initialEmail,password:'',confirm:''}),[busy,setBusy]=useState(false);
+  const [error,setError,errorRevision]=useFeedbackState('');
   const running=useRef(false);
   async function submit(event) {
     event.preventDefault();if(running.current)return;
@@ -18,6 +20,7 @@ export function AdminRegistration({initialEmail='',onRegistered,onCancel,onBusy}
     finally {running.current=false;setBusy(false);onBusy?.(false);}
   }
   return <div className="admin-registration">
+    <VisibleFeedback message={error} tone="error" revision={errorRevision}/>
     <div className="admin-account-current"><ShieldCheck size={18}/><div><strong>Première connexion</strong><p>Votre adresse doit d’abord avoir été ajoutée par un administrateur.</p></div></div>
     <form className="store-form" onSubmit={submit}>
       <label><span className="form-label">Votre adresse e-mail</span><input className="text-input" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} required maxLength={254} value={form.email} disabled={busy} onChange={e=>setForm(v=>({...v,email:e.target.value}))}/></label>

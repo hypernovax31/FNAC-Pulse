@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { VisibleFeedback, useFeedbackState } from './VisibleFeedback';
+import { useTrackedJobFeedback } from './TrackedJobFeedback';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import { api, uid } from './api';
 import { SERVICE_DELETE_CONFIRMATION } from './service-delete.js';
@@ -20,7 +22,8 @@ export function ServiceDeletePanel({storeId,storeName,token,disabled,requested,o
   const [status,setStatus]=useState(null),[statusError,setStatusError]=useState('');
   const [pending,setPending]=useState(()=>readPending(storeId));
   const [open,setOpen]=useState(false),[phrase,setPhrase]=useState(''),[target,setTarget]=useState(null);
-  const [busy,setBusy]=useState(false),[actionError,setActionError]=useState(''),[refresh,setRefresh]=useState(0);
+  const [busy,setBusy]=useState(false),[actionError,setActionError,actionRevision]=useFeedbackState(''),[refresh,setRefresh]=useState(0);
+  const jobFeedback=useTrackedJobFeedback('service-delete',storeId,pending?.jobId,job=>job.status==='needs-review'?{tone:'error',message:`La suppression de ${job.serviceName||'ce service'} nécessite une vérification technique. Certaines données n’ont pas été effacées.`}:{message:job.status==='running'?`Suppression de ${job.serviceName||'ce service'} en cours. Vous pouvez fermer cette fenêtre.`:`Suppression de ${job.serviceName||'ce service'} terminée : ${job.deletedSales} opération${job.deletedSales>1?'s':''} de vente et ${job.deletedGoals} objectif${job.deletedGoals>1?'s':''} effacé${job.deletedGoals>1?'s':''}.`});
   const notify=useRef(onUpdate),available=useRef(onAvailabilityChange),handled=useRef(onRequestHandled),alive=useRef(false),observed=useRef(null),resolved=useRef(''),confirmation=useRef(null);
   notify.current=onUpdate;available.current=onAvailabilityChange;handled.current=onRequestHandled;
   useEffect(()=>{alive.current=true;return ()=>{alive.current=false;available.current?.(false);};},[]);
@@ -30,7 +33,7 @@ export function ServiceDeletePanel({storeId,storeName,token,disabled,requested,o
       try {
         const next=await api(`/api/admin/services/delete?storeId=${encodeURIComponent(storeId)}`,{token});
         if(stopped)return;
-        last=next;setStatus(next);setStatusError('');
+        last=next;setStatus(next);setStatusError('');jobFeedback.observe(next);
         if(pending&&next.jobId===pending.jobId&&['running','done','needs-review'].includes(next.status)) {
           resolved.current=pending.jobId;rememberPending(storeId,null);setPending(null);setActionError('');setOpen(false);setPhrase('');notify.current?.();
         }
@@ -55,14 +58,14 @@ export function ServiceDeletePanel({storeId,storeName,token,disabled,requested,o
 
   async function submit(previous) {
     const request=previous||{jobId:uid(),serviceId:target.id,serviceName:target.name,storeName:target.storeName};
-    setBusy(true);setActionError('');setPending(request);rememberPending(storeId,request);
+    jobFeedback.begin(request.jobId);setBusy(true);setActionError('');setPending(request);rememberPending(storeId,request);
     try {
       const result=await api('/api/admin/services/delete',{method:'POST',token,body:{storeId,jobId:request.jobId,serviceId:request.serviceId,expectedName:request.serviceName,expectedStoreName:request.storeName,confirmation:SERVICE_DELETE_CONFIRMATION}});
       if(!alive.current)return;
       if(!['running','done','needs-review','superseded'].includes(result.status)||result.jobId!==request.jobId)throw new Error('État de suppression invalide.');
       rememberPending(storeId,null);setPending(null);setOpen(false);setPhrase('');
-      if(result.status==='superseded')setActionError('Cette demande a déjà été traitée ou remplacée. Aucune nouvelle suppression n’a été lancée.');
-      else {setStatus(result);notify.current?.();}
+      if(result.status==='superseded'){jobFeedback.cancel(request.jobId);setActionError('Cette demande a déjà été traitée ou remplacée. Aucune nouvelle suppression n’a été lancée.');}
+      else {jobFeedback.observe(result);setStatus(result);notify.current?.();}
       setRefresh(value=>value+1);
     } catch(e) {
       if(alive.current) {
@@ -70,7 +73,7 @@ export function ServiceDeletePanel({storeId,storeName,token,disabled,requested,o
         if(resolved.current===request.jobId)setActionError('');
         // Un délai HTTP ou une limitation intermédiaire ne prouve pas que le
         // Worker n’a pas reçu la demande : conserver son identifiant pour le rejeu.
-        else if(e.status>=400&&e.status<500&&e.status!==408&&e.status!==429){rememberPending(storeId,null);setPending(null);setActionError(e.message||'La demande a été refusée.');if(e.status===409)notify.current?.();}
+        else if(e.status>=400&&e.status<500&&e.status!==408&&e.status!==429){jobFeedback.cancel(request.jobId);rememberPending(storeId,null);setPending(null);setActionError(e.message||'La demande a été refusée.');if(e.status===409)notify.current?.();}
         else setActionError('Le lancement n’a pas pu être confirmé. Vérifiez ou reprenez cette même demande avant toute nouvelle suppression.');
         setRefresh(value=>value+1);
       }
@@ -78,11 +81,15 @@ export function ServiceDeletePanel({storeId,storeName,token,disabled,requested,o
   }
   const unavailable=disabled||busy||!ready||!target;
   return <section className="sales-reset service-delete" aria-labelledby="service-delete-title">
+    <VisibleFeedback message={jobFeedback.notice?.tone==='error'?'':jobFeedback.notice?.message} tone={jobFeedback.notice?.tone} revision={jobFeedback.revision}/>
+    <VisibleFeedback message={status?.status==='needs-review'?`La suppression de ${status.serviceName} nécessite une vérification technique : certaines données n’ont pas été effacées. Les nouvelles suppressions de service sont bloquées.`:''} tone="error"/>
+    <VisibleFeedback message={statusError} tone="error" actionLabel="Vérifier" onAction={()=>{setStatusError('');setRefresh(value=>value+1);}}/>
+    <VisibleFeedback message={actionError} tone="error" revision={actionRevision} actionLabel={pending&&!open&&!busy&&!disabled?'Reprendre':''} onAction={()=>submit(pending)}/>
     <div className="sales-reset-heading"><div><h4 id="service-delete-title">Suppression d’un service</h4><p>Utilisez la corbeille à côté d’un service pour le retirer de ce magasin et effacer ses données.</p></div></div>
     {running&&<p className="sales-reset-progress" role="status">Suppression de {status.serviceName} en cours : {status.deletedSales} opération{status.deletedSales>1?'s':''} de vente et {status.deletedGoals} objectif{status.deletedGoals>1?'s':''} effacé{status.deletedGoals>1?'s':''}. Vous pouvez fermer cette fenêtre.</p>}
     {status?.status==='done'&&!pending&&!open&&<p className="sales-reset-progress" role="status">Dernière suppression terminée : {status.serviceName} · {status.deletedSales} opération{status.deletedSales>1?'s':''} de vente et {status.deletedGoals} objectif{status.deletedGoals>1?'s':''} effacé{status.deletedGoals>1?'s':''}.</p>}
     {status?.status==='needs-review'&&<p className="sales-reset-error" role="alert">La suppression de {status.serviceName} nécessite une vérification technique : certaines données incohérentes n’ont pas été effacées. La réactivation et toute nouvelle suppression de service sont bloquées.</p>}
-    {statusError&&<div className="sales-reset-error" role="alert">{statusError} <button type="button" onClick={()=>setRefresh(value=>value+1)}>Vérifier</button></div>}
+    {statusError&&<div className="sales-reset-error" role="alert">{statusError} <button type="button" onClick={()=>{setStatusError('');setRefresh(value=>value+1);}}>Vérifier</button></div>}
     {actionError&&<p className="sales-reset-error" role="alert">{actionError}</p>}
     {pending&&!open&&<div className="sales-reset-recovery"><p>Une demande pour {pending.serviceName||'ce service'} attend confirmation. Reprenez la même demande pour éviter un nouvel effacement.</p><button type="button" className="outline-button" disabled={busy||disabled} onClick={()=>submit(pending)}>Vérifier ou reprendre</button></div>}
     {open&&<div ref={confirmation} className="sales-reset-confirm" role="group" aria-labelledby="service-delete-confirm-title">

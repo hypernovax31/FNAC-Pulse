@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { VisibleFeedback, useFeedbackState } from './VisibleFeedback';
+import { useTrackedJobFeedback } from './TrackedJobFeedback';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import { api, uid } from './api';
 import { SELLER_DELETE_CONFIRMATION } from './seller-delete.js';
@@ -22,7 +24,8 @@ export function SellerDeletePanel({storeId,storeName,sellers,departments=[],toke
   const [status,setStatus]=useState(null),[statusError,setStatusError]=useState('');
   const [pending,setPending]=useState(()=>readPending(storeId));
   const [open,setOpen]=useState(false),[phrase,setPhrase]=useState(''),[target,setTarget]=useState(null);
-  const [busy,setBusy]=useState(false),[actionError,setActionError]=useState(''),[refresh,setRefresh]=useState(0);
+  const [busy,setBusy]=useState(false),[actionError,setActionError,actionRevision]=useFeedbackState(''),[refresh,setRefresh]=useState(0);
+  const jobFeedback=useTrackedJobFeedback('seller-delete',storeId,pending?.jobId,job=>({message:job.status==='running'?`Suppression de ${job.sellerName||'ce vendeur'} en cours. Vous pouvez fermer cette fenêtre.`:`Suppression du vendeur terminée : ${job.deletedSales} opération${job.deletedSales>1?'s':''} de vente effacée${job.deletedSales>1?'s':''}.`}));
   const notify=useRef(onUpdate),alive=useRef(false),observed=useRef(null),resolvedRequest=useRef('');
   notify.current=onUpdate;
   useEffect(()=>{alive.current=true;return ()=>{alive.current=false;};},[]);
@@ -32,7 +35,7 @@ export function SellerDeletePanel({storeId,storeName,sellers,departments=[],toke
       try {
         const next=await api(`/api/admin/sellers/delete?storeId=${encodeURIComponent(storeId)}`,{token});
         if(stopped)return;
-        last=next;setStatus(next);setStatusError('');
+        last=next;setStatus(next);setStatusError('');jobFeedback.observe(next);
         if(pending&&next.jobId===pending.jobId&&(next.status==='running'||next.status==='done')) {
           resolvedRequest.current=pending.jobId;rememberPending(storeId,null);setPending(null);setActionError('');setOpen(false);setPhrase('');notify.current?.();
         }
@@ -47,20 +50,20 @@ export function SellerDeletePanel({storeId,storeName,sellers,departments=[],toke
 
   async function submit(previous) {
     const request=previous||{jobId:uid(),sellerId:target.id,sellerName:target.name,departmentId:target.departmentId,storeName:target.storeName};
-    setBusy(true);setActionError('');setPending(request);rememberPending(storeId,request);
+    jobFeedback.begin(request.jobId);setBusy(true);setActionError('');setPending(request);rememberPending(storeId,request);
     try {
       const result=await api('/api/admin/sellers/delete',{method:'POST',token,body:{storeId,jobId:request.jobId,sellerId:request.sellerId,expectedName:request.sellerName,expectedDepartmentId:request.departmentId,expectedStoreName:request.storeName,confirmation:SELLER_DELETE_CONFIRMATION}});
       if(!alive.current)return;
       if(!['running','done','superseded'].includes(result.status)||result.jobId!==request.jobId)throw new Error('État de suppression invalide.');
       rememberPending(storeId,null);setPending(null);setOpen(false);setPhrase('');setSellerId('');
-      if(result.status==='superseded')setActionError('Cette demande a déjà été traitée ou remplacée. Aucune nouvelle suppression n’a été lancée.');
-      else {setStatus(result);notify.current?.();}
+      if(result.status==='superseded'){jobFeedback.cancel(request.jobId);setActionError('Cette demande a déjà été traitée ou remplacée. Aucune nouvelle suppression n’a été lancée.');}
+      else {jobFeedback.observe(result);setStatus(result);notify.current?.();}
       setRefresh(value=>value+1);
     } catch(e) {
       if(alive.current) {
         setOpen(false);setPhrase('');
         if(resolvedRequest.current===request.jobId)setActionError('');
-        else if(e.status>=400&&e.status<500){rememberPending(storeId,null);setPending(null);setActionError(e.message||'La demande a été refusée.');if(e.status===409)notify.current?.();}
+        else if(e.status>=400&&e.status<500){jobFeedback.cancel(request.jobId);rememberPending(storeId,null);setPending(null);setActionError(e.message||'La demande a été refusée.');if(e.status===409)notify.current?.();}
         else setActionError('Le lancement n’a pas pu être confirmé. Vérifiez ou reprenez cette même demande avant toute nouvelle suppression.');
         setRefresh(value=>value+1);
       }
@@ -71,6 +74,9 @@ export function SellerDeletePanel({storeId,storeName,sellers,departments=[],toke
   const running=status?.status==='running';
   const unavailable=disabled||busy||!storeName||!person||!['idle','done'].includes(status?.status)||!!statusError||!!pending;
   return <section className="sales-reset seller-delete" aria-labelledby="seller-delete-title">
+    <VisibleFeedback message={jobFeedback.notice?.message} tone={jobFeedback.notice?.tone} revision={jobFeedback.revision}/>
+    <VisibleFeedback message={statusError} tone="error" actionLabel="Vérifier" onAction={()=>{setStatusError('');setRefresh(value=>value+1);}}/>
+    <VisibleFeedback message={actionError} tone="error" revision={actionRevision} actionLabel={pending&&!open&&!busy&&!disabled?'Reprendre':''} onAction={()=>submit(pending)}/>
     <div className="sales-reset-heading"><div><h4 id="seller-delete-title">Supprimer définitivement un vendeur</h4><p>À distinguer de l’archivage : cette action efface aussi ses données.</p></div></div>
     <label className="goals-reset-select"><span className="form-label">Vendeur à supprimer</span><select className="text-input" aria-label="Vendeur à supprimer" value={sellerId} onChange={event=>{setSellerId(event.target.value);setActionError('');}} disabled={disabled||busy||open||!!pending||running}>
       <option value="">Choisir un vendeur</option>{sellers.filter(item=>!item.deletingJob).map(item=><option key={item.id} value={item.id}>{item.name}{departmentName(item)?` · ${departmentName(item)}`:''}{item.active===false||item.active===0?' · archivé':''}</option>)}
@@ -78,7 +84,7 @@ export function SellerDeletePanel({storeId,storeName,sellers,departments=[],toke
     {!open&&<button type="button" className="sales-reset-button" disabled={unavailable} onClick={()=>{setActionError('');setTarget({id:Number(person.id),name:person.name,storeName,departmentId:sellerDepartmentId(person),departmentName:departmentName(person),archived:person.active===false||person.active===0});setOpen(true);}}><Trash2 size={15} aria-hidden="true"/> Supprimer ce vendeur</button>}
     {running&&<p className="sales-reset-progress" role="status">Suppression de {status.sellerName} en cours : {status.deletedSales} opération{status.deletedSales>1?'s':''} de vente effacée{status.deletedSales>1?'s':''}. Son accès est désactivé. Vous pouvez fermer cette fenêtre.</p>}
     {status?.status==='done'&&!pending&&!open&&<p className="sales-reset-progress" role="status">Dernière suppression terminée : {status.deletedSales} opération{status.deletedSales>1?'s':''} de vente effacée{status.deletedSales>1?'s':''}.</p>}
-    {statusError&&<div className="sales-reset-error" role="alert">{statusError} <button type="button" onClick={()=>setRefresh(value=>value+1)}>Vérifier</button></div>}
+    {statusError&&<div className="sales-reset-error" role="alert">{statusError} <button type="button" onClick={()=>{setStatusError('');setRefresh(value=>value+1);}}>Vérifier</button></div>}
     {actionError&&<p className="sales-reset-error" role="alert">{actionError}</p>}
     {pending&&!open&&<div className="sales-reset-recovery"><p>Une demande pour {pending.sellerName||'ce vendeur'} attend confirmation. Reprenez la même demande pour éviter une nouvelle suppression.</p><button type="button" className="outline-button" disabled={busy||disabled} onClick={()=>submit(pending)}>Vérifier ou reprendre</button></div>}
     {open&&<div className="sales-reset-confirm" role="group" aria-labelledby="seller-delete-confirm-title">

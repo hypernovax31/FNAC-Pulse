@@ -54,7 +54,7 @@ test('Interface reset objectifs : réponse perdue, même département et même i
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(GoalsResetPanel,{...props,onUpdate:()=>{}}));await tick();});await choose(tree,'editorial');await open(tree);await confirm(tree);
     await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();});
-    assert(button(tree,'Vérifier ou reprendre'));assert.equal(g.values.size,1);assert.equal(button(tree,'Reset global').props.disabled,true);
+    assert(button(tree,'Vérifier ou reprendre'));assert.equal(g.values.size,2);assert(g.values.has('fnac-pulse-goals-reset:magasin-test'));assert.equal(g.values.get('fnac-pulse-feedback-job:goals-reset:magasin-test'),'test-goals-reset-0001');assert.equal(button(tree,'Reset global').props.disabled,true);
     assert.match(text(tree.toJSON()),/Produits Éditoriaux/);
     await act(async()=>{button(tree,'Vérifier ou reprendre').props.onClick();await tick();});
     assert.equal(sent.length,2);assert.deepEqual(sent[0],sent[1]);assert.equal(sent[1].departmentId,'editorial');assert.equal(g.values.size,0);

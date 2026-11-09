@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Target, Zap, Trophy, ChartNoAxesCombined, Settings2, MapPin, ChevronDown, ChevronRight, ArrowRight,
   Activity, Bell, BellOff, Plus, Minus, UserRound, UsersRound, Sparkles, Crosshair, CalendarDays,
@@ -6,6 +6,8 @@ import {
   Repeat2, RefreshCw, Tv, Wifi, Clock3, X, Download, WifiOff, Info, CircleCheck, ArrowUpRight, SunMoon, Sun, Moon, Monitor, Volume2, VolumeX
 } from 'lucide-react';
 import Admin, { Modal } from './Admin';
+import { AppToastProvider } from './AppToasts';
+import { VisibleFeedback, restoreDialogFocus, useFeedbackState, useRetryFeedback } from './VisibleFeedback';
 import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
 import { CLOUD, observeVendor, sellerLogin, sellerChoosePin, sellerMigratePin, sellerRegister, sellerLogout, listenStore, prepareFcm, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
 import { parisToday, summarize } from './cloud-stats';
@@ -86,7 +88,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
   const [unselectedStore,setUnselectedStore]=useState(false),[regionalConsent,setRegionalConsent]=useState(false);
   const [pinMode,setPinMode]=useState(CLOUD?'idle':'local'),[pinSalt,setPinSalt]=useState(''),[statusError,setStatusError]=useState(''),[statusRetry,setStatusRetry]=useState(0);
   const [pin,setPin]=useState(''),[newPin,setNewPin]=useState(''),[confirmPin,setConfirmPin]=useState('');
-  const [formBusy,setFormBusy]=useState(false),[formError,setFormError]=useState('');
+  const [formBusy,setFormBusy]=useState(false),[formError,setFormError,formErrorRevision]=useFeedbackState('');
   const geoRequest=useRef(0),geoTouched=useRef(false);
   const departments=store?departmentsForStore(data,store):[];
   const storeSellers=department?sellersForDepartment(data.sellers,store,department):[];
@@ -176,10 +178,13 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
       } else setFormError(error.message||'Connexion impossible.');
     }finally{setFormBusy(false);}
   }
-  if(unavailable)return <div className="profile-unavailable" role="alert"><p>Le profil enregistré sur cet appareil n’est plus disponible. Contactez votre responsable.</p><button type="button" className="outline-button" onClick={onForgetProfile}>Retirer le profil de cet appareil</button></div>;
+  if(unavailable)return <><VisibleFeedback message="Le profil enregistré sur cet appareil n’est plus disponible. Contactez votre responsable." tone="error"/><div className="profile-unavailable" role="alert"><p>Le profil enregistré sur cet appareil n’est plus disponible. Contactez votre responsable.</p><button type="button" className="outline-button" onClick={onForgetProfile}>Retirer le profil de cet appareil</button></div></>;
   const mode=CLOUD?pinMode:registerable?'register':'local',setup=['register','setup','migrate'].includes(mode);
   const nameId=`seller-name-${modal?'dialog':'welcome'}`;
   return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={submit}>
+    <VisibleFeedback message={formError} tone="error" revision={formErrorRevision}/>
+    <VisibleFeedback message={mode==='error'?statusError:''} tone="error" actionLabel="Vérifier" onAction={()=>{clearSecrets();onRefreshProfile?.();setStatusRetry(x=>x+1);}}/>
+    <VisibleFeedback message={!geoBusy?geoText:''} tone={/refusée|indisponible|pas disponible|Aucun magasin/.test(geoText)?'error':'success'}/>
     {fixed&&<div className="remembered-profile"><Avatar name={rememberedPerson.name} id={rememberedPerson.id}/><div><span>VOTRE PROFIL SUR CET APPAREIL</span><strong>{rememberedPerson.name}</strong><small>{displayStoreName(rememberedStore)} · {departments.find(d=>d.id===department)?.name||'Votre département'}</small></div></div>}
     <div className="session-fields">
       {!fixed&&<>
@@ -309,12 +314,14 @@ function ActivityCard({activity,hasSession}) {
 function Summary({stats,hasSession,storeId,departments,goals,goalsLoading,goalsError,onRetry}) {
   const [period,setPeriod]=useState('day');
   const [scope,setScope]=useState('store');
-  useEffect(()=>setScope('store'),[storeId]);
+  const retried=useRetryFeedback(onRetry,'Cibles du récapitulatif actualisées.');
+  useEffect(()=>{if(!goalsLoading&&retried.feedback&&((goalsError&&retried.feedback.tone==='success')||(!goalsError&&retried.feedback.tone==='error')))retried.clear();},[goalsError,goalsLoading]);
+  useEffect(()=>{setScope('store');retried.clear();},[storeId]);
   const labels={day:'Aujourd’hui',week:'Cette semaine',month:'Ce mois'};
   const selected=scope==='store'?stats?.summary?.store:stats?.summary?.departments?.[scope];
   const current=selected?.[period]||(scope==='store'&&!stats?.summary?stats?.[period]:null);
   const goalScope=scope==='store'?goals?.store:goals?.departments?.[scope];
-  return <section className="panel summary-panel" id="summary"><div className="summary-heading"><div><div className="section-kicker"><span className="kicker-line"/> PRENDRE DU RECUL</div><h2>Le récap’ des services</h2><p>Toutes les ventes du magasin et par département.</p></div></div>
+  return <section className="panel summary-panel" id="summary"><VisibleFeedback message={retried.feedback?.message} tone={retried.feedback?.tone} revision={retried.revision} actionLabel={retried.feedback?.tone==='error'?'Réessayer':''} onAction={retried.retry}/>{retried.feedback?.tone==='success'&&<span className="sr-only" role="status">{retried.feedback.message}</span>}<div className="summary-heading"><div><div className="section-kicker"><span className="kicker-line"/> PRENDRE DU RECUL</div><h2>Le récap’ des services</h2><p>Toutes les ventes du magasin et par département.</p></div></div>
     <div className="summary-controls">{hasSession&&<label className="summary-scope"><span>PÉRIMÈTRE DU RÉCAP’</span><div className="select-wrap"><UsersRound size={15}/><select aria-label="Périmètre du récapitulatif" value={scope} onChange={e=>setScope(e.target.value)}><option value="store">Tout le magasin</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}{d.active?'':' · archivé'}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>}
       <div className="period-tabs" role="tablist" aria-label="Période du récapitulatif">{Object.entries(labels).map(([id,label])=><button role="tab" aria-selected={period===id} key={id} className={period===id?'selected':''} onClick={()=>setPeriod(id)}>{label}</button>)}</div></div>
     <div className="summary-content"><div className="summary-total"><span className="summary-total-label">TOTAL VENTES</span><strong>{current?.total??'—'}</strong><span>{current?current.total>1?'services vendus':'service vendu':'Sélectionnez un magasin'}</span><div className="summary-date"><CalendarDays size={13} aria-hidden="true"/><span>{current?`${dateLabel(current.start,{day:'numeric',month:'short'})}${current.start!==current.end?` — ${dateLabel(current.end,{day:'numeric',month:'short'})}`:''}`:'En attente'}</span></div></div>
@@ -329,7 +336,7 @@ function Summary({stats,hasSession,storeId,departments,goals,goalsLoading,goalsE
         </div>;
       }) : <div className="summary-empty"><span className="summary-empty-icon"><ChartNoAxesCombined size={20}/></span><div><strong>Les chiffres arrivent bientôt.</strong><p>Choisissez votre magasin pour consulter son récapitulatif.</p></div></div>}</div>
     </div>
-    {hasSession&&<div className="summary-caption"><span>{!goals?(goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles.'):'Ventes / objectif · Les objectifs mensuels sont répartis selon les jours travaillés ; les jours fériés sont inclus. Les objectifs non renseignés ne sont pas inclus.'}</span>{goalsError&&<span className="summary-warning">{goals?'Dernières cibles disponibles · ':''}{goalsError} <button type="button" onClick={onRetry}>Réessayer</button></span>}</div>}
+    {hasSession&&<div className="summary-caption"><span>{!goals?(goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles.'):'Ventes / objectif · Les objectifs mensuels sont répartis selon les jours travaillés ; les jours fériés sont inclus. Les objectifs non renseignés ne sont pas inclus.'}</span>{goalsError&&<span className="summary-warning" role="alert">{goals?'Dernières cibles disponibles · ':''}{goalsError} <button type="button" onClick={retried.retry}>Réessayer</button></span>}</div>}
   </section>;
 }
 function MobileNav({onNavigate,active}) {
@@ -339,11 +346,12 @@ function urlBase64ToUint8Array(base64) {const padding='='.repeat((4-base64.lengt
 function readNotificationPermission() {return typeof Notification==='undefined'?'unsupported':Notification.permission;}
 
 function Toast({notice,onClose,icon}) {
-  const Icon=icon||(notice.tone==='warning'?Info:CircleCheck);
-  return <div className={`toast toast-${notice.tone||'default'}`} role="status" aria-atomic="true">
+  const Icon=icon||(notice.tone==='warning'?Info:CircleCheck),container=useRef(null);
+  useLayoutEffect(()=>{const node=container.current;return ()=>{if(typeof document!=='undefined'&&node?.contains(document.activeElement))restoreDialogFocus({currentTarget:document.activeElement});};},[]);
+  return <div ref={container} className={`toast toast-${notice.tone||'default'}`} role="status" aria-atomic="true">
     <span className="toast-icon" aria-hidden="true"><Icon size={22}/></span><span className="toast-message">{notice.message}</span>
-    {notice.action&&<button type="button" className="toast-action" onClick={()=>{onClose();notice.action();}}>{notice.actionLabel}</button>}
-    <button type="button" className="toast-close" aria-label="Fermer la notification" onClick={onClose}><X size={19} aria-hidden="true"/></button>
+    {notice.action&&<button type="button" className="toast-action" onClick={event=>{restoreDialogFocus(event);onClose();notice.action();}}>{notice.actionLabel}</button>}
+    <button type="button" className="toast-close" aria-label="Fermer la notification" onClick={event=>{restoreDialogFocus(event);onClose();}}><X size={19} aria-hidden="true"/></button>
   </div>;
 }
 
@@ -541,9 +549,12 @@ export default function App() {
       if(n!==goalRequest.current||ownerRef.current!==targetOwner)return;
       if(!result.goals||typeof result.goals!=='object'||Array.isArray(result.goals))throw new Error('Réponse des objectifs invalide.');
       setGoalState({owner:targetOwner,...goalData(result),loading:false,error:''});cacheGoals(targetOwner,result);
+      return {ok:true};
     } catch(e) {
       if(n!==goalRequest.current||ownerRef.current!==targetOwner)return;
-      setGoalState(old=>({...(old.owner===targetOwner?old:{owner:targetOwner,...goalData(null)}),loading:false,error:e.message||'Objectifs indisponibles.'}));
+      const message=e.message||'Objectifs indisponibles.';
+      setGoalState(old=>({...(old.owner===targetOwner?old:{owner:targetOwner,...goalData(null)}),loading:false,error:message}));
+      return {ok:false,message};
     }
   },[owner]);
   useEffect(()=>{
@@ -562,9 +573,12 @@ export default function App() {
       if(n!==summaryRequest.current||summaryKeyRef.current!==key)return;
       if(result?.date!==cloudDay||!result.store?.byService||!result.departments)throw new Error('Cibles du jour indisponibles. Vérifiez la date de l’appareil.');
       setSummaryState({key,data:result,loading:false,error:''});cacheSummary(key,result);
+      return {ok:true};
     } catch(e) {
       if(n!==summaryRequest.current||summaryKeyRef.current!==key)return;
-      setSummaryState(old=>({key,data:old.key===key?old.data:getCachedSummary(key),loading:false,error:e.message||'Objectifs indisponibles.'}));
+      const message=e.message||'Objectifs indisponibles.';
+      setSummaryState(old=>({key,data:old.key===key?old.data:getCachedSummary(key),loading:false,error:message}));
+      return {ok:false,message};
     }
   },[summaryKey,cloudDay]);
   const queueSummary=useCallback(()=>{clearTimeout(summaryTimer.current);summaryTimer.current=setTimeout(loadSummaryGoals,200);},[loadSummaryGoals]);
@@ -960,18 +974,23 @@ export default function App() {
     } catch {setInstallError('Le navigateur n’a pas ouvert l’installation. Utilisez le menu indiqué ci-dessus.');}
   }
   const installationDialog=installModal&&<InstallDialog platform={platform} base={APP_BASE} promptAvailable={!!installPrompt} installError={installError} onInstall={installApp} onClose={()=>setInstallModal(false)}/>;
-  const profileContent=data?<SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'startup-new'} data={data} initialProfile={deviceProfile} startupLocation={startupLocation} modal startup onSubmit={selectSession} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>:loadFailed?<div className="startup-profile-status" role="alert">Profil indisponible. Vérifiez votre connexion. <button type="button" className="text-button" onClick={refresh}>Réessayer</button></div>:<p className="startup-profile-status" role="status">Chargement des magasins et des profils…</p>;
+  const profileContent=data?<SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'startup-new'} data={data} initialProfile={deviceProfile} startupLocation={startupLocation} modal startup onSubmit={selectSession} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>:loadFailed?<><VisibleFeedback message="Profil indisponible. Vérifiez votre connexion." tone="error" actionLabel="Réessayer" onAction={refresh}/><div className="startup-profile-status" role="alert">Profil indisponible. Vérifiez votre connexion. <button type="button" className="text-button" onClick={refresh}>Réessayer</button></div></>:<p className="startup-profile-status" role="status">Chargement des magasins et des profils…</p>;
   // L'administration reçoit toujours le vrai catalogue : un catalogue vide
   // temporaire effacerait à tort le magasin d'administration mémorisé.
   const adminDialog=adminModal&&data&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>;
   const sessionDialog=sessionModal&&data&&<Modal title={CLOUD?'Mon profil':'Changer d’espace'} subtitle={CLOUD?'Votre espace sur cet appareil.':'Sélectionnez votre magasin, votre département et votre profil vendeur.'} onClose={()=>setSessionModal(false)}>
     {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button></>:<><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/><p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></>}
   </Modal>;
-  if(startupGate)return <><StartupGate base={APP_BASE} ready={startupReady} status={startupStatus} authReady={authReady} hasSession={!!session} profileName={seller?.name} profileContext={[store&&displayStoreName(store),department?.name].filter(Boolean).join(' · ')} profileContent={profileContent} onChangeProfile={()=>setSessionModal(true)} onAdmin={()=>setAdminModal(true)} adminAvailable={!!data} adminPending={adminModal} adminError={loadFailed} onRetry={refresh} onStart={enterStartup} onContinue={continueWithoutStartupSound}/>{sessionDialog}{adminDialog}</>;
-  if(startupPermissionsOpen)return <><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div>{adminDialog||<StartupPermissionsDialog platform={platform} permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} authReady={authReady} profileName={seller?.name} profileContent={profileContent} locationStatus={locationStatus} locationFeedback={locationFeedback} onNotification={requestStartupNotifications} onLocation={()=>requestStartupLocation(true)} onClose={closeStartupPermissions}/>}</>;
-  if(!data)return <><div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>{!adminModal&&installationDialog}</>;
+  const toastItems=(toast||soundNotice)?<>
+    {toast&&<Toast key={`toast-${toast.sequence}`} notice={toast} onClose={()=>{clearTimeout(toastTimer.current);setToast(null);}}/>}
+    {soundNotice&&<Toast key={`sound-${soundNotice.sequence}`} notice={soundNotice} icon={soundEnabled?Volume2:VolumeX} onClose={()=>{clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}}/>}
+  </>:null;
+  const withToasts=children=><AppToastProvider items={toastItems}>{children}</AppToastProvider>;
+  if(startupGate)return withToasts(<><StartupGate base={APP_BASE} ready={startupReady} status={startupStatus} authReady={authReady} hasSession={!!session} profileName={seller?.name} profileContext={[store&&displayStoreName(store),department?.name].filter(Boolean).join(' · ')} profileContent={profileContent} onChangeProfile={()=>setSessionModal(true)} onAdmin={()=>setAdminModal(true)} adminAvailable={!!data} adminPending={adminModal} adminError={loadFailed} onRetry={refresh} onStart={enterStartup} onContinue={continueWithoutStartupSound}/>{sessionDialog}{adminDialog}</>);
+  if(startupPermissionsOpen)return withToasts(<><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div>{adminDialog||<StartupPermissionsDialog platform={platform} permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} authReady={authReady} profileName={seller?.name} profileContent={profileContent} locationStatus={locationStatus} locationFeedback={locationFeedback} onNotification={requestStartupNotifications} onLocation={()=>requestStartupLocation(true)} onClose={closeStartupPermissions}/>}</>);
+  if(!data)return withToasts(<><div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>{!adminModal&&installationDialog}</>);
   const stats=projectedStats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
-  return <><div className="app-shell">
+  return withToasts(<><div className="app-shell">
     <Sidebar onNavigate={navigate} onAdmin={()=>setAdminModal(true)} onSession={changeSession} onInstall={openInstall} showInstall={!installed} activeNav={activeNav}/>
     <div className="main-shell"><Header session={session} seller={seller} store={store} connected={connection} notificationsEnabled={displayedEnabled} notificationError={displayedError} notificationUnconfirmed={displayedUnconfirmed} notificationPendingProfile={notificationPendingProfile} notificationPendingError={notificationPendingProfile&&!!startupNotificationError} soundEnabled={soundEnabled} onBell={openNotifications} onSound={toggleSound} onSession={changeSession} onAdmin={()=>setAdminModal(true)} onTheme={()=>setThemeModal(true)} onInstall={openInstall} showInstall={!installed}/>
       <main className="content" id="overview">
@@ -983,7 +1002,7 @@ export default function App() {
         {currentRetries.some(item=>!pending[`${owner}:${item.serviceId}`])&&<p className="sales-retry-status" role="alert">Une vente n’est pas confirmée. Touchez « Vérifier l’envoi » sur le service concerné pour reprendre sans doublon.</p>}
         {provisional.length>0&&<p className="sales-sync-status" role="status">Mise à jour en cours : les chiffres incluent {provisional.length} {provisional.length>1?'ventes':'vente'} en cours d’enregistrement ou de synchronisation.</p>}
         <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> VENTES QUOTIDIENNES</div><h2>Ajouter un service</h2><p>Touchez un service pour ajouter une vente.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[`${owner}:${s.id}`]} uncertain={currentRetries.some(item=>item.serviceId===Number(s.id))&&!pending[`${owner}:${s.id}`]} provisional={provisional.filter(item=>Number(item.sale.serviceId)===Number(s.id)).length} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
-          {session&&<GoalsPanel services={data.services} goals={currentGoals} workdays={goalState.workdays} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
+          {session&&<GoalsPanel services={data.services} goals={currentGoals} workdays={goalState.workdays} stats={stats} date={data.today} feedbackScope={owner} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
           <Summary stats={stats} hasSession={!!session} storeId={session?.storeId} departments={departments} goals={currentSummary} goalsLoading={summaryState.key===summaryKey&&summaryState.loading} goalsError={summaryState.key===summaryKey?summaryState.error:''} onRetry={loadSummaryGoals}/>
         </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/></div></div>
         <footer className="page-footer">La vente, c’est notre rayon. Les services aussi. 😉</footer>
@@ -1002,9 +1021,5 @@ export default function App() {
         </label>)}
       </div>
     </Modal>}
-    {(toast||soundNotice)&&<div className="toast-stack">
-      {toast&&<Toast key={`toast-${toast.sequence}`} notice={toast} onClose={()=>{clearTimeout(toastTimer.current);setToast(null);}}/>}
-      {soundNotice&&<Toast key={`sound-${soundNotice.sequence}`} notice={soundNotice} icon={soundEnabled?Volume2:VolumeX} onClose={()=>{clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}}/>}
-    </div>}
-  </div>{!adminModal&&installationDialog}</>;
+  </div>{!adminModal&&installationDialog}</>);
 }

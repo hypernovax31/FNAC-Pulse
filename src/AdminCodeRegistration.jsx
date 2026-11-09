@@ -1,4 +1,5 @@
 import React, {useRef,useState} from 'react';
+import {VisibleFeedback,useFeedbackState} from './VisibleFeedback';
 import {ArrowRight, Info, ShieldCheck} from 'lucide-react';
 import {api} from './api';
 import {registerAdminWithCode} from './cloud';
@@ -6,7 +7,8 @@ import {registerAdminWithCode} from './cloud';
 const initial=()=>({code:'',email:'',password:'',confirm:'',accepted:false});
 const short=value=>Array.from(value).slice(0,6).join('');
 export function AdminCodeRegistration({onRegistered,onCancel,onBusy}) {
-  const [form,setForm]=useState(initial),[busy,setBusy]=useState(false),[error,setError]=useState(''),[visible,setVisible]=useState(false);
+  const [form,setForm]=useState(initial),[busy,setBusy]=useState(false),[visible,setVisible]=useState(false);
+  const [error,setError,errorRevision]=useFeedbackState('');
   const running=useRef(false);
   async function submit(e){
     e.preventDefault();if(running.current)return;
@@ -22,6 +24,7 @@ export function AdminCodeRegistration({onRegistered,onCancel,onBusy}) {
     finally{running.current=false;setBusy(false);onBusy?.(false);}
   }
   return <div className="admin-code-registration">
+    <VisibleFeedback message={error} tone="error" revision={errorRevision}/>
     <div className="admin-account-current"><ShieldCheck size={18}/><div><strong>Votre accès administrateur</strong><p>Utilisez le code transmis en privé par un administrateur.</p></div></div>
     <p className="admin-first-intro">Créez votre compte sur cet appareil. Après cette étape, vous choisirez un mot de passe personnel d’au moins 12 caractères avant tout accès.</p>
     <form className="store-form" onSubmit={submit}>

@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { VisibleFeedback, useFeedbackState } from './VisibleFeedback';
+import { useTrackedJobFeedback } from './TrackedJobFeedback';
 import { AlertTriangle, RotateCcw } from 'lucide-react';
 import { api, uid } from './api';
 import { SALES_RESET_CONFIRMATION } from './sales-reset.js';
@@ -14,8 +16,9 @@ export function SalesResetPanel({storeId,storeName,token,disabled,onUpdate}) {
   const [status,setStatus]=useState(null),[statusError,setStatusError]=useState('');
   const [pending,setPending]=useState(()=>readPending(storeId));
   const [open,setOpen]=useState(false),[phrase,setPhrase]=useState('');
-  const [busy,setBusy]=useState(false),[actionError,setActionError]=useState('');
+  const [busy,setBusy]=useState(false),[actionError,setActionError,actionRevision]=useFeedbackState('');
   const [refresh,setRefresh]=useState(0);
+  const jobFeedback=useTrackedJobFeedback('sales-reset',storeId,pending,job=>({message:job.status==='running'?`Reset des ventes en cours pour ${storeName}. Vous pouvez fermer cette fenêtre.`:`Reset des ventes terminé pour ${storeName} : ${job.deletedSales} vente${job.deletedSales>1?'s':''} supprimée${job.deletedSales>1?'s':''}.`}));
   const notify=useRef(onUpdate),alive=useRef(false),observedRunning=useRef(''),observedJob=useRef(null),resolvedRequest=useRef('');
   notify.current=onUpdate;
   useEffect(()=>{alive.current=true;return ()=>{alive.current=false;};},[]);
@@ -25,7 +28,7 @@ export function SalesResetPanel({storeId,storeName,token,disabled,onUpdate}) {
       try {
         const next=await api(`/api/admin/sales/reset?storeId=${encodeURIComponent(storeId)}`,{token});
         if(stopped)return;
-        last=next;setStatus(next);setStatusError('');
+        last=next;setStatus(next);setStatusError('');jobFeedback.observe(next);
         if(pending&&next.jobId===pending&&(next.status==='running'||next.status==='done')) {
           resolvedRequest.current=pending;rememberPending(storeId,'');setPending('');setActionError('');notify.current?.();
         }
@@ -42,20 +45,20 @@ export function SalesResetPanel({storeId,storeName,token,disabled,onUpdate}) {
   },[storeId,token,refresh,pending]);
 
   async function submit(jobId) {
-    const id=jobId||uid();setBusy(true);setActionError('');setPending(id);rememberPending(storeId,id);
+    const id=jobId||uid();jobFeedback.begin(id);setBusy(true);setActionError('');setPending(id);rememberPending(storeId,id);
     try {
       const result=await api('/api/admin/sales/reset',{method:'POST',token,body:{storeId,jobId:id,confirmation:SALES_RESET_CONFIRMATION}});
       if(!alive.current)return;
       if(!['running','done','superseded'].includes(result.status)||result.jobId!==id)throw new Error('État du reset invalide.');
       rememberPending(storeId,'');setPending('');setOpen(false);setPhrase('');
-      if(result.status==='superseded')setActionError('Cette demande a déjà été traitée ou remplacée. Aucune nouvelle suppression n’a été lancée.');
-      else {setStatus(result);if(result.status==='running')observedRunning.current=id;notify.current?.();}
+      if(result.status==='superseded'){jobFeedback.cancel(id);setActionError('Cette demande a déjà été traitée ou remplacée. Aucune nouvelle suppression n’a été lancée.');}
+      else {jobFeedback.observe(result);setStatus(result);if(result.status==='running')observedRunning.current=id;notify.current?.();}
       setRefresh(value=>value+1);
     } catch(e) {
       if(alive.current){
         setOpen(false);setPhrase('');
         if(resolvedRequest.current===id)setActionError('');
-        else if(e.status>=400&&e.status<500){rememberPending(storeId,'');setPending('');setActionError(e.message||'La demande a été refusée.');}
+        else if(e.status>=400&&e.status<500){jobFeedback.cancel(id);rememberPending(storeId,'');setPending('');setActionError(e.message||'La demande a été refusée.');}
         else setActionError('Le lancement n’a pas pu être confirmé. Vérifiez ou reprenez cette même demande avant tout nouveau reset.');
         setRefresh(value=>value+1);
       }
@@ -64,12 +67,15 @@ export function SalesResetPanel({storeId,storeName,token,disabled,onUpdate}) {
   const running=status?.status==='running';
   const unavailable=disabled||busy||!storeName||!['idle','done'].includes(status?.status)||!!statusError||!!pending;
   return <section className="sales-reset" aria-labelledby="sales-reset-title">
+    <VisibleFeedback message={jobFeedback.notice?.message} tone={jobFeedback.notice?.tone} revision={jobFeedback.revision}/>
+    <VisibleFeedback message={statusError} tone="error" actionLabel="Vérifier" onAction={()=>{setStatusError('');setRefresh(value=>value+1);}}/>
+    <VisibleFeedback message={actionError} tone="error" revision={actionRevision} actionLabel={pending&&!open&&!busy&&!disabled?'Reprendre':''} onAction={()=>submit(pending)}/>
     <div className="sales-reset-heading"><div><h4 id="sales-reset-title">Reset global des ventes</h4><p>Tous les services, vendeurs et départements du magasin sélectionné.</p></div>
       {!open&&<button type="button" className="sales-reset-button" disabled={unavailable} onClick={()=>{setActionError('');setOpen(true);}}> <RotateCcw size={15} aria-hidden="true"/> Reset global</button>}
     </div>
     {running&&<p className="sales-reset-progress" role="status">Suppression en cours : {status.deletedSales} vente{status.deletedSales>1?'s':''} supprimée{status.deletedSales>1?'s':''}. Les nouvelles ventes restent possibles. Vous pouvez fermer cette fenêtre.</p>}
     {status?.status==='done'&&!pending&&!open&&<p className="sales-reset-progress" role="status">Dernier reset terminé : {status.deletedSales} vente{status.deletedSales>1?'s':''} supprimée{status.deletedSales>1?'s':''}.</p>}
-    {statusError&&<div className="sales-reset-error" role="alert">{statusError} <button type="button" onClick={()=>setRefresh(value=>value+1)}>Vérifier</button></div>}
+    {statusError&&<div className="sales-reset-error" role="alert">{statusError} <button type="button" onClick={()=>{setStatusError('');setRefresh(value=>value+1);}}>Vérifier</button></div>}
     {actionError&&<p className="sales-reset-error" role="alert">{actionError}</p>}
     {pending&&!open&&<div className="sales-reset-recovery"><p>Une demande attend confirmation. Réessayez avec le même identifiant pour éviter un second reset.</p><button type="button" className="outline-button" disabled={busy||disabled} onClick={()=>submit(pending)}>Vérifier ou reprendre</button></div>}
     {open&&<div className="sales-reset-confirm" role="group" aria-labelledby="sales-reset-confirm-title">

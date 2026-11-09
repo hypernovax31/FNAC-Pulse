@@ -1,4 +1,5 @@
 import React, {useEffect,useRef,useState} from 'react';
+import {VisibleFeedback,useFeedbackState} from './VisibleFeedback';
 import {CalendarDays,ChevronDown,Info,Plus,Trash2} from 'lucide-react';
 import {api,uid,dateLabel,timeLabel} from './api';
 import {sellerDepartmentId} from './departments.js';
@@ -27,7 +28,8 @@ export function SalesHistoryPanel({storeId,storeName,sellers,services,additionSe
   const [rows,setRows]=useState([]),[next,setNext]=useState(null),[selected,setSelected]=useState([]),[pending,setPending]=useState(null),[uncertain,setUncertain]=useState(false);
   const [addition,setAddition]=useState(emptyAddition),[serviceFilter,setServiceFilter]=useState('');
   const [loading,setLoading]=useState(false),[loadingMore,setLoadingMore]=useState(false),[saving,setSaving]=useState(false);
-  const [error,setError]=useState(''),[canReload,setCanReload]=useState(false),[notice,setNotice]=useState(''),[refresh,setRefresh]=useState(0),sequence=useRef(0);
+  const [error,setError,errorRevision]=useFeedbackState(''),[notice,setNotice,noticeRevision]=useFeedbackState('');
+  const [canReload,setCanReload]=useState(false),[refresh,setRefresh]=useState(0),sequence=useRef(0);
   const eligible=sellers.filter(s=>!s.deletingJob),seller=eligible.find(s=>String(s.id)===sellerId);
   const range=saleHistoryRange('day',anchor,today),selection={storeId,sellerId,anchor};
   function report(message,reload=false){setError(message);setCanReload(reload);}
@@ -108,6 +110,8 @@ export function SalesHistoryPanel({storeId,storeName,sellers,services,additionSe
     .map(row=>rowLabel(row,services,departments))
     .sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')||b.id.localeCompare(a.id));
   return <section className="sales-history" aria-labelledby="sales-history-title">
+    <VisibleFeedback message={notice} tone={notice.startsWith('Résultat non confirmé')?'error':'success'} revision={noticeRevision}/>
+    <VisibleFeedback message={error} tone="error" revision={errorRevision} actionLabel={uncertain&&pending&&!saving&&!disabled?'Réessayer':canReload&&!pending?'Recharger':''} onAction={()=>{if(uncertain&&pending)confirm();else {onReload?.();setRefresh(value=>value+1);}}}/>
     <div className="admin-section-heading"><div><h3 id="sales-history-title">Correction des ventes</h3><p>Choisissez un vendeur et une journée, puis ajoutez ou retirez des ventes.</p></div></div>
     <div className="history-filters">
       <label><span className="form-label">VENDEUR</span><select className="text-input" aria-label="Vendeur pour l’historique" value={sellerId} disabled={locked||!eligible.length} onChange={event=>{clearSelection();setSellerId(event.target.value);}}><option value="">Choisir un vendeur</option>{eligible.map(s=><option key={s.id} value={s.id}>{s.name}{s.active?'':' · archivé'}</option>)}</select></label>

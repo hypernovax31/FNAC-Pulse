@@ -1,4 +1,5 @@
 import React, {useRef,useState} from 'react';
+import {VisibleFeedback,useFeedbackState} from './VisibleFeedback';
 import {ArrowRight, ShieldCheck} from 'lucide-react';
 import {changeAdminPassword, changeFirstCodeAdminPassword} from './cloud';
 
@@ -8,7 +9,7 @@ import {changeAdminPassword, changeFirstCodeAdminPassword} from './cloud';
 export function AdminFirstPassword({email,onFinish,onCancel,onBusy,method='direct',temporaryPassword=null}) {
   const codeMethod=method==='code',knownTemporary=!codeMethod&&typeof temporaryPassword==='string'&&!!temporaryPassword;
   const [form,setForm]=useState({current:'',next:'',confirm:''}),[changed,setChanged]=useState(false);
-  const [busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [busy,setBusy]=useState(false),[error,setError,errorRevision]=useFeedbackState('');
   const running=useRef(false);
   async function run(work){
     if(running.current)return;
@@ -18,6 +19,7 @@ export function AdminFirstPassword({email,onFinish,onCancel,onBusy,method='direc
   }
   async function finish(newPassword){await onFinish(newPassword);}
   return <div className="admin-first-password">
+    <VisibleFeedback message={error} tone="error" revision={errorRevision}/>
     <div className="admin-account-current"><ShieldCheck size={18}/><div><strong>Votre accès administrateur</strong><p>{email}</p></div></div>
     {!changed?<>
       <p className="admin-first-intro">Remplacez le mot de passe provisoire par un mot de passe personnel avant d’accéder à l’administration. Ne le communiquez pas.</p>

@@ -51,8 +51,8 @@ test('Suppression vendeur : réponse perdue, reprise du même vendeur avec le m�
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(SellerDeletePanel,{...props,onUpdate:()=>{}}));await tick();});await choose(tree,'1');await open(tree);await confirm(tree);
     await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();});
-    assert(button(tree,'Vérifier ou reprendre'));assert.equal(g.values.size,1);assert.equal(button(tree,'Supprimer ce vendeur').props.disabled,true);assert.match(text(tree.toJSON()),/Alice/);
-    await act(async()=>{button(tree,'Vérifier ou reprendre').props.onClick();await tick();});assert.equal(sent.length,2);assert.deepEqual(sent[0],sent[1]);assert.equal(g.values.size,0);
+    assert(button(tree,'Vérifier ou reprendre'));assert.equal(g.values.size,2);assert(g.values.has('fnac-pulse-seller-delete:magasin-test'));assert.equal(g.values.get('fnac-pulse-feedback-job:seller-delete:magasin-test'),'seller-interface-job-0001');assert.equal(button(tree,'Supprimer ce vendeur').props.disabled,true);assert.match(text(tree.toJSON()),/Alice/);
+    await act(async()=>{button(tree,'Vérifier ou reprendre').props.onClick();await tick();});assert.equal(sent.length,2);assert.deepEqual(sent[0],sent[1]);assert.equal(g.values.size,1);assert(!g.values.has('fnac-pulse-seller-delete:magasin-test'));assert.equal(g.values.get('fnac-pulse-feedback-job:seller-delete:magasin-test'),sent[0].jobId);
   } finally {if(tree)await act(async()=>tree.unmount());g.restore();}
 });
 

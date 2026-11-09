@@ -1,4 +1,5 @@
 import React, {useEffect,useState} from 'react';
+import {VisibleFeedback} from './VisibleFeedback';
 import {ChevronDown} from 'lucide-react';
 import {api} from './api';
 import {WorkdaysForm} from './Goals';
@@ -31,6 +32,7 @@ export function SellerWorkdays({seller,storeId,token,open,onToggle,disabled,onBu
     } finally {onBusy(false);}
   }
   return <div className="seller-workdays">
+    {open&&<VisibleFeedback message={error} tone="error" actionLabel="Réessayer" onAction={()=>setRetry(value=>value+1)}/>}
     <button type="button" className="seller-workdays-toggle" aria-expanded={!!open} disabled={disabled||!seller.active||!!seller.deletingJob} onClick={onToggle}>
       <span>Jours travaillés</span><span>{!seller.active?'Réactiver le vendeur':open?'Masquer':'Afficher'} <ChevronDown size={15} className={open?'is-open':''}/></span>
     </button>

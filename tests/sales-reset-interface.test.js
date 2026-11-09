@@ -57,7 +57,7 @@ test('Interface reset : réponse perdue, reprise avec le même identifiant',asyn
     await act(async()=>{findButton(tree,'Reset global').props.onClick();});
     await act(async()=>{tree.root.findByProps({'aria-label':'Confirmation du reset'}).props.onChange({target:{value:'SUPPRIMER'}});});
     await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();});
-    assert(findButton(tree,'Vérifier ou reprendre'));assert.equal(g.values.size,1);assert.equal(findButton(tree,'Reset global').props.disabled,true);
+    assert(findButton(tree,'Vérifier ou reprendre'));assert.equal(g.values.size,2);assert(g.values.has('fnac-pulse-sales-reset:magasin-test'));assert.equal(g.values.get('fnac-pulse-feedback-job:sales-reset:magasin-test'),'test-reset-request-0001');assert.equal(findButton(tree,'Reset global').props.disabled,true);
     await act(async()=>{findButton(tree,'Vérifier ou reprendre').props.onClick();await tick();});
     assert.equal(sent.length,2);assert.equal(sent[0].jobId,sent[1].jobId);assert.equal(g.values.size,0);
   } finally {if(tree)await act(async()=>tree.unmount());g.restore();}

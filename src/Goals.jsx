@@ -1,4 +1,5 @@
-import React, { useId, useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
+import { VisibleFeedback, useFeedbackState, useRetryFeedback } from './VisibleFeedback';
 import { ArrowRight, Check, Pencil, Plus, Target, RotateCw } from 'lucide-react';
 import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, WORKDAY_NAMES, WORKDAY_ORDER, goalReference, goalTargets, hasGoal, parseGoalInputs, normalizeWorkdays, validWorkdays, workdaysLabel } from './goals.js';
 import { validGoalDate, personalGoalCards, personalGoalMetric } from './goal-display.js';
@@ -25,8 +26,8 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
   const [amount,setAmount]=useState(initialReference.amount);
   const [revision,setRevision]=useState(entry?.revision||null);
   const [busy,setBusy]=useState(false);
-  const [error,setError]=useState('');
-  const [notice,setNotice]=useState('');
+  const [error,setError,errorRevision]=useFeedbackState('');
+  const [notice,setNotice,noticeRevision]=useFeedbackState('');
   const current=goals?.[`s${service}`],minimum=goalMinimum(current),effective=goalReference(current);
   const stale=!!service && (current?.revision||null)!==revision;
   const numeric=/^\d+$/.test(amount)?Number(amount):null;
@@ -81,9 +82,9 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     </div>
     <div className="goal-preview" aria-live="polite"><span className="form-label">{admin?'CIBLES CALCULÉES POUR CE MINIMUM':'CIBLES CALCULÉES POUR LA PÉRIODE EN COURS'}</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PREVIEW_LABELS[period]}</span><strong>{preview?formatNumber(preview[period]):'—'}</strong></div>)}</div><p className="goal-preview-hint">Ces quantités sont des objectifs à atteindre, pas les ventes déjà réalisées.</p></div>
     {showPlanning&&<details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Modifiez ces jours dans la fiche du vendeur, onglet Vendeurs. Les cibles par semaine ou par mois sont réparties en entiers : samedi 6 parts, lundi et vendredi 5, les autres jours travaillés 4. Une cible par jour travaillé reste identique chaque jour. Les jours fériés sont inclus et certains jours peuvent recevoir 0. Changer de période remplace la référence et son éventuelle hausse personnelle.</p></details>}
-    {stale&&<div className="goal-conflict" role="alert"><span>Cet objectif a été modifié ailleurs.</span><button type="button" onClick={()=>loadService(service)}><RotateCw size={13}/> Recharger les valeurs</button></div>}
-    {error&&<div className="form-error" role="alert">{error}</div>}
-    {notice&&<div className="goal-saved" role="status">{notice}</div>}
+    {stale&&<><VisibleFeedback message="Cet objectif a été modifié ailleurs." tone="error" actionLabel="Recharger" onAction={()=>loadService(service)}/><div className="goal-conflict" role="alert"><span>Cet objectif a été modifié ailleurs.</span><button type="button" onClick={()=>loadService(service)}><RotateCw size={13}/> Recharger les valeurs</button></div></>}
+    {error&&<><VisibleFeedback message={error} tone="error" revision={errorRevision}/><div className="form-error" role="alert">{error}</div></>}
+    {notice&&<><VisibleFeedback message={notice} revision={noticeRevision}/><div className="goal-saved" role="status">{notice}</div></>}
     {hasGoal(current)&&<button type="button" className="goal-remove" onClick={remove} disabled={busy||disabled||stale||(!admin&&!!minimum)} title={!admin&&minimum?'Seul un administrateur peut supprimer ce minimum.':undefined}>Supprimer l’objectif de ce service</button>}
     <div className="goal-form-actions">{onCancel&&<button type="button" className="outline-button" onClick={onCancel} disabled={busy}>Fermer</button>}<button className="primary-button" type="submit" disabled={busy||disabled||stale||!service||!amount}>{busy?'Enregistrement…':'Enregistrer'} <ArrowRight size={15}/></button></div>
   </form>;
@@ -94,7 +95,8 @@ export function WorkdaysForm({workdays,revision,onSave,disabled=false}) {
   const titleId=useId();
   const [selected,setSelected]=useState(()=>normalizeWorkdays(workdays));
   const [editRevision,setEditRevision]=useState(revision||null);
-  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [error,setError,errorRevision]=useFeedbackState(''),[notice,setNotice,noticeRevision]=useFeedbackState('');
   const stale=(revision||null)!==editRevision;
   const changed=selected.join(',')!==normalizeWorkdays(workdays).join(',');
   function reload() {setSelected(normalizeWorkdays(workdays));setEditRevision(revision||null);setError('');setNotice('');}
@@ -121,8 +123,8 @@ export function WorkdaysForm({workdays,revision,onSave,disabled=false}) {
     </fieldset>
     <div className="workdays-actions"><span aria-live="polite">{selected.length} {selected.length>1?'jours sélectionnés':'jour sélectionné'}</span><button type="submit" className="outline-button" disabled={busy||disabled||stale||!validWorkdays(selected)||(!changed&&!!editRevision)}>{busy?'Enregistrement…':'Enregistrer les jours'}</button></div>
     <p className="goal-form-hint">Jours fériés inclus. Le planning se répète chaque semaine et ne gère pas les absences ponctuelles ; toutes les ventes restent comptées.</p>
-    {stale&&<div className="goal-conflict" role="alert"><span>Ces jours ont été modifiés ailleurs.</span><button type="button" onClick={reload}><RotateCw size={13}/> Recharger les jours</button></div>}
-    {error&&<div className="form-error" role="alert">{error}</div>}{notice&&<div className="goal-saved" role="status">{notice}</div>}
+    {stale&&<><VisibleFeedback message="Ces jours ont été modifiés ailleurs." tone="error" actionLabel="Recharger" onAction={reload}/><div className="goal-conflict" role="alert"><span>Ces jours ont été modifiés ailleurs.</span><button type="button" onClick={reload}><RotateCw size={13}/> Recharger les jours</button></div></>}
+    {error&&<><VisibleFeedback message={error} tone="error" revision={errorRevision}/><div className="form-error" role="alert">{error}</div></>}{notice&&<><VisibleFeedback message={notice} revision={noticeRevision}/><div className="goal-saved" role="status">{notice}</div></>}
   </form>;
 }
 
@@ -169,8 +171,11 @@ export function GoalCards({rows,period,stats,offline,onEdit}) {
   })}</div>;
 }
 
-export function GoalsPanel({services,goals,workdays,stats,loading,error,offline,onEdit,onRetry,date=parisToday()}) {
+export function GoalsPanel({services,goals,workdays,stats,loading,error,offline,onEdit,onRetry,feedbackScope='',date=parisToday()}) {
   const [period,setPeriod]=useState('day');
+  const retried=useRetryFeedback(onRetry,'Objectifs actualisés.');
+  useEffect(()=>{retried.clear();},[feedbackScope]);
+  useEffect(()=>{if(!loading&&retried.feedback&&((error&&retried.feedback.tone==='success')||(!error&&retried.feedback.tone==='error')))retried.clear();},[error,loading]);
   const configured=services.filter(service=>hasGoal(goals?.[`s${service.id}`]));
   const nextService=services.find(service=>!hasGoal(goals?.[`s${service.id}`]));
   const rows=goals?personalGoalCards(services,goals,date,workdays,period):[];
@@ -178,21 +183,23 @@ export function GoalsPanel({services,goals,workdays,stats,loading,error,offline,
   const periodName={day:'du jour',week:'de la semaine',month:'du mois'}[period];
   const emptyTitle={day:'Aucun objectif prévu aujourd’hui.',week:'Aucun objectif prévu cette semaine.',month:'Aucun objectif prévu ce mois-ci.'}[period];
   return <section className="panel goals-panel" id="objectifs" aria-labelledby="personal-goals-title">
+    <VisibleFeedback message={retried.feedback?.message} tone={retried.feedback?.tone} revision={retried.revision} actionLabel={retried.feedback?.tone==='error'?'Réessayer':''} onAction={retried.retry}/>
+    {retried.feedback?.tone==='success'&&<span className="sr-only" role="status">{retried.feedback.message}</span>}
     <div className="goals-heading"><div><div className="section-kicker"><span className="kicker-line"/> VOTRE PROGRESSION</div><h2 id="personal-goals-title">Mes objectifs</h2></div>
       {goals&&services.length>0&&<button type="button" className="goal-manage" onClick={()=>onEdit(nextService?.id||null)} disabled={offline}>
         {nextService?<Plus size={15}/>:<Pencil size={14}/>} <span>{configured.length===0?'Définir':nextService?'Ajouter':'Gérer'}</span>
       </button>}
     </div>
     {offline&&<p className="goal-offline">Lecture hors ligne · les modifications seront possibles au retour de la connexion.</p>}
-    {!goals ? <div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>{loading?'Chargement de vos objectifs…':'Vos objectifs sont indisponibles.'}</strong><p>{error||'Ils apparaîtront ici dès que votre espace sera prêt.'}</p>{!loading&&!offline&&<button type="button" onClick={onRetry}>Réessayer</button>}</div></div>
+    {!goals ? <div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>{loading?'Chargement de vos objectifs…':'Vos objectifs sont indisponibles.'}</strong><p role={error?'alert':undefined}>{error||'Ils apparaîtront ici dès que votre espace sera prêt.'}</p>{!loading&&!offline&&<button type="button" onClick={retried.retry}>Réessayer</button>}</div></div>
     :<>
       <div className="goals-toolbar">
         <div className="goal-periods" role="group" aria-label="Période des objectifs">{GOAL_PERIODS.map(value=><button type="button" key={value} aria-label={GOAL_LABELS[value]} aria-pressed={period===value} className={period===value?'is-active':''} onClick={()=>setPeriod(value)}>{PERSONAL_PERIOD_LABELS[value]}</button>)}</div>
       </div>
-      {invalidDate?<div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>Les cibles {periodName} sont indisponibles.</strong><p>Impossible de calculer les objectifs sans une date valide. Actualisez votre espace.</p>{!offline&&<button type="button" onClick={onRetry}>Réessayer</button>}</div></div>
+      {invalidDate?<div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>Les cibles {periodName} sont indisponibles.</strong><p>Impossible de calculer les objectifs sans une date valide. Actualisez votre espace.</p>{!offline&&<button type="button" onClick={retried.retry}>Réessayer</button>}</div></div>
       :rows.length?<GoalCards rows={rows} period={period} stats={stats} offline={offline} onEdit={onEdit}/>
       :<div className="goals-empty"><span className="goals-empty-icon"><Target size={20}/></span><div><strong>{services.length?emptyTitle:'Aucun service disponible.'}</strong><p>{services.length?'Pensez à ajouter vos objectifs.':'Les services actifs apparaîtront ici lorsqu’ils seront disponibles.'}</p>{configured.length===0&&services.length>0&&<button type="button" onClick={()=>onEdit(nextService?.id||null)} disabled={offline}>Définir un objectif <ArrowRight size={13}/></button>}</div></div>}
     </>}
-    {error&&goals&&!offline&&<p className="goal-sync-warning">Dernières valeurs affichées · {error} <button type="button" onClick={onRetry}>Réessayer</button></p>}
+    {error&&goals&&!offline&&<p className="goal-sync-warning" role="alert">Dernières valeurs affichées · {error} <button type="button" onClick={retried.retry}>Réessayer</button></p>}
   </section>;
 }

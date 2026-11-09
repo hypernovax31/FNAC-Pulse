@@ -1,12 +1,12 @@
 /* Fnac Pulse: app shell and Web Push. Works at a domain root or under /FNAC-Pulse/.
    The backend remains necessary; sales are never queued offline. */
-const CACHE = 'fnac-pulse-shell-v58';
+const CACHE = 'fnac-pulse-shell-v59';
 const APP_URL = new URL(self.registration.scope);
 const APP_PATH = APP_URL.pathname;
 const appAsset = path => new URL(path, APP_URL).pathname;
 const SHELL = ['', 'manifest.webmanifest', 'icons/icon-192-v3.png', 'icons/icon-512-v3.png', 'icons/icon-maskable-512-v3.png', 'icons/apple-touch-icon-v3.png', 'icons/icon-192.png', 'fnac.svg', 'FNAC - SIGNATURE.mp3'].map(appAsset);
 // La requête versionnée contourne aussi le cache v43 encore installé.
-SHELL.splice(1, 0, `${appAsset('auth-action-v1.js')}?v=4`);
+SHELL.splice(1, 0, `${appAsset('auth-action-v1.js')}?v=5`);
 
 self.addEventListener('install', event => {
   event.waitUntil((async () => {

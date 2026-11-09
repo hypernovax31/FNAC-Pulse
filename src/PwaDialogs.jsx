@@ -1,10 +1,12 @@
 import React from 'react';
 import { Bell, BellOff, BellRing, Check, Download, Info } from 'lucide-react';
 import { Modal } from './Admin';
+import { VisibleFeedback } from './VisibleFeedback';
 
 export function InstallDialog({platform,base,promptAvailable,installError,onInstall,onClose}) {
   const ios=platform.os==='ios',android=platform.os==='android';
   return <Modal title="Installer Fnac Pulse" subtitle="Votre espace d’équipe à portée de main." onClose={onClose}>
+    <VisibleFeedback message={installError} tone="error"/>
     <div className="install-app-preview"><img src={`${base}icons/icon-192-v3.png`} width="54" height="54" alt=""/><div><strong>Fnac Pulse</strong><p>Retrouvez rapidement votre équipe et vos services.</p></div></div>
     {platform.inApp&&<div className="notification-device-note"><Info size={15}/><span>Ouvrez d’abord ce lien dans {ios?'Safari':'Chrome'} : le navigateur intégré à cette application peut empêcher l’installation.</span></div>}
     {ios?<div className="install-steps">
@@ -52,9 +54,10 @@ export function NotificationsDialog({permission,enabled,checkError,unconfirmed,p
     permission==='unsupported'||!pushAvailable?'Notifications indisponibles':!hasSession?(pendingProfile?(pendingError?'Activation à finaliser':'Autorisation accordée'):'Profil à choisir'):
     checking?'Vérification des notifications':enabled===true?'Notifications activées':'À activer sur cet appareil';
   return <Modal title="Notifications d’équipe" onClose={onClose}>
+    <VisibleFeedback message={checkError?note:''} tone="error" actionLabel="Réessayer" onAction={onRetry}/>
     <div className="notification-modal-hero"><div className="notification-hero-icon"><BellRing size={25}/></div><div><strong>{headline}</strong></div></div>
     <div className="notification-details"><div><Check size={16}/> Les ventes peuvent vous être signalées même lorsque l’application est fermée</div><div><Check size={16}/> Uniquement pour votre magasin et votre département</div></div>
-    <div className="notification-device-note"><Info size={15}/><span>{note}</span></div>
+    <div className="notification-device-note" role={checkError?'alert':undefined}><Info size={15}/><span>{note}</span></div>
     <button type="button" className={enabled===true?'outline-button full-button':'primary-button full-button'} disabled={actionBusy||disabled} onClick={button}>{actionBusy?'Un instant…':label} {enabled===true?<BellOff size={16}/>:<Bell size={16}/>}</button>
     {enabled!==true&&<button type="button" className="notification-later" onClick={onClose}>Plus tard</button>}
   </Modal>;

@@ -1,10 +1,12 @@
-import React from 'react';
+import React, {useState} from 'react';
+import {VisibleFeedback} from './VisibleFeedback';
 import { BellRing, MapPin, Check, ArrowRight, Info, UserRound } from 'lucide-react';
 import { Modal } from './Admin';
 
 // Chaque dialogue système suit un appui direct. L'enregistrement réseau du
 // push ne doit pas empêcher de demander la géolocalisation.
 export function StartupPermissionsDialog({platform,permission,pushAvailable,notificationReady,notificationsEnabled,notificationBusy,notificationError,hasSession,authReady,profileName,profileContent,locationStatus,locationFeedback,onNotification,onLocation,onClose}) {
+  const [notificationAttempt,setNotificationAttempt]=useState(0);
   const unavailable=permission==='unsupported'||!pushAvailable,blocked=permission==='denied';
   let notificationText;
   if(blocked)notificationText='Bloquées : autorisez-les dans les réglages de l’appareil ou du navigateur.';
@@ -30,12 +32,14 @@ export function StartupPermissionsDialog({platform,permission,pushAvailable,noti
   })[locationFeedback.result]:'';
   const showIosHelp=platform?.os==='ios'&&locationStatus!=='granted'&&!locationBusy&&locationStatus!=='unsupported';
   return <Modal title="Bien démarrer" subtitle="Préparez Fnac Pulse sur cet appareil." onClose={onClose}>
+    <VisibleFeedback message={notificationAttempt&&!notificationBusy&&(notificationError||blocked||notificationReady||permission==='granted')?`Notifications : ${notificationText}`:''} tone={notificationError||blocked?'error':'success'} revision={notificationAttempt}/>
+    <VisibleFeedback message={resultText&&locationFeedback?.result!=='checking'?`Géolocalisation : ${resultText}`:''} tone={locationFeedback?.result==='granted'?'success':'error'} revision={locationFeedback?.attempt||0} actionLabel={!locationBusy&&locationStatus!=='granted'&&locationStatus!=='unsupported'?'Vérifier':''} onAction={onLocation}/>
     <p className="startup-permissions-intro">Choisissez les autorisations à activer. Votre appareil peut vous demander de confirmer chaque choix.</p>
     <div className="startup-permissions-list">
       <section className="startup-permission-card" aria-label="Notifications d’équipe">
         <span className="startup-permission-icon"><BellRing size={19}/></span>
         <div className="startup-permission-copy"><strong>Notifications d’équipe</strong><p role="status">{notificationText}</p></div>
-        {notificationReady&&!notificationError?<span className="startup-permission-done"><Check size={15}/> {notificationsEnabled===true?'Activées':'Autorisées'}</span>:!unavailable&&!blocked?<button type="button" className="startup-permission-action" aria-label={notificationError?'Réessayer les notifications':'Activer les notifications'} aria-busy={notificationBusy} onClick={onNotification} disabled={notificationBusy||locationStatus==='locating'}>{notificationBusy?'Activation…':notificationError?'Réessayer':'Activer'}<ArrowRight size={14}/></button>:null}
+        {notificationReady&&!notificationError?<span className="startup-permission-done"><Check size={15}/> {notificationsEnabled===true?'Activées':'Autorisées'}</span>:!unavailable&&!blocked?<button type="button" className="startup-permission-action" aria-label={notificationError?'Réessayer les notifications':'Activer les notifications'} aria-busy={notificationBusy} onClick={()=>{setNotificationAttempt(value=>value+1);onNotification();}} disabled={notificationBusy||locationStatus==='locating'}>{notificationBusy?'Activation…':notificationError?'Réessayer':'Activer'}<ArrowRight size={14}/></button>:null}
       </section>
       <section className="startup-permission-card" aria-label="Géolocalisation">
         <span className="startup-permission-icon location"><MapPin size={19}/></span>

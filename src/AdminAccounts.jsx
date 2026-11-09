@@ -1,4 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
+import {VisibleFeedback,useFeedbackState} from './VisibleFeedback';
 import {LockKeyhole,LogOut,RefreshCw,Send,ShieldCheck,UserRoundPlus} from 'lucide-react';
 import {api,uid} from './api';
 import {ADMIN_SESSION,adminAccountEmail,changeAdminPassword,inviteAdministrator} from './cloud';
@@ -10,12 +11,14 @@ const dateLabel=value=>{const date=new Date(value);return Number.isFinite(date.g
 export function AdminAccounts({onLogout,onBusy}) {
   const [email,setEmail]=useState(''),[draft,setDraft]=useState(null),[needsPassword,setNeedsPassword]=useState(false),[password,setPassword]=useState('');
   const [invitations,setInvitations]=useState([]),[next,setNext]=useState(''),[loadingMore,setLoadingMore]=useState(false),[listError,setListError]=useState('');
-  const [busy,setBusy]=useState(false),[feedback,setFeedback]=useState(null),[passwordOpen,setPasswordOpen]=useState(false),[accountEmail,setAccountEmail]=useState(''),[current,setCurrent]=useState(''),[nextPassword,setNextPassword]=useState(''),[confirmPassword,setConfirmPassword]=useState('');
+  const [feedback,setFeedback,feedbackRevision]=useFeedbackState(null);
+  const [busy,setBusy]=useState(false),[passwordOpen,setPasswordOpen]=useState(false),[accountEmail,setAccountEmail]=useState(''),[current,setCurrent]=useState(''),[nextPassword,setNextPassword]=useState(''),[confirmPassword,setConfirmPassword]=useState('');
   const mounted=useRef(true),running=useRef(false),listSequence=useRef(0),browsingPages=useRef(false),confirmation=useRef(null);
   useEffect(()=>{if(draft)confirmation.current?.focus();},[draft]);
 
   async function loadInvitations(after='',silent=false) {
     if(silent&&browsingPages.current)return;
+    if(!silent)setListError('');
     if(after){browsingPages.current=true;setLoadingMore(true);}else if(!silent)browsingPages.current=false;
     const sequence=++listSequence.current;
     try {
@@ -76,6 +79,8 @@ export function AdminAccounts({onLogout,onBusy}) {
     finally{running.current=false;if(mounted.current)setBusy(false);onBusy?.(false);}
   }
   return <div className="admin-accounts">
+    <VisibleFeedback message={feedback?.text} tone={feedback?.error?'error':'success'} revision={feedbackRevision}/>
+    <VisibleFeedback message={listError} tone="error" actionLabel="Réessayer" onAction={()=>loadInvitations()}/>
     <div className="admin-account-current"><ShieldCheck size={18}/><div><strong>Votre compte administrateur</strong><p>{accountEmail||'Chargement de votre adresse…'}</p></div></div>
     <section className="admin-account-section admin-invite-section" aria-labelledby="admin-invite-title">
       <div className="admin-account-heading"><UserRoundPlus size={19}/><div><h3 id="admin-invite-title">Inviter un administrateur</h3><p>La personne recevra un lien de connexion pour activer son compte.</p></div></div>

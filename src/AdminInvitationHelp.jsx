@@ -1,4 +1,5 @@
 import React,{useRef,useState} from 'react';
+import {VisibleFeedback,useFeedbackState} from './VisibleFeedback';
 import {Check,Info} from 'lucide-react';
 import {requestAdminPasswordReset,inspectAdminPasswordReset,confirmAdminPasswordReset,inspectAdminVerification,confirmAdminVerification} from './cloud';
 
@@ -6,7 +7,7 @@ import {requestAdminPasswordReset,inspectAdminPasswordReset,confirmAdminPassword
 // uniquement à Firebase Auth ; ils ne sont jamais transmis au Worker.
 export function AdminInvitationHelp({email,busy,onBusy,onCompleted,onVerified}) {
   const [link,setLink]=useState(''),[proof,setProof]=useState(null),[next,setNext]=useState(''),[confirm,setConfirm]=useState('');
-  const [error,setError]=useState(''),[notice,setNotice]=useState('');
+  const [error,setError,errorRevision]=useFeedbackState(''),[notice,setNotice,noticeRevision]=useFeedbackState('');
   const running=useRef(false);
   function clear(){setLink('');setProof(null);setNext('');setConfirm('');setError('');setNotice('');}
   async function run(work) {
@@ -17,6 +18,7 @@ export function AdminInvitationHelp({email,busy,onBusy,onCompleted,onVerified}) 
     finally {running.current=false;onBusy(false);}
   }
   return <details className="admin-email-fallback admin-invitation-help" onToggle={e=>{if(!e.currentTarget.open)clear();}}>
+    <VisibleFeedback message={error} tone="error" revision={errorRevision}/><VisibleFeedback message={notice} revision={noticeRevision}/>
     <summary>Mot de passe oublié ou lien bloqué ?</summary>
     <p>Pour un compte existant, vous pouvez demander un lien de réinitialisation de mot de passe.</p>
     <p>Pour une nouvelle invitation bloquée, demandez un nouvel envoi à votre administrateur ou ouvrez la <a href="?aide-invitation=1" target="_blank" rel="noopener noreferrer">page de secours</a> pour y coller le lien de connexion.</p>

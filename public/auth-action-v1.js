@@ -209,8 +209,22 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
   const appUrl=new URL(win.location.pathname,win.location.origin).href;
   const loginUrl=new URL('?administration=invitation',appUrl).href;
   let action=null,proof=null,busy=false,activationToken='';
-  const view=(heading,description)=>{title.textContent=heading;lead.textContent=description;content.replaceChildren();};
-  const message=(text)=>element(doc,'p',{className:'email-action-message',role:'alert'},text);
+  // Rappel visuel indépendant : le message et ses éventuelles actions d'origine
+  // restent dans la page et conservent leur annonce accessible.
+  const feedback=element(doc,'aside',{className:'email-action-feedback',hidden:'','aria-label':'Message','aria-live':'off'});
+  const feedbackText=element(doc,'span',{className:'email-action-feedback-text'});
+  const feedbackAction=element(doc,'button',{type:'button',className:'email-action-feedback-action',hidden:''});
+  const feedbackClose=element(doc,'button',{type:'button',className:'email-action-feedback-close','aria-label':'Fermer ce message'},'×');
+  let feedbackHandler=null;
+  feedback.append(feedbackText,feedbackAction,feedbackClose);doc.getElementById('email-action-root')?.append(feedback);
+  feedbackClose.addEventListener('click',()=>{feedback.hidden=true;});
+  feedbackAction.addEventListener('click',()=>{const run=feedbackHandler;feedback.hidden=true;run?.();});
+  const showFeedback=(text,tone='error',label='',handler=null)=>{
+    feedback.className=`email-action-feedback ${tone==='error'?'is-error':'is-success'}`;feedbackText.textContent=text;
+    feedbackHandler=handler;feedbackAction.textContent=label;feedbackAction.hidden=!label;feedback.hidden=false;
+  };
+  const view=(heading,description)=>{feedback.hidden=true;title.textContent=heading;lead.textContent=description;content.replaceChildren();};
+  const message=(text)=>{showFeedback(text);return element(doc,'p',{className:'email-action-message',role:'alert'},text);};
   const button=(text,secondary=false)=>element(doc,'button',{type:'button',...(secondary?{className:'email-action-secondary'}:{})},text);
   const loginButton=()=>element(doc,'a',{href:loginUrl,className:'email-action-button'},'Ouvrir l’administration');
   const safeOptions={fetchImpl,timeout};
@@ -234,8 +248,10 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
   }
 
   function showError(error,{applying=false}={}) {
-    view('Nous n’avons pas pu continuer',describeActionError(error,{applying}));
+    const description=describeActionError(error,{applying});
+    view('Nous n’avons pas pu continuer',description);
     const transient=['NETWORK','TIMEOUT','FIREBASE_ERROR'].includes(error?.code);
+    showFeedback(description,'error',!applying&&transient&&action?'Réessayer':'',!applying&&transient&&action?verify:null);
     if(!applying&&transient&&action){const retry=button('Réessayer');retry.addEventListener('click',verify);content.append(retry);}
     if(!applying&&error?.code==='UNSUPPORTED_ACTION'&&action){
       const fallback=new URL(`https://${ACTION_PROJECT.authDomain}/__/auth/action`);
@@ -256,12 +272,14 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
     const isReset=action.mode==='resetPassword',mode=action.mode,email=proof.email;
     if(isReset) {
       view('Mot de passe enregistré', 'Vous pouvez maintenant vous connecter à Fnac Pulse.');
+      showFeedback('Mot de passe enregistré. Vous pouvez maintenant vous connecter à Fnac Pulse.','success');
       const steps=element(doc,'p',{},'Dans l’administration, connectez-vous avec votre e-mail et votre nouveau mot de passe.');
       const shared=element(doc,'p',{},'Si un autre administrateur est déjà connecté sur cet appareil, utilisez votre propre appareil ou une fenêtre privée pour préserver sa session.');
       content.append(steps,shared,loginButton());
     } else {
       const heading=mode==='recoverEmail'?'Adresse rétablie':mode==='verifyAndChangeEmail'?'Nouvelle adresse confirmée':'Adresse confirmée';
-      view(heading,mode==='recoverEmail'?`L’adresse ${email} a bien été rétablie.`:`L’adresse ${email} a bien été confirmée.`);
+      const description=mode==='recoverEmail'?`L’adresse ${email} a bien été rétablie.`:`L’adresse ${email} a bien été confirmée.`;
+      view(heading,description);showFeedback(description,'success');
       if(mode==='recoverEmail')content.append(element(doc,'p',{},'Si vous n’êtes pas à l’origine de cette modification, changez également votre mot de passe.'));
       content.append(loginButton());
     }
@@ -293,7 +311,7 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
     const submit=element(doc,'button',{type:'submit'},reset?'Enregistrer mon mot de passe':'Confirmer');form.append(submit);
     const localErrors=element(doc,'div',{'aria-live':'polite'});form.append(localErrors);
     form.addEventListener('submit',async event=>{
-      event.preventDefault();if(busy)return;localErrors.replaceChildren();
+      event.preventDefault();if(busy)return;feedback.hidden=true;localErrors.replaceChildren();
       if(reset&&password.input.value!==confirmation.input.value){localErrors.append(message('Les deux mots de passe ne correspondent pas.'));return;}
       const chosen=reset?password.input.value:undefined;
       if(reset&&(chosen.length<12||chosen.length>128)){localErrors.append(message('Le mot de passe doit comporter de 12 à 128 caractères.'));return;}
@@ -307,6 +325,7 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
 
   function activationSuccess() {
     view('Compte activé', 'Bienvenue sur Fnac Pulse. Votre accès administrateur est activé pour tous les magasins.');
+    showFeedback('Compte activé. Votre accès administrateur est ouvert pour tous les magasins.','success');
     content.append(element(doc,'p',{},'Connectez-vous avec votre adresse e-mail et votre mot de passe.'));
     content.append(element(doc,'p',{},'Si un autre administrateur est connecté sur cet appareil, utilisez votre propre appareil ou une fenêtre privée pour préserver sa session.'));
     content.append(loginButton());action=null;proof=null;activationToken='';
@@ -314,7 +333,9 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
 
   function activationFailure(error) {
     const retryable=['NETWORK','TIMEOUT','WORKER_UNAVAILABLE'].includes(error?.code);
-    view('Activation non confirmée',describeActionError(error,{applying:true}));
+    const description=describeActionError(error,{applying:true});
+    view('Activation non confirmée',description);
+    showFeedback(`Activation non confirmée. ${description}`,'error',retryable&&activationToken?'Réessayer':'',retryable&&activationToken?activate:null);
     if(retryable&&activationToken){const retry=button('Réessayer');retry.addEventListener('click',activate);content.append(retry);}
     content.append(element(doc,'p',{},'Votre mot de passe a pu être enregistré. Essayez aussi de vous connecter avec votre adresse et ce mot de passe.'));
     content.append(loginButton());
@@ -348,7 +369,7 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
     const submit=element(doc,'button',{type:'submit'},'Activer mon compte'),errors=element(doc,'div',{'aria-live':'polite'});
     form.append(submit,errors);
     form.addEventListener('submit',async event=>{
-      event.preventDefault();if(busy)return;errors.replaceChildren();
+      event.preventDefault();if(busy)return;feedback.hidden=true;errors.replaceChildren();
       const chosen=password.input.value;
       if(!existing&&(chosen.length<12||chosen.length>128)){errors.append(message('Le mot de passe doit comporter de 12 à 128 caractères.'));return;}
       if(!existing&&chosen!==confirm.input.value){errors.append(message('Les deux mots de passe ne correspondent pas.'));return;}
@@ -361,7 +382,7 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
       } catch(error){
         password.input.value='';if(confirm)confirm.input.value='';
         if((existing&&['INVALID_PASSWORD','INVALID_LOGIN_CREDENTIALS','EMAIL_NOT_FOUND'].includes(error?.code))||(!existing&&!changed&&error?.code==='WEAK_PASSWORD'))errors.append(message(describeActionError(error)));
-        else if(changed||!existing){view('Mot de passe non confirmé', 'Il a peut-être été enregistré. Essayez de vous connecter avec ce mot de passe avant de demander un nouveau lien.');content.append(loginButton());}
+        else if(changed||!existing){const description='Il a peut-être été enregistré. Essayez de vous connecter avec ce mot de passe avant de demander un nouveau lien.';view('Mot de passe non confirmé',description);showFeedback(`Mot de passe non confirmé. ${description}`);content.append(loginButton());}
         else errors.append(message(describeActionError(error)));
       } finally{busy=false;submit.disabled=false;submit.textContent='Activer mon compte';}
     });
@@ -371,6 +392,7 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
 
   function existingAccountChoice() {
     view('Bienvenue', 'Un compte existe déjà pour cette adresse. Choisissez comment continuer.');
+    showFeedback('Un compte existe déjà pour cette adresse. Choisissez comment continuer.','success');
     const keep=button('Utiliser mon mot de passe'),create=button('Créer ou remplacer mon mot de passe',true);
     keep.addEventListener('click',()=>passwordForm({existing:true}));create.addEventListener('click',()=>passwordForm());
     content.append(keep,create);
@@ -386,13 +408,13 @@ export function mountEmailAction({win=window,doc=document,fetchImpl=globalThis.f
     form.append(element(doc,'p',{},'Utiliser ce lien avec un compte existant peut fermer ses autres sessions. Si ce compte n’est pas vérifié, Firebase peut aussi supprimer son ancien mot de passe.'));
     form.append(submit,errors);
     form.addEventListener('submit',async event=>{
-      event.preventDefault();if(busy)return;errors.replaceChildren();const email=address.input.value.trim().toLowerCase();
+      event.preventDefault();if(busy)return;feedback.hidden=true;errors.replaceChildren();const email=address.input.value.trim().toLowerCase();
       if(!EMAIL.test(email)||email.length>254){errors.append(message('Indiquez l’adresse e-mail qui a reçu l’invitation.'));return;}
       busy=true;submit.disabled=true;submit.textContent='Vérification…';
       try {proof=await signInActivation(action,email,safeOptions);action.code='';if(proof.isNewUser)passwordForm();else existingAccountChoice();}
       catch(error){
         if(['INVALID_OOB_CODE','EXPIRED_OOB_CODE','USER_DISABLED','USER_NOT_FOUND','INVALID_LINK'].includes(error?.code))showError(error,{applying:true});
-        else if(['NETWORK','TIMEOUT'].includes(error?.code)){view('Lien non confirmé','Le lien a peut-être été utilisé. Demandez une nouvelle invitation à votre administrateur, ou connectez-vous si vous possédez déjà un mot de passe.');content.append(loginButton());}
+        else if(['NETWORK','TIMEOUT'].includes(error?.code)){const description='Le lien a peut-être été utilisé. Demandez une nouvelle invitation à votre administrateur, ou connectez-vous si vous possédez déjà un mot de passe.';view('Lien non confirmé',description);showFeedback(`Lien non confirmé. ${description}`);content.append(loginButton());}
         else errors.append(message(describeActionError(error)));
       } finally{busy=false;submit.disabled=false;submit.textContent='Continuer';}
     });
