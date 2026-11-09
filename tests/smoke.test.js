@@ -30,6 +30,12 @@ async function start(port,folder=temp) {
   return child;
 }
 async function stop(child) {if(child.exitCode===null){child.kill('SIGTERM');await once(child,'exit');}}
+// Installer une situation historique fictive préexistante, sans passer par les
+// API désormais verrouillées et sans modifier de base réelle.
+function historicalDepartment(folder,sellerId,departmentId) {
+  const db=new Database(path.join(folder,'pulse.sqlite'));
+  try {db.prepare('UPDATE sellers SET department_id=? WHERE id=?').run(departmentId,sellerId);}finally{db.close();}
+}
 
 test('API Fnac Pulse : saisie, isolation, administration, push et persistance',async t=>{
   const port=await freePort();const url=`http://127.0.0.1:${port}`;let server=await start(port);
@@ -148,7 +154,8 @@ test('SQLite départements : isolation, objectifs agrégés, transfert et persis
     const created=await request('/api/admin/departments','POST',{storeId:store,name:'Photo'},token);assert.equal(created.status,201);
     assert.equal((await request(`/api/admin/departments/${created.body.id}`,'PATCH',{storeId:store,name:'Image'},token)).status,200);
     assert.equal((await request('/api/admin/departments','POST',{storeId:store,name:'image'},token)).status,409);
-    assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:store,departmentId:'editorial'},token)).status,200);
+    assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:store,departmentId:'editorial'},token)).status,409);
+    historicalDepartment(folder,two,'editorial');
     assert.equal((await request('/api/admin/departments/editorial','PATCH',{storeId:store,active:false},token)).status,409);
     assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:other,departmentId:'cash'},token)).status,400);
     for(const [sellerId,month] of [[one,12],[two,24]])assert.equal((await request('/api/admin/goals','POST',{storeId:store,sellerId,serviceId:service,values:{day:null,week:null,month},revision:null},token)).status,200);
@@ -162,7 +169,10 @@ test('SQLite départements : isolation, objectifs agrégés, transfert et persis
     let editorial=(await request(`/api/bootstrap?storeId=${store}&sellerId=${two}`)).body.stats;
     assert.equal(tech.day.total,1);assert.equal(editorial.day.total,1);assert.equal(tech.summary.store.day.total,2);
     assert.equal(tech.activity[0].sellerId,one);assert.equal(editorial.activity[0].sellerId,two);
-    assert.equal((await request(`/api/admin/entities/sellers/${one}`,'PATCH',{storeId:store,departmentId:'editorial'},token)).status,200);
+    assert.equal((await request(`/api/admin/entities/sellers/${one}`,'PATCH',{storeId:store,departmentId:'editorial'},token)).status,409);
+    // Une ancienne réaffectation simulée vérifie que les ventes existantes
+    // et leur département d'origine restent correctement comptabilisés.
+    historicalDepartment(folder,one,'editorial');
     assert.equal((await request('/api/sales/remove','POST',{storeId:store,sellerId:one,serviceId:service})).status,409);
     assert.equal((await request('/api/sales','POST',{storeId:store,sellerId:one,serviceId:service,requestId:'local-moved-sale-001'})).status,201);
     editorial=(await request(`/api/bootstrap?storeId=${store}&sellerId=${one}`)).body.stats;
@@ -233,7 +243,8 @@ test('SQLite reset ventes : confirmation, toutes dates, isolation et reprise san
     const [one,two]=data.sellers.slice(0,2).map(x=>x.id),service=data.services[0].id;
     const admin=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
     const otherSeller=(await request('/api/admin/entities/sellers','POST',{name:'Autre équipe',storeId:other},admin)).body.id;
-    assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:store,departmentId:'editorial'},admin)).status,200);
+    assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:store,departmentId:'editorial'},admin)).status,409);
+    historicalDepartment(folder,two,'editorial');
     assert.equal((await request('/api/admin/goals','POST',{storeId:store,sellerId:one,serviceId:service,values:{day:null,week:null,month:25},revision:null},admin)).status,200);
     const old={storeId:store,sellerId:one,serviceId:service,requestId:'sqlite-old-sale-01'};
     assert.equal((await request('/api/sales','POST',old)).status,201);
@@ -277,7 +288,8 @@ test('SQLite reset objectifs : département isolé, objectifs non renseignés, r
     const [one,two,archived]=data.sellers.slice(0,3).map(x=>x.id),service=data.services[0].id,service2=data.services[1].id;
     const token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
     const otherSeller=(await request('/api/admin/entities/sellers','POST',{name:'Autre équipe',storeId:other},token)).body.id;
-    assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:store,departmentId:'editorial'},token)).status,200);
+    assert.equal((await request(`/api/admin/entities/sellers/${two}`,'PATCH',{storeId:store,departmentId:'editorial'},token)).status,409);
+    historicalDepartment(folder,two,'editorial');
     const save=(sellerId,serviceId=service,storeId=store,month=20)=>request('/api/admin/goals','POST',{storeId,sellerId,serviceId,values:{day:null,week:null,month},revision:null},token);
     for(const id of [one,two,archived])assert.equal((await save(id)).status,200);
     assert.equal((await save(one,service2,store,0)).status,200);assert.equal((await save(otherSeller,service,other,35)).status,200);
@@ -470,7 +482,7 @@ test('SQLite : ajout historique atomique, département et service archivés, rej
     db.prepare('INSERT INTO seller_goals(store_id,seller_id,service_id,day,week,month,revision) VALUES (?,?,?,?,?,?,?)').run(store.id,seller.id,service.id,4,12,32,'revision-test');
     db.prepare('INSERT INTO departments(store_id,id,name,active,sort_order) VALUES (?,?,?,?,?)').run(store.id,'tech','Produits Techniques',1,0);
     db.prepare('INSERT INTO departments(store_id,id,name,active,sort_order) VALUES (?,?,?,?,?)').run(store.id,'editorial','Ancien département',0,1);
-    db.prepare('UPDATE sellers SET active=0 WHERE id=?').run(seller.id);db.prepare('UPDATE services SET active=0 WHERE id=?').run(service.id);
+    db.prepare("UPDATE sellers SET active=0,department_id='editorial' WHERE id=?").run(seller.id);db.prepare('UPDATE services SET active=0 WHERE id=?').run(service.id);
     const goal=db.prepare('SELECT * FROM seller_goals').get();
     const body={storeId:store.id,sellerId:seller.id,period:'day',anchor:'2026-10-13',saleDate:'2026-10-13',serviceId:service.id,departmentId:'editorial',quantity:3,requestId:'sqlite-history-add-0001',confirmation:'AJOUTER',expectedSellerName:seller.name,expectedStoreName:store.name,expectedServiceName:service.name,expectedDepartmentName:'Ancien département'};
     const route='/api/admin/sales/add-correction';assert.equal((await request(route,'POST',body)).status,401);
@@ -479,6 +491,7 @@ test('SQLite : ajout historique atomique, département et service archivés, rej
       assert.equal((await request(route,'POST',{...body,...invalid},token)).status,400,JSON.stringify(invalid));
     for(const changed of [{storeId:other.id},{sellerId:99999},{serviceId:99999},{departmentId:'missing'},{expectedDepartmentName:'Incorrect'},{expectedServiceName:'Incorrect'}])
       assert.equal((await request(route,'POST',{...body,...changed},token)).status,409,JSON.stringify(changed));
+    assert.equal((await request(route,'POST',{...body,departmentId:'tech',expectedDepartmentName:'Produits Techniques'},token)).status,409);
     const [one,two]=await Promise.all([request(route,'POST',body,token),request(route,'POST',body,token)]);
     assert.equal(one.status,200);assert.equal(two.status,200);assert.deepEqual([one.value.duplicate,two.value.duplicate].sort(),[false,true]);
     const rows=db.prepare('SELECT * FROM sales WHERE store_id=?').all(store.id);assert.equal(rows.length,3);
@@ -517,5 +530,33 @@ test('SQLite : anciens marqueurs semaine et mois rejouables sans écriture',asyn
       assert.equal((await request('/api/admin/sales/correct','POST',{...removal,requestId:`sqlite-new-remove-${period}`},token)).status,400);
       assert.deepEqual(db.prepare('SELECT * FROM sales').all(),before,'aucune vente modifiée');
     }
+  } finally {db?.close();await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
+});
+
+test('SQLite : migration sans minimum rétroactif, plancher serveur et changement de période',async()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'fnac-goal-minimum-')),port=await freePort(),url=`http://127.0.0.1:${port}`;let server=await start(port,folder),db;
+  const request=async(route,method='GET',body,token)=>{const r=await fetch(url+route,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,value:await r.json()};};
+  try {
+    const base=(await request('/api/bootstrap')).value,store=LEGACY_STORE_ID,seller=base.sellers[0].id,service=base.services[0].id;
+    db=new Database(path.join(folder,'pulse.sqlite'));
+    db.prepare('INSERT INTO seller_goals(store_id,seller_id,service_id,day,week,month,revision) VALUES (?,?,?,?,?,?,?)').run(store,seller,service,4,12,30,'ancien-objectif-001');
+    await stop(server);
+    db.exec('ALTER TABLE seller_goals DROP COLUMN minimum; ALTER TABLE seller_goals DROP COLUMN personal;');db.close();db=null;
+    server=await start(port,folder);
+    const token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).value.token;
+    const get=async()=>(await request(`/api/goals?storeId=${store}&sellerId=${seller}`)).value.goals[`s${service}`];
+    let entry=await get();assert.equal(entry.month,30);assert.equal(entry.minimum,undefined);assert.equal(entry.revision,'ancien-objectif-001');
+    const body={storeId:store,sellerId:seller,serviceId:service},month=n=>({day:null,week:null,month:n}),week=n=>({day:null,week:n,month:null});
+    const personal=(values,revision)=>request('/api/goals','POST',{...body,values,revision});
+    const admin=(values,revision)=>request('/api/admin/goals','POST',{...body,values,revision},token);
+    let result=await personal(month(25),entry.revision);assert.equal(result.status,200);entry=result.value.goals[`s${service}`];assert.equal(entry.minimum,undefined);
+    result=await admin(month(20),entry.revision);assert.equal(result.status,200);entry=result.value.goals[`s${service}`];assert.equal(entry.month,25);assert.equal(entry.minimum.amount,20);
+    assert.equal((await personal(month(19),entry.revision)).status,403);assert.equal((await personal(week(999),entry.revision)).status,403);
+    result=await personal(month(50),entry.revision);entry=result.value.goals[`s${service}`];assert.equal(entry.month,50);
+    result=await admin(month(60),entry.revision);entry=result.value.goals[`s${service}`];assert.equal(entry.month,60);
+    result=await admin(month(20),entry.revision);entry=result.value.goals[`s${service}`];assert.equal(entry.month,50);
+    result=await admin(week(8),entry.revision);entry=result.value.goals[`s${service}`];assert.equal(entry.minimum.period,'week');
+    assert.equal((await personal(month(9999),entry.revision)).status,403);
+    assert.equal((await personal(week(8),entry.revision)).status,200);
   } finally {db?.close();await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
 });

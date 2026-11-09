@@ -520,7 +520,7 @@ export function listenStore(session,day,clientId,onChange,onSale,onError,onGoals
     }
   };
   let goalRevision=Symbol('premier chargement'),summaryRevision=Symbol('premier chargement'),catalogSignature='';
-  const emit=()=>{if(catalogReady&&salesReady&&resetReady){const scoped={...catalog,services:orderServices(catalog.services,catalog.serviceOrders,session.storeId)};const current=sales.filter(sale=>saleInGeneration(sale,generation));onChange({...presentation(scoped,session.storeId),today:day,stats:summarize(scoped,current,session.sellerId,day,session.storeId)},!(catalogCache||salesCache||resetCache));}};
+  const emit=()=>{if(catalogReady&&salesReady&&resetReady){const scoped={...catalog,services:orderServices(catalog.services,catalog.serviceOrders,session.storeId)};const current=sales.filter(sale=>saleInGeneration(sale,generation));onChange({...presentation(scoped,session.storeId),today:day,stats:summarize(scoped,current,session.sellerId,day,session.storeId)},!(catalogCache||salesCache||resetCache),{catalog:scoped,sales:current,generation});}};
   const stopAccess=onSnapshot(doc(db,'pulseStatus',session.uid),{includeMetadataChanges:true},snap=>{
     if(snap.metadata.fromCache)return;
     const access=snap.data();

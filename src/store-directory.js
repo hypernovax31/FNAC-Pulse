@@ -29,7 +29,9 @@ export function searchStores(stores,query) {
     .replace(/[^\p{L}\p{N}]+/gu,' ').trim();
   const terms=fold(query).split(/\s+/).filter(Boolean);
   return (stores||[]).filter(store=>{
-    const haystack=fold([store.name,...(Array.isArray(store.previousNames)?store.previousNames:[]),store.city,store.address].filter(Boolean).join(' '));
+    // Les adresses ne sont pas affichées dans le sélecteur : « Pau » ne doit
+    // pas faire apparaître Melun parce que sa rue s'appelle Paul Doumer.
+    const haystack=fold([store.name,...(Array.isArray(store.previousNames)?store.previousNames:[]),store.city].filter(Boolean).join(' '));
     return terms.every(term=>haystack.includes(term));
   });
 }

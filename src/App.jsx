@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Target, Zap, Trophy, ChartNoAxesCombined, Settings2, MapPin, ChevronDown, ChevronRight, ArrowRight,
   Activity, Bell, BellOff, Plus, Minus, UserRound, UsersRound, Sparkles, Crosshair, CalendarDays,
@@ -8,7 +8,7 @@ import {
 import Admin, { Modal } from './Admin';
 import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
 import { CLOUD, observeVendor, sellerLogin, sellerChoosePin, sellerMigratePin, sellerRegister, sellerLogout, listenStore, prepareFcm, subscribeFcm, unsubscribeFcm, notificationsWanted } from './cloud';
-import { parisToday } from './cloud-stats';
+import { parisToday, summarize } from './cloud-stats';
 import { sellerStoreId } from './catalog';
 import { displayStoreName, isSelectableStore, storeSelectionGroups } from './store-directory.js';
 import { StoreSearch } from './StoreSearch';
@@ -29,6 +29,7 @@ import { GoalForm, GoalsPanel } from './Goals';
 import { todayBreakdown } from './today-breakdown.js';
 import { normalizeWorkdays } from './goals.js';
 import { saleMessage } from './sale-message';
+import { readPendingSales, savePendingSales } from './sale-pending.js';
 import { isStandalone, installPlatform, notificationBanner } from './install.js';
 import { InstallDialog, NotificationsDialog } from './PwaDialogs';
 
@@ -201,7 +202,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
     {CLOUD&&mode==='loading'&&<p className="pin-status" role="status">Vérification de votre profil…</p>}
     {CLOUD&&mode==='error'&&<div className="profile-status-error" role="alert"><span>{statusError}</span><button type="button" className="text-button" onClick={()=>{clearSecrets();onRefreshProfile?.();setStatusRetry(x=>x+1);}}>Vérifier à nouveau</button></div>}
     {setup&&<div className="pin-setup">
-      <div className="pin-setup-intro"><ShieldCheck size={19}/><div><strong>{mode==='migrate'?'Passez à un PIN de 4 chiffres':mode==='register'?'Créez votre profil':'Première connexion : choisissez votre PIN'}</strong><p>{mode==='migrate'?'Saisissez votre ancien PIN à 8 chiffres, puis choisissez votre nouveau code à 4 chiffres. Vos données restent intactes.':mode==='register'?'Votre prénom sera enregistré dans le magasin et le département choisis. Choisissez un PIN personnel de 4 chiffres.':'Choisissez un code personnel de 4 chiffres. Il sera demandé après une déconnexion.'}</p></div></div>
+      <div className="pin-setup-intro"><ShieldCheck size={19}/><div><strong>{mode==='migrate'?'Passez à un PIN de 4 chiffres':mode==='register'?'Créez votre profil':'Première connexion : choisissez votre PIN'}</strong><p>{mode==='migrate'?'Saisissez votre ancien PIN à 8 chiffres, puis choisissez votre nouveau code à 4 chiffres. Vos données restent intactes.':mode==='register'?'Votre prénom sera enregistré dans le magasin et le département choisis. Vérifiez votre département : il ne pourra plus être modifié après la création. Choisissez un PIN personnel de 4 chiffres.':'Choisissez un code personnel de 4 chiffres. Il sera demandé après une déconnexion.'}</p></div></div>
       {mode==='migrate'&&<label className="pin-setup-code"><span className="form-label">ANCIEN PIN À 8 CHIFFRES</span><input className="text-input" aria-label="Ancien code PIN à 8 chiffres" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label>}
       <div className="pin-setup-fields"><label><span className="form-label">VOTRE PIN À 4 CHIFFRES</span><input className="text-input" aria-label="Votre nouveau code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4}" maxLength={4} placeholder="4 chiffres" value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label><label><span className="form-label">CONFIRMER LE PIN</span><input className="text-input" aria-label="Confirmer votre code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4}" maxLength={4} placeholder="4 chiffres" value={confirmPin} onChange={e=>setConfirmPin(e.target.value.replace(/\D/g,''))} disabled={formBusy} required/></label></div>
       {mode==='register'&&needsRegionalConsent&&<label className="regional-consent"><input type="checkbox" checked={regionalConsent} onChange={e=>setRegionalConsent(e.target.checked)} disabled={formBusy}/><span>Je comprends que les bilans et notifications peuvent être partagés avec d’autres points de cette région.</span></label>}
@@ -277,20 +278,20 @@ function TodayDetails({scope,stats,services,date,department,offline,onClose}) {
     {offline&&<p className="today-detail-offline">Dernières données disponibles · en attente de connexion.</p>}
   </Modal>;
 }
-function ServiceCard({service,index,count,session,pending,onAdd,onRemove}) {
+function ServiceCard({service,index,count,session,pending,uncertain=false,provisional=0,onAdd,onRemove}) {
   const iconKey=serviceIconKey(service),Icon=icons[iconKey]||MoreHorizontal,countId=`service-count-${service.id}`;
   return <article className={`service-card${pending?' is-pending':''}`}>
-    <button type="button" className="service-add" onClick={()=>onAdd(service)} disabled={pending} aria-busy={!!pending} aria-label={`Ajouter une vente ${service.name}`} aria-describedby={countId}>
-      <span className="service-card-top"><span className={`service-icon ${iconColors[index%iconColors.length]}`} data-service-icon={iconKey} aria-hidden="true"><Icon size={20} strokeWidth={1.8}/></span></span>
-      <strong className="service-card-name">{service.name}</strong><span className="service-add-label"><Plus size={13} strokeWidth={2.7} aria-hidden="true"/>{pending?'Un instant…':'Ajouter'}</span>
+    <button type="button" className="service-add" onClick={()=>onAdd(service)} disabled={pending} aria-busy={!!pending} aria-label={`${uncertain?'Vérifier l’envoi':'Ajouter une vente'} ${service.name}`} aria-describedby={countId}>
+      <span className="service-card-top"><span className={`service-icon ${iconColors[index%iconColors.length]}`} data-service-icon={iconKey} aria-hidden="true"><Icon size={20} strokeWidth={1.8}/></span><span className="service-add-indicator" aria-hidden="true"><Plus size={17} strokeWidth={2.7}/></span></span>
+      <strong className="service-card-name">{service.name}</strong><span className="service-add-label"><Plus size={13} strokeWidth={2.7} aria-hidden="true"/>{pending?'Envoi…':uncertain?'Vérifier l’envoi':'Ajouter une vente'}</span>
     </button>
-    <div className="service-card-footer"><span id={countId}>{session?`${count} aujourd’hui`:'Profil à choisir'}</span><button type="button" className="minus-button" onClick={()=>onRemove(service)} disabled={pending||!session||count<=0} title={!session?'Choisissez votre profil':count<=0?'Aucune vente à retirer':`Retirer une vente ${service.name}`} aria-label={`Retirer une vente ${service.name}`} aria-describedby={countId}><Minus size={19} strokeWidth={2.5} aria-hidden="true"/></button></div>
+    <div className="service-card-footer"><span id={countId}>{session?`${count} aujourd’hui`:'Profil à choisir'}{provisional>0&&<small className="service-sync">{provisional} en cours</small>}</span><button type="button" className="minus-button" onClick={()=>onRemove(service)} disabled={pending||uncertain||!session||count<=0} title={uncertain?'Vérifiez d’abord la vente non confirmée':!session?'Choisissez votre profil':count<=0?'Aucune vente à retirer':`Retirer une vente ${service.name}`} aria-label={`Retirer une vente ${service.name}`} aria-describedby={countId}><Minus size={19} strokeWidth={2.5} aria-hidden="true"/></button></div>
   </article>;
 }
 function Ranking({leaders,hasSession}) {
   return <section className="panel ranking-panel" id="ranking"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> LES PERFORMANCES</div><h2>Top de l’équipe</h2><p>Les vendeurs à l’honneur aujourd’hui.</p></div><span className="panel-icon gold"><Trophy size={18}/></span></div>
     {leaders?.length>0 ? <div className="ranking-list">{leaders.map((leader,i)=><div className="ranking-row" key={leader.id}><span className={`rank-number rank-${i+1}`}>{String(i+1).padStart(2,'0')}</span><Avatar name={leader.name} id={leader.id}/><div className="rank-name"><strong>{leader.name}</strong><span>{i===0?'En tête du classement':i===1?'Sur la deuxième marche':'Sur le podium'}</span></div><div className="rank-total"><strong>{leader.count}</strong><span>{leader.count>1?'ventes':'vente'}</span></div></div>)}</div> : <div className="ranking-empty"><div className="empty-podium"><div className="podium-circle">1</div><div className="podium-circle">2</div><div className="podium-circle">3</div></div><strong>{hasSession?'À vous de jouer !':'Le podium vous attend'}</strong><p>{hasSession?'Les premières ventes feront apparaître le classement.':'Sélectionnez votre espace pour voir le classement.'}</p></div>}
-    <div className="ranking-footer"><Dot/> {hasSession?'En direct · Égalités : DMax, puis FVD':'Classement disponible après sélection'}</div>
+    <div className="ranking-footer">En cas d’égalité : Nb de DMAX, puis Nb de FVD</div>
   </section>;
 }
 function ActivityRow({item}) {
@@ -391,6 +392,8 @@ export default function App() {
   const [notificationCheckedKey,setNotificationCheckedKey]=useState('');
   const [notificationBusy,setNotificationBusy]=useState(false);
   const [pending,setPending]=useState({});
+  const [liveSnapshot,setLiveSnapshot]=useState(null),[optimisticSales,setOptimisticSales]=useState([]);
+  const [saleRetries,setSaleRetries]=useState(()=>CLOUD?readPendingSales():[]),saleRetriesRef=useRef(saleRetries),observedSnapshot=useRef(null);
   const [toast,setToast]=useState(null);
   const [soundNotice,setSoundNotice]=useState(null);
   const toastSequence=useRef(0),soundNoticeSequence=useRef(0);
@@ -413,6 +416,18 @@ export default function App() {
   const summaryKey=owner?JSON.stringify([owner,cloudDay]):'',summaryKeyRef=useRef(summaryKey);summaryKeyRef.current=summaryKey;
   const currentGoals=goalState.owner===owner?goalState.goals:null;
   const currentSummary=summaryState.key===summaryKey?summaryState.data:null;
+  // Les nombres incluent aussitôt les ventes en cours, signalées comme telles.
+  // L'identifiant du commit élimine toute double comptabilisation dès que
+  // l'instantané Firestore arrive, même avant la réponse HTTP.
+  const currentRetries=saleRetries.filter(item=>item.owner===owner&&item.day===cloudDay);
+  const provisional=useMemo(()=>optimisticSales.filter(item=>item.owner===owner&&item.day===cloudDay),[optimisticSales,owner,cloudDay]);
+  const projectedStats=useMemo(()=>{
+    const snap=liveSnapshot;
+    if(!CLOUD||!session||!snap||snap.owner!==owner||snap.day!==cloudDay||!provisional.length)return data?.stats;
+    const ids=new Set(snap.sales.map(s=>s.id));
+    const pending=provisional.filter(item=>item.generation===snap.generation&&!ids.has(item.sale.id)).map(item=>item.sale);
+    return pending.length?summarize(snap.catalog,[...snap.sales,...pending],session.sellerId,cloudDay,session.storeId):data?.stats;
+  },[session,liveSnapshot,provisional,owner,cloudDay,data?.stats]);
 
   useEffect(()=>{
     applyTheme(theme);
@@ -570,6 +585,7 @@ export default function App() {
     initialize();return ()=>{cancelled=true;clearTimeout(timer);};
   },[]);
   useEffect(()=>{setTodayDetail(null);},[session?.storeId,session?.sellerId]);
+  useEffect(()=>{setOptimisticSales(items=>items.filter(item=>item.owner===owner&&item.day===cloudDay));},[owner,cloudDay]);
   useEffect(()=>{if(!CLOUD)return;return observeVendor(next=>{
     if(next){const profile=saveDeviceProfile(next);if(profile)setDeviceProfile(profile);}
     setSession(next);setAuthReady(true);if(!next)localStorage.removeItem(SESSION_KEY);
@@ -577,8 +593,18 @@ export default function App() {
   useEffect(()=>{refresh();},[refresh]);
   useEffect(()=>{
     if(!CLOUD||!session||!authReady)return;
-    return listenStore(session,cloudDay,clientId.current,(next,live)=>{
+    const snapshotOwner=goalOwnerKey(session);
+    return listenStore(session,cloudDay,clientId.current,(next,live,snapshot)=>{
       setData(next);setLoadFailed(false);setConnection(live?'live':'offline');
+      if(snapshot?.catalog&&Array.isArray(snapshot.sales)) {
+        const ids=new Set(snapshot.sales.map(s=>s.id));
+        const person=snapshot.catalog.sellers.find(s=>Number(s.id)===Number(session.sellerId)&&sellerStoreId(s)===session.storeId);
+        observedSnapshot.current={owner:snapshotOwner,day:cloudDay,generation:snapshot.generation,live,sales:snapshot.sales};
+        setLiveSnapshot({...snapshot,owner:snapshotOwner,day:cloudDay});
+        if(live)updateSaleRetries(items=>items.filter(item=>item.owner!==snapshotOwner||item.day!==cloudDay||!ids.has(item.requestId)));
+        setOptimisticSales(items=>items.filter(item=>item.owner!==snapshotOwner||
+          (item.day===cloudDay&&item.generation===snapshot.generation&&!ids.has(item.sale.id)&&person&&sellerDepartmentId(person)===item.sale.departmentId)));
+      }
       try{localStorage.setItem(CACHE_KEY,JSON.stringify({data:next,session}));}catch{}
     },announceSale,error=>{
       setConnection('offline');
@@ -771,27 +797,81 @@ export default function App() {
       return result;
     } catch(e){if(e.status===409)await loadGoals();throw e;}
   }
+  function updateSaleRetries(change) {
+    const before=saleRetriesRef.current,after=change(before);
+    if(after.length===before.length&&after.every((item,i)=>item===before[i]))return;
+    saleRetriesRef.current=after;setSaleRetries(after);savePendingSales(after);
+  }
+  function forgetSaleRetry(id) {updateSaleRetries(items=>items.filter(item=>item.requestId!==id));}
   async function addSale(service){
     if(!session){flash('Choisissez d’abord votre magasin et votre profil.',{tone:'warning'});changeSession();return;}
-    if(connection==='offline'){flash('Connexion interrompue : la vente n’a pas été enregistrée.',{tone:'warning'});return;}
-    if(pendingRef.current.has(service.id))return;
-    pendingRef.current.add(service.id);setPending(p=>({...p,[service.id]:true}));
-    try {
-      const result=await api('/api/sales',{method:'POST',body:{...session,serviceId:service.id,requestId:uid(),clientId:clientId.current,...(CLOUD?{originTokenId:readPushOrigin()}: {})}});
-      await refresh();
-      // Simple confirmation locale avec possibilité d'annuler, pas une alerte.
+    if(connection==='offline'){flash('Connexion interrompue : aucune nouvelle vente n’a été envoyée.',{tone:'warning'});return;}
+    const targetOwner=goalOwnerKey(session),pendingKey=`${targetOwner}:${service.id}`,day=parisToday();
+    if(pendingRef.current.has(pendingKey))return;
+    if(CLOUD&&(!liveSnapshot||liveSnapshot.owner!==targetOwner||liveSnapshot.day!==day||connection!=='live')) {
+      if(day!==cloudDay)setCloudDay(day);
+      flash('Synchronisation en cours. Réessayez dès que votre espace est à jour.',{tone:'warning'});return;
+    }
+    const previous=CLOUD?saleRetriesRef.current.find(item=>item.owner===targetOwner&&item.day===day&&item.serviceId===Number(service.id)):null;
+    const requestId=previous?.requestId||uid(),generation=previous?.generation??liveSnapshot?.generation??'';
+    const record=previous||{owner:targetOwner,day,storeId:session.storeId,sellerId:Number(session.sellerId),serviceId:Number(service.id),departmentId:activeDepartmentId,
+      requestId,clientId:clientId.current,originTokenId:CLOUD?(readPushOrigin()||''):'',generation};
+    const body={...session,serviceId:record.serviceId,requestId,clientId:record.clientId,
+      ...(CLOUD?{originTokenId:record.originTokenId,expectedGeneration:record.generation,expectedDepartmentId:record.departmentId,expectedDate:record.day}:{})};
+    pendingRef.current.add(pendingKey);setPending(p=>({...p,[pendingKey]:true}));
+    if(CLOUD) {
+      // Persister avant l'envoi : après interruption, le bouton reprend le même
+      // identifiant et ne peut pas créer une deuxième vente par inadvertance.
+      updateSaleRetries(items=>previous?items:[...items,record]);
+      if(activeDepartmentId&&record.departmentId===activeDepartmentId&&generation===liveSnapshot.generation) {
+        const sale={id:requestId,storeId:session.storeId,sellerId:Number(session.sellerId),departmentId:activeDepartmentId,
+          serviceId:Number(service.id),createdAt:new Date().toISOString(),businessDate:day,deletedAt:null,source:'pending'};
+        setOptimisticSales(items=>[...items.filter(item=>item.sale.id!==requestId),{owner:targetOwner,day,generation,sale,status:'sending'}]);
+      }
+    }
+    if(day!==cloudDay)setCloudDay(day);
+    const confirmSale=id=>{
+      if(ownerRef.current!==targetOwner)return;
+      const latest=observedSnapshot.current;
+      if(CLOUD&&latest?.owner===targetOwner&&latest.live&&latest.generation!==generation) {
+        flash('La vente a croisé une réinitialisation. Vérifiez le bilan avant de recommencer.',{tone:'warning'});return;
+      }
+      if(CLOUD&&latest?.owner===targetOwner&&latest.live&&latest.sales.some(s=>s.id===requestId&&s.deletedAt)){
+        flash('Cette vente a déjà été retirée. Vérifiez le bilan.',{tone:'warning'});return;
+      }
       flash('Vente enregistrée.',{tone:'success',actionLabel:'Annuler',action:async()=>{
-        try {await api(`/api/sales/${result.id}`,{method:'DELETE',body:session});await refresh();flash('Vente annulée.');}
-        catch(e){flash(e.message,{tone:'warning'});}
+        try {await api(`/api/sales/${id}`,{method:'DELETE',body:session});setOptimisticSales(items=>items.filter(item=>item.sale.id!==requestId));if(!CLOUD)void refresh();if(ownerRef.current===targetOwner)flash('Vente annulée.');}
+        catch(e){if(ownerRef.current===targetOwner)flash(e.message,{tone:'warning'});}
       },duration:8000});
-    } catch(e){flash(e.message,{tone:'warning'});} finally{pendingRef.current.delete(service.id);setPending(p=>({...p,[service.id]:false}));}
+    };
+    try {
+      const result=await api('/api/sales',{method:'POST',body});
+      forgetSaleRetry(requestId);
+      setOptimisticSales(items=>items.map(item=>item.sale.id===requestId?{...item,status:'confirmed'}:item));
+      if(!CLOUD)void refresh();
+      // La confirmation n'apparaît qu'après le commit ; le flux temps réel
+      // actualise déjà les bilans sans attendre un deuxième bootstrap.
+      confirmSale(result.id||requestId);
+    } catch(e){
+      setOptimisticSales(items=>items.filter(item=>item.sale.id!==requestId));
+      const uncertain=!e.status||e.status>=500||e.status===408||e.status===429;
+      if(!uncertain)forgetSaleRetry(requestId);
+      if(ownerRef.current===targetOwner) {
+        const snap=observedSnapshot.current,seen=CLOUD&&snap?.live&&snap.owner===targetOwner&&snap.day===day&&snap.generation===generation&&snap.sales.find(s=>s.id===requestId&&!s.deletedAt);
+        if(uncertain&&seen){forgetSaleRetry(requestId);confirmSale(requestId);}
+        else flash(uncertain?'Résultat non confirmé : touchez « Vérifier l’envoi » pour reprendre sans doublon, ou vérifiez le bilan.':e.message,{tone:'warning'});
+      }
+    } finally {pendingRef.current.delete(pendingKey);setPending(p=>{const next={...p};delete next[pendingKey];return next;});}
   }
   async function removeSale(service){
-    if(!session||pendingRef.current.has(service.id))return;
+    if(!session)return;
+    const targetOwner=goalOwnerKey(session),pendingKey=`${targetOwner}:${service.id}`;
+    if(pendingRef.current.has(pendingKey))return;
+    if(saleRetriesRef.current.some(item=>item.owner===targetOwner&&item.day===parisToday()&&item.serviceId===Number(service.id))){flash('Vérifiez d’abord la vente non confirmée de ce service.',{tone:'warning'});return;}
     if(connection==='offline'){flash('Connexion interrompue : aucune vente n’a été modifiée.',{tone:'warning'});return;}
-    pendingRef.current.add(service.id);setPending(p=>({...p,[service.id]:true}));
-    try{await api('/api/sales/remove',{method:'POST',body:{...session,serviceId:service.id}});await refresh();flash(`Une vente ${service.name} a été retirée.`);}
-    catch(e){flash(e.message,{tone:'warning'});}finally{pendingRef.current.delete(service.id);setPending(p=>({...p,[service.id]:false}));}
+    pendingRef.current.add(pendingKey);setPending(p=>({...p,[pendingKey]:true}));
+    try{const result=await api('/api/sales/remove',{method:'POST',body:{...session,serviceId:service.id}});if(result?.id)setOptimisticSales(items=>items.filter(item=>item.sale.id!==result.id));if(!CLOUD)void refresh();if(ownerRef.current===targetOwner)flash(`Une vente ${service.name} a été retirée.`);}
+    catch(e){if(ownerRef.current===targetOwner)flash(e.message,{tone:'warning'});}finally{pendingRef.current.delete(pendingKey);setPending(p=>{const next={...p};delete next[pendingKey];return next;});}
   }
   async function requestStartupNotifications(){
     if(notificationBusy||notificationStartInFlight.current||!pushAvailable)return;
@@ -887,10 +967,10 @@ export default function App() {
   const sessionDialog=sessionModal&&data&&<Modal title={CLOUD?'Mon profil':'Changer d’espace'} subtitle={CLOUD?'Votre espace sur cet appareil.':'Sélectionnez votre magasin, votre département et votre profil vendeur.'} onClose={()=>setSessionModal(false)}>
     {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button></>:<><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/><p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></>}
   </Modal>;
-  if(startupGate)return <><StartupGate base={APP_BASE} enabled={soundEnabled} ready={startupReady} status={startupStatus} authReady={authReady} hasSession={!!session} profileName={seller?.name} profileContext={[store&&displayStoreName(store),department?.name].filter(Boolean).join(' · ')} profileContent={profileContent} onChangeProfile={()=>setSessionModal(true)} onAdmin={()=>setAdminModal(true)} adminAvailable={!!data} adminPending={adminModal} adminError={loadFailed} onRetry={refresh} onStart={enterStartup} onSound={toggleSound} onContinue={continueWithoutStartupSound}/>{sessionDialog}{adminDialog}</>;
+  if(startupGate)return <><StartupGate base={APP_BASE} ready={startupReady} status={startupStatus} authReady={authReady} hasSession={!!session} profileName={seller?.name} profileContext={[store&&displayStoreName(store),department?.name].filter(Boolean).join(' · ')} profileContent={profileContent} onChangeProfile={()=>setSessionModal(true)} onAdmin={()=>setAdminModal(true)} adminAvailable={!!data} adminPending={adminModal} adminError={loadFailed} onRetry={refresh} onStart={enterStartup} onContinue={continueWithoutStartupSound}/>{sessionDialog}{adminDialog}</>;
   if(startupPermissionsOpen)return <><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div>{adminDialog||<StartupPermissionsDialog platform={platform} permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} authReady={authReady} profileName={seller?.name} profileContent={profileContent} locationStatus={locationStatus} locationFeedback={locationFeedback} onNotification={requestStartupNotifications} onLocation={()=>requestStartupLocation(true)} onClose={closeStartupPermissions}/>}</>;
   if(!data)return <><div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>{!adminModal&&installationDialog}</>;
-  const stats=data.stats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
+  const stats=projectedStats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
   return <><div className="app-shell">
     <Sidebar onNavigate={navigate} onAdmin={()=>setAdminModal(true)} onSession={changeSession} onInstall={openInstall} showInstall={!installed} activeNav={activeNav}/>
     <div className="main-shell"><Header session={session} seller={seller} store={store} connected={connection} notificationsEnabled={displayedEnabled} notificationError={displayedError} notificationUnconfirmed={displayedUnconfirmed} notificationPendingProfile={notificationPendingProfile} notificationPendingError={notificationPendingProfile&&!!startupNotificationError} soundEnabled={soundEnabled} onBell={openNotifications} onSound={toggleSound} onSession={changeSession} onAdmin={()=>setAdminModal(true)} onTheme={()=>setThemeModal(true)} onInstall={openInstall} showInstall={!installed}/>
@@ -900,8 +980,10 @@ export default function App() {
         <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><DateChip today={cloudDay}/></div>
         {!session&&<WelcomePanel data={data} onSubmit={selectSession} deviceProfile={deviceProfile} startupLocation={startupLocation} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>}
         <TodayOverview stats={stats} hasSession={!!session} onShow={setTodayDetail}/>
-        {session&&<GoalsPanel services={data.services} goals={currentGoals} workdays={goalState.workdays} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
-        <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> VENTES QUOTIDIENNES</div><h2>Ajouter un service</h2><p>Une vente de services ? Un clic et c’est enregistré.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[s.id]} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
+        {currentRetries.some(item=>!pending[`${owner}:${item.serviceId}`])&&<p className="sales-retry-status" role="alert">Une vente n’est pas confirmée. Touchez « Vérifier l’envoi » sur le service concerné pour reprendre sans doublon.</p>}
+        {provisional.length>0&&<p className="sales-sync-status" role="status">Mise à jour en cours : les chiffres incluent {provisional.length} {provisional.length>1?'ventes':'vente'} en cours d’enregistrement ou de synchronisation.</p>}
+        <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> VENTES QUOTIDIENNES</div><h2>Ajouter un service</h2><p>Touchez un service pour ajouter une vente.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[`${owner}:${s.id}`]} uncertain={currentRetries.some(item=>item.serviceId===Number(s.id))&&!pending[`${owner}:${s.id}`]} provisional={provisional.filter(item=>Number(item.sale.serviceId)===Number(s.id)).length} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
+          {session&&<GoalsPanel services={data.services} goals={currentGoals} workdays={goalState.workdays} stats={stats} date={data.today} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
           <Summary stats={stats} hasSession={!!session} storeId={session?.storeId} departments={departments} goals={currentSummary} goalsLoading={summaryState.key===summaryKey&&summaryState.loading} goalsError={summaryState.key===summaryKey?summaryState.error:''} onRetry={loadSummaryGoals}/>
         </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/></div></div>
         <footer className="page-footer">La vente, c’est notre rayon. Les services aussi. 😉</footer>

@@ -31,6 +31,7 @@ test('Répartition pondérée : exactitude, zéros et contrôle des entrées',()
  assert.deepEqual(distributeWeighted(7,[1,0,2,1]),[2,0,3,2]);
  assert.deepEqual(distributeWeighted(1,[1,1,1,1,1]),[0,0,1,0,0]);
  assert.deepEqual(distributeWeighted(0,[0,0]),[0,0]);
+ assert.deepEqual(distributeWeighted(Number.MAX_SAFE_INTEGER,[1,2]),[3002399751580330,6004799503160661]);
  assert.throws(()=>distributeWeighted(-1,[1]));assert.throws(()=>distributeWeighted(1,[1,-1]));
  for(let n=1;n<=31;n++)for(const total of [0,1,7,31,9999]) {
   const weights=Array.from({length:n},(_,i)=>i%4);
@@ -53,4 +54,19 @@ test('Récapitulatif : somme mensuelle, répartition selon présences et semaine
  assert(week.every(d=>summaryGoals(sellers,services,departments,d).store.byService.s1.week===sum));
  // Aucune cible individuelle, aucun nom ou planning n'est retourné.
  const serialized=JSON.stringify(result);assert(!serialized.includes('Zoé'));assert(!serialized.includes('workdays'));assert(!serialized.includes('goals'));
+});
+
+test('Récapitulatif : présences multipliées par les poids 6/5/4 et totaux inchangés',()=>{
+ const datesNovember=dates(2026,11),days=[1,2,3,4,5,6];
+ const weight=date=>{const d=new Date(`${date}T12:00:00Z`).getUTCDay();return d===0?0:d===6?6:d===1||d===5?5:4;};
+ const total=datesNovember.reduce((sum,date)=>sum+weight(date),0);
+ const people=[{id:1,name:'Vendeur',active:true,departmentId:'tech',workdays:days,goals:{s1:{month:total}}}];
+ const dept=[{id:'tech',name:'Technique'}],services=[{id:1,name:'DMax'}];
+ assert.deepEqual(datesNovember.map(date=>summaryGoals(people,services,dept,date).store.byService.s1.day),datesNovember.map(weight));
+ assert.equal(summaryGoals(people,services,dept,'2026-11-07').store.byService.s1.day,6);
+ assert.equal(summaryGoals(people,services,dept,'2026-11-06').store.byService.s1.day,5);
+ assert.equal(summaryGoals(people,services,dept,'2026-11-04').store.byService.s1.day,4);
+ const twice=[...people,{id:2,name:'Autre',active:true,departmentId:'tech',workdays:[6],goals:{}}];
+ const a=summaryGoals(twice,services,dept,'2026-11-07').store.byService.s1;
+ assert(a.day>6,'un second vendeur prévu le samedi renforce son poids');assert.equal(a.month,total);
 });

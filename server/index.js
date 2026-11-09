@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LEGACY_STORE_ID, comparePeople, orderServices, servicesForStore } from '../src/catalog.js';
 import { validGoalValues, validWorkdays, normalizeWorkdays } from '../src/goals.js';
+import { updateGoalEntry } from '../src/goal-policy.js';
 import { GOALS_RESET_CONFIRMATION } from '../src/goals-reset.js';
 import { SELLER_DELETE_CONFIRMATION } from '../src/seller-delete.js';
 import { SERVICE_DELETE_CONFIRMATION } from '../src/service-delete.js';
@@ -107,6 +108,9 @@ if (!db.prepare('PRAGMA table_info(sellers)').all().some(c=>c.name==='department
 if (!db.prepare('PRAGMA table_info(sales)').all().some(c=>c.name==='department_id')) db.exec("ALTER TABLE sales ADD COLUMN department_id TEXT NOT NULL DEFAULT 'tech'");
 if (!db.prepare('PRAGMA table_info(stores)').all().some(c=>c.name==='fnac_id')) db.exec('ALTER TABLE stores ADD COLUMN fnac_id TEXT');
 if (!db.prepare('PRAGMA table_info(stores)').all().some(c=>c.name==='directory_status')) db.exec('ALTER TABLE stores ADD COLUMN directory_status TEXT');
+// Colonnes nullables : aucun ancien objectif ne devient un minimum rétroactif.
+if (!db.prepare('PRAGMA table_info(seller_goals)').all().some(c=>c.name==='minimum')) db.exec('ALTER TABLE seller_goals ADD COLUMN minimum TEXT');
+if (!db.prepare('PRAGMA table_info(seller_goals)').all().some(c=>c.name==='personal')) db.exec('ALTER TABLE seller_goals ADD COLUMN personal TEXT');
 
 const getSetting = key => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value;
 const setSetting = (key, value) => db.prepare('INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value);
@@ -305,11 +309,19 @@ app.post('/api/auth/register',(req,res)=>{
   broadcast(null,{kind:'config'});res.json({sellerId:Number(result.lastInsertRowid)});
 });
 
+function localGoalRow(row) {
+  if(!row)return null;
+  const {minimum,personal,...entry}=row;
+  for(const [key,value] of Object.entries({minimum,personal}))if(value!=null) {
+    try{entry[key]=JSON.parse(value);}catch{entry[key]={};} // un minimum illisible reste bloquant
+  }
+  return entry;
+}
 function localGoals(storeId,sellerId) {
-  const rows=db.prepare('SELECT service_id AS serviceId,day,week,month,revision FROM seller_goals WHERE store_id=? AND seller_id=?').all(storeId,Number(sellerId));
+  const rows=db.prepare('SELECT service_id AS serviceId,day,week,month,revision,minimum,personal FROM seller_goals WHERE store_id=? AND seller_id=?').all(storeId,Number(sellerId));
   const schedule=db.prepare('SELECT days,revision FROM seller_workdays WHERE store_id=? AND seller_id=?').get(storeId,Number(sellerId));
   let days;try{days=JSON.parse(schedule?.days||'null');}catch{}
-  return {goals:Object.fromEntries(rows.map(({serviceId,...entry})=>[`s${serviceId}`,entry])),
+  return {goals:Object.fromEntries(rows.map(({serviceId,...entry})=>[`s${serviceId}`,localGoalRow(entry)])),
     workdays:normalizeWorkdays(days),workdaysRevision:schedule?.revision||null};
 }
 function saveLocalGoals(req,res) {
@@ -317,12 +329,18 @@ function saveLocalGoals(req,res) {
   if(!activeStore(storeId)||!activeSeller(sellerId,storeId)||!activeService(serviceId,storeId))return failure(res,'Choisissez un vendeur et un service valides.');
   if(!validGoalValues(values))return failure(res,'Les objectifs doivent être des entiers entre 0 et 9 999, ou être laissés vides.');
   if(revision!==null&&(typeof revision!=='string'||!/^[A-Za-z0-9_-]{8,80}$/.test(revision)))return failure(res,'Actualisez les objectifs avant de les modifier.');
-  const old=db.prepare('SELECT revision FROM seller_goals WHERE store_id=? AND seller_id=? AND service_id=?').get(storeId,Number(sellerId),Number(serviceId));
-  if((old?.revision||null)!==revision)return failure(res,'Cet objectif a changé. Rechargez ses valeurs avant de le modifier.',409);
-  const next=crypto.randomUUID();
-  db.prepare(`INSERT INTO seller_goals(store_id,seller_id,service_id,day,week,month,revision) VALUES (?,?,?,?,?,?,?)
-    ON CONFLICT(store_id,seller_id,service_id) DO UPDATE SET day=excluded.day,week=excluded.week,month=excluded.month,revision=excluded.revision`)
-    .run(storeId,Number(sellerId),Number(serviceId),values.day,values.week,values.month,next);
+  const result=db.transaction(()=>{
+    const old=localGoalRow(db.prepare('SELECT day,week,month,revision,minimum,personal FROM seller_goals WHERE store_id=? AND seller_id=? AND service_id=?').get(storeId,Number(sellerId),Number(serviceId)));
+    if((old?.revision||null)!==revision)return {error:'Cet objectif a changé. Rechargez ses valeurs avant de le modifier.',status:409};
+    let entry;try{entry=updateGoalEntry(old,values,{admin:req.path.startsWith('/api/admin/')});}
+    catch(error){return {error:error.message,status:403};}
+    const next=crypto.randomUUID();
+    db.prepare(`INSERT INTO seller_goals(store_id,seller_id,service_id,day,week,month,revision,minimum,personal) VALUES (?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(store_id,seller_id,service_id) DO UPDATE SET day=excluded.day,week=excluded.week,month=excluded.month,revision=excluded.revision,minimum=excluded.minimum,personal=excluded.personal`)
+      .run(storeId,Number(sellerId),Number(serviceId),entry.day,entry.week,entry.month,next,entry.minimum?JSON.stringify(entry.minimum):null,entry.personal?JSON.stringify(entry.personal):null);
+    return {};
+  })();
+  if(result.error)return failure(res,result.error,result.status);
   broadcast(storeId,{kind:'goals',sellerId:Number(sellerId)});res.json(localGoals(storeId,sellerId));
 }
 app.get('/api/goals',(req,res)=>{
@@ -630,7 +648,7 @@ app.patch('/api/admin/departments/:id',requireAdmin,(req,res)=>{
   const name=typeof req.body?.name==='string'?cleanName(req.body.name):row.name;
   const active=typeof req.body?.active==='boolean'?req.body.active:!!row.active;
   if(!name)return failure(res,'Saisissez le nom du département.');
-  if(!active&&row.active&&db.prepare('SELECT 1 FROM sellers WHERE store_id=? AND department_id=? AND active=1 LIMIT 1').get(storeId,id))return failure(res,'Réaffectez les vendeurs actifs avant d’archiver ce département.',409);
+  if(!active&&row.active&&db.prepare('SELECT 1 FROM sellers WHERE store_id=? AND department_id=? AND active=1 LIMIT 1').get(storeId,id))return failure(res,'Archivez les vendeurs actifs avant d’archiver leur département.',409);
   if(!active&&row.active&&list.filter(d=>d.active).length<=1)return failure(res,'Conservez au moins un département actif.',409);
   if(active&&list.some(d=>d.id!==id&&d.active&&d.name.localeCompare(name,'fr',{sensitivity:'base'})===0))return failure(res,'Ce département existe déjà dans ce magasin.',409);
   db.transaction(()=>{seedLocalDepartments(storeId);db.prepare('UPDATE departments SET name=?,active=? WHERE store_id=? AND id=?').run(name,active?1:0,storeId,id);})();
@@ -660,9 +678,11 @@ app.patch('/api/admin/entities/:kind/:id',requireAdmin,(req,res) => {
   if(table==='sellers'&&req.body?.storeId!==undefined&&req.body.storeId!==row.storeId)return failure(res,'Ce vendeur appartient à un autre magasin.');
   const name=typeof req.body?.name==='string'?cleanName(req.body.name):row.name;
   const active=typeof req.body?.active==='boolean'?req.body.active:!!row.active;
-  const departmentId=table==='sellers'?(req.body?.departmentId??row.department_id??TECH_DEPARTMENT_ID):null;
+  const departmentId=table==='sellers'?(row.department_id||TECH_DEPARTMENT_ID):null;
+  if(table==='sellers'&&req.body?.departmentId!==undefined&&req.body.departmentId!==departmentId)
+    return failure(res,'Le département de ce vendeur ne peut pas être modifié après sa création.',409);
   if(!name)return failure(res,'Saisissez un nom valide.');
-  if(table==='sellers'&&((req.body?.departmentId!==undefined)||active)&&!localDepartments(row.storeId).some(d=>d.id===departmentId))return failure(res,'Réaffectez ce vendeur à un département actif.',409);
+  if(table==='sellers'&&active&&!localDepartments(row.storeId).some(d=>d.id===departmentId))return failure(res,'Restaurez d’abord le département de ce vendeur.',409);
   if(active&&duplicateEntity(table,name,row.storeId,id))return failure(res,'Ce nom existe déjà dans cette liste.',409);
   if(table==='sellers')db.prepare('UPDATE sellers SET name=?,active=?,department_id=? WHERE id=?').run(name,active?1:0,departmentId,id);
   else db.prepare('UPDATE services SET name=?,active=? WHERE id=?').run(name,active?1:0,id);
@@ -742,7 +762,7 @@ app.post('/api/admin/sales/add-correction',requireAdmin,(req,res)=>{
     const service=db.prepare(`SELECT * FROM services WHERE id=? AND NOT EXISTS
       (SELECT 1 FROM store_service_removals WHERE store_id=? AND service_id=services.id)`).get(Number(serviceId),storeId);
     const department=localDepartments(storeId,false).find(d=>d.id===departmentId);
-    if(!store||!person||!service||!department||person.name!==expectedSellerName||store.name!==expectedStoreName||
+    if(!store||!person||!service||!department||(person.department_id||TECH_DEPARTMENT_ID)!==departmentId||person.name!==expectedSellerName||store.name!==expectedStoreName||
        service.name!==expectedServiceName||department.name!==expectedDepartmentName)
       return {error:'Le vendeur, le service, le département ou le magasin a changé. Vérifiez votre sélection.'};
     const insert=db.prepare('INSERT INTO sales(id,store_id,seller_id,service_id,business_date,created_at,source,department_id) VALUES (?,?,?,?,?,?,?,?)');

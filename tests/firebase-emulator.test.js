@@ -941,12 +941,13 @@ test('Émulateur Firestore : ajout historique atomique, rejeu simultané et dép
   const call=async(path,method='GET',body,token='admin-token')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);const json=await r.json();assert.notEqual(r.status,500,JSON.stringify(json));return {status:r.status,json};};
   await fetch(`http://127.0.0.1:8085/emulator/v1/projects/${project}/databases/(default)/documents`,{method:'DELETE'});
   await call('/api/bootstrap','GET',undefined,'');const catalog=(await db.get('pulse/catalog')).data,seller=catalog.sellers.find(s=>s.id===1),service=catalog.services.find(s=>s.id===1);
-  seller.active=false;catalog.sellerFlags.s1=false;service.active=false;
+  seller.active=false;seller.departmentId='editorial';catalog.sellerFlags.s1=false;service.active=false;
   catalog.departmentsByStore={[store]:[{id:'tech',name:'Produits Techniques',active:true},{id:'editorial',name:'Ancien département',active:false}]};
   await db.commit([db.write('pulse/catalog',catalog),db.write('pulseGoals/fixture-add-owner',{goals:{s1:{day:4,week:12,month:32}}})]);
   const body={storeId:store,sellerId:1,period:'day',anchor:'2026-10-13',saleDate:'2026-10-13',serviceId:1,departmentId:'editorial',quantity:3,requestId:'firebase-history-add-0001',confirmation:'AJOUTER',expectedSellerName:seller.name,expectedStoreName:catalog.stores.find(s=>s.id===store).name,expectedServiceName:service.name,expectedDepartmentName:'Ancien département'};
   const route='/api/admin/sales/add-correction';assert.equal((await call(route,'POST',body,'')).status,401);
   assert.equal((await call(route,'POST',{...body,saleDate:'2026-11-01'})).status,400);
+  assert.equal((await call(route,'POST',{...body,departmentId:'tech',expectedDepartmentName:'Produits Techniques'})).status,409);
   const [one,two]=await Promise.all([call(route,'POST',body),call(route,'POST',body)]);assert.equal(one.status,200);assert.equal(two.status,200);assert.deepEqual([one.json.duplicate,two.json.duplicate].sort(),[false,true]);
   const rows=await db.query(`pulseStores/${store}/sales`);assert.equal(rows.length,3);
   for(const row of rows){assert.equal(row.data.sellerId,1);assert.equal(row.data.serviceId,1);assert.equal(row.data.departmentId,'editorial');assert.equal(row.data.businessDate,'2026-10-13');assert.equal(row.data.source,'adjustment');assert(!row.data.createdAt.startsWith('2026-10-13'));}
@@ -1068,4 +1069,35 @@ test('Émulateur Firestore : pagination et confidentialité des nouvelles invita
     assert(pages>=2);assert.equal(seen.filter(x=>x.email.startsWith(`emulator-invite-${stamp}-`)).length,56);
     assert.equal(new Set(seen.map(x=>x.email)).size,seen.length);assert(user.uid.startsWith('seller-page-'));
   } finally {if(paths.length)await db.commit(paths.map(path=>db.delete(path)));await deleteApp(app);}
+});
+
+test('Émulateur Firestore : minimum admin non rétroactif, contrôles vendeur et conflit réel', {skip:!enabled},async()=>{
+  const project='demo-fnac',store=LEGACY_STORE_ID,uid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;
+  const db=new FirestoreRest({FIREBASE_PROJECT_ID:project},{base:'http://127.0.0.1:8085/v1',token:async()=> 'owner'});
+  const identities={admin:{sub:'administrator'},seller:{sub:uid,role:'seller',storeId:store,sellerId:1,sellerKey:'s1',accessVersion:'version-keep'}};
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!identities[t])throw Error();return identities[t];}});
+  const env={FIREBASE_PROJECT_ID:project,ADMIN_UID:'administrator'},ctx={waitUntil(){}};
+  const call=async(path,method='GET',body,token='seller')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{authorization:`Bearer ${token}`,...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);const json=await r.json();assert.notEqual(r.status,500,JSON.stringify(json));return {status:r.status,json};};
+  await fetch(`http://127.0.0.1:8085/emulator/v1/projects/${project}/databases/(default)/documents`,{method:'DELETE'});
+  await call('/api/bootstrap','GET',undefined,'admin');
+  const before=(await db.get('pulse/catalog')).data.sellers.find(s=>s.id===1);
+  const deniedDepartment=await call('/api/admin/entities/sellers/1','PATCH',{storeId:store,departmentId:'editorial',name:'Ne pas modifier'},'admin');
+  assert.equal(deniedDepartment.status,409);assert.deepEqual((await db.get('pulse/catalog')).data.sellers.find(s=>s.id===1),before);
+  const access={active:true,storeId:store,sellerId:1,sellerKey:'s1',version:'version-keep'},legacy={day:3,week:10,month:30,revision:'ancienne-revision-1'};
+  await db.commit([db.write(`pulseAccess/${uid}`,access),db.write(`pulseStatus/${uid}`,access),db.write(`pulseGoals/${uid}`,{goals:{s1:legacy},workdays:[1,2,3,4,5,6]})]);
+  const month=n=>({day:null,week:null,month:n}),week=n=>({day:null,week:n,month:null});
+  const seller=(values,revision)=>call('/api/goals','POST',{serviceId:1,values,revision});
+  const admin=(values,revision)=>call('/api/admin/goals','POST',{storeId:store,sellerId:1,serviceId:1,values,revision},'admin');
+  let entry=(await call('/api/goals')).json.goals.s1;assert.deepEqual(entry,legacy);
+  let result=await seller(month(25),entry.revision);assert.equal(result.status,200);entry=result.json.goals.s1;assert.equal(entry.minimum,undefined);
+  result=await admin(month(20),entry.revision);assert.equal(result.status,200);entry=result.json.goals.s1;
+  assert.equal(entry.month,25);assert.deepEqual(entry.minimum,{period:'month',amount:20});
+  assert.equal((await seller(month(19),entry.revision)).status,403);assert.equal((await seller(week(9999),entry.revision)).status,403);
+  result=await seller(month(50),entry.revision);assert.equal(result.status,200);entry=result.json.goals.s1;
+  const simultaneous=await Promise.all([seller(month(21),entry.revision),admin(month(60),entry.revision)]);
+  assert.deepEqual(simultaneous.map(x=>x.status).sort(),[200,409]);
+  entry=(await call('/api/goals')).json.goals.s1;
+  if(entry.minimum.amount!==60){result=await admin(month(60),entry.revision);assert.equal(result.status,200);entry=result.json.goals.s1;}
+  assert.equal(entry.month,60);assert.equal((await seller(month(59),entry.revision)).status,403);
+  assert.deepEqual((await db.get(`pulseAccess/${uid}`)).data,access);assert.deepEqual((await db.get(`pulseGoals/${uid}`)).data.workdays,[1,2,3,4,5,6]);
 });

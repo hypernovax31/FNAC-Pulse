@@ -6,7 +6,6 @@ import { AdminAccounts } from './AdminAccounts';
 import { AdminRegistration } from './AdminRegistration';
 import { AdminFirstPassword } from './AdminFirstPassword';
 import { AdminCodeRegistration } from './AdminCodeRegistration';
-import { DirectoryImport } from './DirectoryImport';
 import { sellersForStore, orderServices, serviceRemovedForStore } from './catalog';
 import { departmentsForStore, sellerDepartmentId } from './departments';
 import { GoalForm } from './Goals';
@@ -25,21 +24,6 @@ import { AdminInvitationHelp } from './AdminInvitationHelp';
 const MANAGED_STORE_KEY='pulse-admin-managed-store-v1';
 function rememberedStore() {try{return sessionStorage.getItem(MANAGED_STORE_KEY)||'';}catch{return '';}}
 function rememberStore(id) {try{if(id)sessionStorage.setItem(MANAGED_STORE_KEY,id);else sessionStorage.removeItem(MANAGED_STORE_KEY);}catch{}}
-
-function directoryDate(value) {
-  const day=String(value||'').slice(0,10),parts=day.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  return parts?`${parts[3]}/${parts[2]}/${parts[1]}`:'date inconnue';
-}
-function directoryStatus(sync) {
-  if(!sync)return 'État de l’annuaire indisponible.';
-  const checked=`Dernière vérification officielle le ${directoryDate(sync.verifiedAt)}.`;
-  const manual=sync.lastManualImport?` Copie importée par un administrateur le ${directoryDate(sync.lastManualImport)} : son origine et sa fraîcheur ne sont pas vérifiées automatiquement.${sync.manualReviewCount?` ${sync.manualReviewCount} correspondance(s) de la copie demandent une vérification.`:''}`:'';
-  const regional=sync.regionalReviewCount?` ${sync.regionalReviewCount} mention(s) régionale(s) demandent une vérification : un nom ou un identifiant existe déjà.`:'';
-  if(sync.lastResult==='blocked')return `${checked} Le ${directoryDate(sync.lastAttempt)}, le site Fnac a refusé l’accès automatique du serveur (HTTP 403 ou restriction équivalente) : aucune mise à jour automatique n’a eu lieu. Nouvelle tentative chaque mois.${manual}${regional}`;
-  if(['invalid','incomplete','ambiguous','unavailable'].includes(sync.lastResult))return `${checked} La dernière tentative n’a pas pu vérifier une liste complète. La liste est conservée ; nouvelle tentative chaque mois.${manual}${regional}`;
-  if(sync.lastResult==='review')return `${checked} Actualisation effectuée ; ${sync.reviewCount||0} correspondance(s) demandent une vérification.${manual}${regional}`;
-  return `${checked} Vérification automatique prévue le 1er de chaque mois.${manual}${regional}`;
-}
 
 function Modal({title,subtitle,onClose,children,wide=false,fixedTabs=false}) {
   const dialog=useRef(null),close=useRef(onClose);
@@ -280,7 +264,7 @@ export default function Admin({onClose,data,session,onChanged}) {
   const storeSellers=sellersForStore(all.sellers,adminStore,{activeOnly:false});
   const storeDepartments=adminStore?departmentsForStore(all,adminStore,{activeOnly:false}):[];
   const activeDepartments=storeDepartments.filter(d=>d.active);
-  const departmentForNewSeller=activeDepartments.some(d=>d.id===newSellerDepartment)?newSellerDepartment:activeDepartments[0]?.id||'';
+  const departmentForNewSeller=activeDepartments.some(d=>d.id===newSellerDepartment)?newSellerDepartment:'';
   const allOrderedServices=orderServices(all.services,all.serviceOrders,adminStore);
   const orderedServices=allOrderedServices.filter(s=>!serviceRemovedForStore(all,adminStore,s.id));
   const removedServices=allOrderedServices.filter(s=>serviceRemovedForStore(all,adminStore,s.id));
@@ -361,13 +345,13 @@ export default function Admin({onClose,data,session,onChanged}) {
         <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Définissez les objectifs par service. Les jours travaillés se règlent dans chaque fiche de l’onglet Vendeurs.</p></div></div>
         <div className="admin-selects admin-selects-single"><label><span className="form-label">Vendeur</span><select aria-label="Vendeur pour les objectifs" className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>setAdminSeller(e.target.value)}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label></div>
         {adminSeller ? goalsFor===`${adminStore}:${adminSeller}`&&adminGoals&&adminWorkdays ? <React.Fragment key={`${adminStore}:${adminSeller}`}>
-          <section className="admin-goals-services" aria-labelledby="admin-goals-services-title"><div className="workdays-heading"><div><h4 id="admin-goals-services-title">Services</h4><p>Définissez une cible et sa période de référence pour chaque service.</p></div></div><GoalForm services={activeServices} goals={adminGoals} workdays={adminWorkdays} date={data.today} onSave={saveAdminGoals} disabled={busy} showPlanning/></section>
+          <section className="admin-goals-services" aria-labelledby="admin-goals-services-title"><div className="workdays-heading"><div><h4 id="admin-goals-services-title">Services</h4><p>Définissez un minimum et sa période de référence pour chaque service.</p></div></div><GoalForm services={activeServices} goals={adminGoals} workdays={adminWorkdays} date={data.today} onSave={saveAdminGoals} disabled={busy} showPlanning admin/></section>
         </React.Fragment> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un vendeur pour gérer ses objectifs.</div>}
         <div className="admin-note"><Info size={15}/> Les objectifs se répètent et toute modification s’applique aux périodes suivantes.</div>
         <GoalsResetPanel key={adminStore} storeId={adminStore} storeName={adminStoreName} departments={storeDepartments} token={token} disabled={busy||!allLoaded} onUpdate={refreshAfterGoalsReset}/>
       </>}
       {tab==='departments'&&adminStore&&<>
-        <div className="admin-section-heading"><div><h3>Départements du magasin</h3><p>Renommez, ajoutez ou archivez les départements de ce magasin. Réaffectez les vendeurs actifs avant d’archiver leur département.</p></div></div>
+        <div className="admin-section-heading"><div><h3>Départements du magasin</h3><p>Renommez, ajoutez ou archivez les départements de ce magasin. Archivez les vendeurs actifs avant d’archiver leur département.</p></div></div>
         <form className="add-entity" onSubmit={e=>{e.preventDefault();if(!name.trim())return;run(async()=>{await api('/api/admin/departments',{method:'POST',token,body:{storeId:adminStore,name}});setName('');},'Département ajouté.');}}>
           <input className="text-input" aria-label="Nom du département" placeholder="Nom du département" value={name} onChange={e=>setName(e.target.value)} required maxLength={60}/>
           <button className="primary-button" disabled={busy}><Plus size={16}/> Ajouter</button>
@@ -380,17 +364,17 @@ export default function Admin({onClose,data,session,onChanged}) {
       {(tab==='sellers'||tab==='services')&&adminStore&&<>
         <div className="admin-section-heading"><div><h3>{tab==='sellers'?'Vendeurs et accès':'Vos services'}</h3><p>{tab==='sellers'?'Ajoutez et gérez les vendeurs de ce magasin. L’archivage conserve leur historique.':'L’ordre et la suppression concernent ce magasin. Les noms des services restent communs à tous les magasins.'}</p></div></div>
         {!adminStore?<div className="empty-admin">Choisissez d’abord le magasin à gérer.</div>:<>
-          <form className={`add-entity ${tab==='sellers'?'add-seller':''}`} onSubmit={e=>{e.preventDefault();if(!name.trim())return;run(async()=>{await api(`/api/admin/entities/${tab}`,{method:'POST',token,body:{name,...(tab==='sellers'?{storeId:adminStore,departmentId:departmentForNewSeller}:{})}});setName('');},tab==='sellers'?'Vendeur ajouté dans ce magasin.':'Service ajouté dans tous les magasins.');}}>
+          <form className={`add-entity ${tab==='sellers'?'add-seller':''}`} onSubmit={e=>{e.preventDefault();if(!name.trim()||(tab==='sellers'&&!departmentForNewSeller))return;run(async()=>{await api(`/api/admin/entities/${tab}`,{method:'POST',token,body:{name,...(tab==='sellers'?{storeId:adminStore,departmentId:departmentForNewSeller}:{})}});setName('');},tab==='sellers'?'Vendeur ajouté dans ce magasin.':'Service ajouté dans tous les magasins.');}}>
             <input className="text-input" aria-label={tab==='sellers'?'Nom du vendeur':'Nom du service'} placeholder={tab==='sellers'?'Prénom du vendeur':'Intitulé du service'} value={name} onChange={e=>setName(e.target.value)} required maxLength={60}/>
-            {tab==='sellers'&&<select className="text-input" aria-label="Département du nouveau vendeur" value={departmentForNewSeller} onChange={e=>setNewSellerDepartment(e.target.value)} disabled={busy||!activeDepartments.length} required>{activeDepartments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select>}
+            {tab==='sellers'&&<select className="text-input" aria-label="Département du nouveau vendeur" value={departmentForNewSeller} onChange={e=>setNewSellerDepartment(e.target.value)} disabled={busy||!activeDepartments.length} required><option value="">Choisir un département</option>{activeDepartments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select>}
             <button className="primary-button" disabled={busy||(tab==='sellers'&&!departmentForNewSeller)}><Plus size={16}/> Ajouter</button>
           </form>
+          {tab==='sellers'&&<p className="seller-department-hint">Vérifiez le département : il ne pourra plus être modifié après la création du vendeur.</p>}
           {tab==='sellers' ? (storeSellers.length===0?<div className="empty-admin">Aucun vendeur dans ce magasin. Ajoutez le premier prénom ci-dessus.</div>:<div className="seller-card-list">{storeSellers.map(item=><SellerCard key={item.id}
             seller={item} departments={storeDepartments} storeId={adminStore} token={token} busy={busy}
             editing={editing===item.id} editName={editName} onEditName={setEditName}
             onEdit={()=>{setEditing(item.id);setEditName(item.name);}} onCancelEdit={()=>setEditing(null)}
             onRename={()=>run(async()=>{await api(`/api/admin/entities/sellers/${item.id}`,{method:'PATCH',token,body:{name:editName,storeId:adminStore}});setEditing(null);},'Nom modifié.')}
-            onDepartment={departmentId=>run(()=>api(`/api/admin/entities/sellers/${item.id}`,{method:'PATCH',token,body:{storeId:adminStore,departmentId}}),'Vendeur réaffecté. Les ventes passées restent dans leur département d’origine.')}
             onArchive={()=>{if(item.active&&!window.confirm(`Archiver « ${item.name} » ? Son historique sera conservé.`))return;run(()=>api(`/api/admin/entities/sellers/${item.id}`,{method:'PATCH',token,body:{active:!item.active,storeId:adminStore}}),item.active?'Élément archivé.':'Élément restauré.');}}
             workdaysOpen={expandedSeller===item.id} onToggleWorkdays={()=>setExpandedSeller(old=>old===item.id?null:item.id)} onBusy={setBusy} onChanged={onChanged}/>)}</div>)
           : (orderedServices.length===0?<div className="empty-admin">Aucun service dans ce magasin.</div>:<div className="entity-list">{orderedServices.map((item,index)=><div className={`entity-row service-entity-row ${!item.active?'is-archived':''}`} key={item.id}>
@@ -425,12 +409,7 @@ export default function Admin({onClose,data,session,onChanged}) {
           <button className="primary-button" disabled={busy}><Plus size={16}/> Ajouter le magasin</button>
         </form>
         <div className="admin-note"><Store size={15}/> Noms issus de l’annuaire Fnac ou ajoutés par l’administration ; les copies manuelles ne sont pas certifiées. Les coordonnées disponibles sont indicatives. Les magasins restent conservés ; les noms remplacés à partir de cette version restent recherchables.</div>
-        {CLOUD&&<><div className="directory-sync" role="status"><div><strong>Annuaire des magasins</strong><p>{directoryStatus(all.directorySync)}</p></div><button type="button" className="outline-button" disabled={busy||!allLoaded} onClick={()=>run(async()=>{
-          const result=await api('/api/admin/stores/sync',{method:'POST',token,body:{}});
-          if(!result.ok){await loadAll();throw Error(result.result==='blocked'?'La demande a bien été envoyée, mais Fnac refuse l’accès automatique au serveur. Aucune liste n’a été actualisée.':'La vérification n’a pas abouti. La liste précédente est conservée.');}
-          if(result.result==='review')throw Error(`Annuaire actualisé, mais ${result.reviewCount||0} correspondance(s) nécessitent une vérification.`);
-        },'Annuaire vérifié et actualisé.')}>Vérifier maintenant</button></div>
-        <DirectoryImport token={token} disabled={busy||!allLoaded} onBusy={setBusy} onImported={async()=>{await loadAll();onChanged();}}/></>}
+
       </>}
       {CLOUD&&tab==='sellers'&&adminStore&&<div className="seller-access">
         <div className="admin-section-heading"><div><h3>Accès et codes PIN</h3><p>Chaque vendeur choisit son propre PIN lors de sa première connexion. Aucun code préalable n’est nécessaire.</p></div></div>

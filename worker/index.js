@@ -4,7 +4,8 @@ import { DIRECTORY_VERSION, REGIONAL_CHOICES_VERSION, mergeStoreDirectory, merge
 import { fetchFnacDirectory, assertDirectoryCoverage, validateFnacDirectoryCopy, DirectorySourceError } from './fnac-source.js';
 import { FirestoreRest, FirebaseError, googleAccessToken, verifyIdToken, makeCustomToken, lookupFirebaseAccount, digestBase64, pinMac, verifyPin } from './firebase.js';
 import { LEGACY_STORE_ID, comparePeople, sellerStoreId, serviceRemovedForStore, servicesForStore } from '../src/catalog.js';
-import { validGoalValues, GOAL_PERIODS, validWorkdays, normalizeWorkdays } from '../src/goals.js';
+import { validGoalValues, validWorkdays, normalizeWorkdays } from '../src/goals.js';
+import { updateGoalEntry } from '../src/goal-policy.js';
 import { saleMessage } from '../src/sale-message.js';
 import { departmentsForStore, sellerDepartmentId, saleDepartmentId, TECH_DEPARTMENT_ID } from '../src/departments.js';
 import { summaryGoals } from '../src/summary-goals.js';
@@ -1054,7 +1055,7 @@ export function createWorker(deps={}) {
     const people=members.map((member,index)=>({...member,goals:docs[index]?.data?.goals||{},workdays:docs[index]?.data?.workdays}));
     return summaryGoals(people,servicesForStore(c,storeId,{activeOnly:false}),departmentsForStore(c,storeId,{activeOnly:false}),today());
   }
-  async function saveGoals(db,owner,body,accessVersion=null) {
+  async function saveGoals(db,owner,body,{admin=false,sellerVersion}={}) {
     const serviceId=Number(body.serviceId), values=body.values, expected=body.revision;
     if(!isId(serviceId)||!serviceBy(owner.catalog,serviceId,owner.storeId))fail(400,'Choisissez un service actif dans ce magasin.');
     if(!validGoalValues(values))fail(400,'Les objectifs doivent être des entiers entre 0 et 9 999, ou être laissés vides.');
@@ -1069,10 +1070,12 @@ export function createWorker(deps={}) {
         if(index>=Number(reset.data.processedSellers||0))fail(409,'La réinitialisation des objectifs de votre département est en cours. Réessayez dans quelques instants.');
       }
       // Une modification du PIN invalide immédiatement une écriture vendeur en cours.
-      if(accessVersion!==null&&(!statusDoc?.data?.active||statusDoc.data.version!==accessVersion))fail(403,'Profil désactivé ou code PIN modifié. Reconnectez-vous.');
+      if(!admin&&(!statusDoc?.data?.active||statusDoc.data.version!==sellerVersion))fail(403,'Profil désactivé ou code PIN modifié. Reconnectez-vous.');
       const previous=goalDoc?.data?.goals?.[key];
       if((previous?.revision||null)!==expected)fail(409,'Cet objectif a changé. Rechargez ses valeurs avant de le modifier.');
-      const entry={...Object.fromEntries(GOAL_PERIODS.map(period=>[period,values[period]])),revision:crypto.randomUUID()};
+      let updated;try{updated=updateGoalEntry(previous,values,{admin});}
+      catch(error){fail(403,error.message);}
+      const entry={...updated,revision:crypto.randomUUID()};
       // Préserver le planning personnel et les autres champs lors d'une cible.
       const next={...(goalDoc?.data||{}),storeId:owner.storeId,sellerId:owner.sellerId,goals:{...(goalDoc?.data?.goals||{}),[key]:entry}};
       // Une écriture concurrente au lancement ou à la progression du reset
@@ -1130,12 +1133,12 @@ export function createWorker(deps={}) {
       if(kind==='sellers'&&row.deletingJob)fail(409,'La suppression définitive de ce vendeur est en cours.');
       if(kind==='sellers'&&body.storeId!==undefined&&body.storeId!==sellerStoreId(row))fail(400,'Ce vendeur appartient à un autre magasin.');
       if(typeof body.name==='string') {const name=cleanName(body.name);if(!name)fail(400,'Saisissez un nom valide.');row.name=name;}
-      if(kind==='sellers'&&body.departmentId!==undefined) {
-        if(!departmentsForStore(d,sellerStoreId(row)).some(x=>x.id===body.departmentId))fail(400,'Choisissez un département actif de ce magasin.');
-        row.departmentId=body.departmentId;
-      }
+      // Le département est choisi à la création et reste définitif, y compris
+      // pour les anciennes interfaces qui proposaient une réaffectation.
+      if(kind==='sellers'&&body.departmentId!==undefined&&body.departmentId!==sellerDepartmentId(row))
+        fail(409,'Le département de ce vendeur ne peut pas être modifié après sa création.');
       if(typeof body.active==='boolean')row.active=body.active;
-      if(kind==='sellers'&&row.active&&!departmentsForStore(d,sellerStoreId(row)).some(x=>x.id===sellerDepartmentId(row)))fail(409,'Réaffectez ce vendeur à un département actif.');
+      if(kind==='sellers'&&row.active&&!departmentsForStore(d,sellerStoreId(row)).some(x=>x.id===sellerDepartmentId(row)))fail(409,'Restaurez d’abord le département de ce vendeur.');
       if(row.active&&duplicate(row,row.name))fail(409,'Ce nom existe déjà dans cette liste.');
     }
     try{await db.commit([db.write('pulse/catalog',withFlags(d),{updateTime:c.updateTime})]);}
@@ -1155,7 +1158,7 @@ export function createWorker(deps={}) {
       const row=list.find(x=>x.id===id);if(!row)fail(404,'Département introuvable.');
       if(typeof body.name==='string'){const name=cleanName(body.name);if(!name)fail(400,'Saisissez le nom du département.');row.name=name;}
       if(typeof body.active==='boolean') {
-        if(!body.active&&d.sellers.some(s=>s.active&&sellerStoreId(s)===storeId&&sellerDepartmentId(s)===id))fail(409,'Réaffectez les vendeurs actifs avant d’archiver ce département.');
+        if(!body.active&&d.sellers.some(s=>s.active&&sellerStoreId(s)===storeId&&sellerDepartmentId(s)===id))fail(409,'Archivez les vendeurs actifs avant d’archiver leur département.');
         if(!body.active&&list.filter(x=>x.active).length<=1)fail(409,'Conservez au moins un département actif.');
         row.active=body.active;
       }
@@ -1649,17 +1652,23 @@ export function createWorker(deps={}) {
   async function addSale(req,env,db,ctx,body) {
     const s=await seller(req,env,db),service=serviceBy(s.catalog,body.serviceId,s.claims.storeId),requestId=body.requestId;
     if(!service||!SAFE_ID.test(requestId||''))fail(400,'Service ou identifiant de vente invalide.');
-    const storeId=s.claims.storeId,sellerId=Number(s.claims.sellerId),person=sellerBy(s.catalog,sellerId,storeId),departmentId=sellerDepartmentId(person);
-    const marker=await db.get(salesMarkerPath(storeId)),generation=salesGeneration(marker?.data);
-    const data={id:requestId,storeId,sellerId,departmentId,serviceId:service.id,createdAt:new Date().toISOString(),businessDate:today(),deletedAt:null,source:'sale',clientId:typeof body.clientId==='string'?body.clientId.slice(0,80):'',ownerUid:s.claims.sub,generation};
-    // Identifiant haché du jeton de l'appareil émetteur, uniquement si ce jeton
-    // appartient bien au vendeur. Il reste privé dans l'outbox et permet aussi
-    // d'éviter un push tardif après un changement de profil sur le téléphone.
-    let originTokenId='';
-    if(typeof body.originTokenId==='string'&&PROOF.test(body.originTokenId)) {
-      const originToken=await db.get(`pulseTokens/${body.originTokenId}`);
-      if(originToken?.data.uid===s.claims.sub&&originToken.data.storeId===storeId&&originToken.data.accessVersion===s.claims.accessVersion)originTokenId=body.originTokenId;
-    }
+    const storeId=s.claims.storeId,sellerId=Number(s.claims.sellerId),person=sellerBy(s.catalog,sellerId,storeId),departmentId=sellerDepartmentId(person),businessDate=today();
+    if(Object.hasOwn(body,'expectedDate')&&(typeof body.expectedDate!=='string'||body.expectedDate!==businessDate))
+      fail(409,'La journée a changé. Vérifiez le bilan avant de recommencer.');
+    if(Object.hasOwn(body,'expectedDepartmentId')&&(typeof body.expectedDepartmentId!=='string'||body.expectedDepartmentId!==departmentId))
+      fail(409,'Votre département a changé. Vérifiez le bilan avant de recommencer.');
+    // Ces deux lectures indépendantes se font en parallèle ; les contrôles et
+    // les préconditions du commit restent identiques.
+    const tokenId=typeof body.originTokenId==='string'&&PROOF.test(body.originTokenId)?body.originTokenId:'';
+    const [marker,originToken]=await Promise.all([db.get(salesMarkerPath(storeId)),tokenId?db.get(`pulseTokens/${tokenId}`):Promise.resolve(null)]);
+    const generation=salesGeneration(marker?.data);
+    // Une nouvelle interface lie aussi la demande à la génération affichée :
+    // un rejeu incertain ne peut pas recréer une vente après un reset.
+    if(Object.hasOwn(body,'expectedGeneration')&&(typeof body.expectedGeneration!=='string'||body.expectedGeneration!==generation))
+      fail(409,'Les ventes ont été réinitialisées. Vérifiez le bilan avant de recommencer.');
+    const data={id:requestId,storeId,sellerId,departmentId,serviceId:service.id,createdAt:new Date().toISOString(),businessDate,deletedAt:null,source:'sale',clientId:typeof body.clientId==='string'?body.clientId.slice(0,80):'',ownerUid:s.claims.sub,generation};
+    // Le jeton émetteur n'est retenu que s'il appartient bien à cette session.
+    const originTokenId=originToken?.data.uid===s.claims.sub&&originToken.data.storeId===storeId&&originToken.data.accessVersion===s.claims.accessVersion?tokenId:'';
     const outbox={saleId:requestId,storeId,sellerId,departmentId,sellerName:person.name,serviceName:service.name,status:'pending',createdAt:Date.now(),leaseUntil:0,generation,...(originTokenId?{originTokenId}:{})};
     try {await db.commit([...saleAuthorizationChecks(db,s),db.verify(salesMarkerPath(storeId),precondition(marker)),db.write(docPath(storeId,requestId),data,{exists:false}),db.write(`pulseOutbox/${requestId}`,outbox,{exists:false}),db.write(guardPath(storeId),{revision:crypto.randomUUID()})]);}
     catch(e) {
@@ -1667,6 +1676,7 @@ export function createWorker(deps={}) {
       const [existing,latest,currentCatalog]=await Promise.all([db.get(docPath(storeId,requestId)),db.get(salesMarkerPath(storeId)),catalog(db)]);
       if(serviceRemovedForStore(currentCatalog.data,storeId,service.id)||!existing||!saleInGeneration(existing.data,salesGeneration(latest?.data)))fail(409,'La vente ne peut pas être confirmée. Si le service ou le magasin vient d’être réinitialisé, vérifiez le bilan avant de réessayer.');
       if(existing.data.ownerUid!==s.claims.sub || existing.data.serviceId!==service.id)fail(409,'Identifiant de vente déjà utilisé.');
+      if(existing.data.deletedAt)fail(409,'Cette vente a déjà été annulée. Vérifiez le bilan avant de recommencer.');
       ctx.waitUntil(dispatch(env,db,requestId).catch(e=>logPushError('dispatch',e)));return {id:requestId,duplicate:true};
     }
     ctx.waitUntil(dispatch(env,db,requestId).catch(e=>logPushError('dispatch',e)));return {id:requestId};
@@ -1759,7 +1769,7 @@ export function createWorker(deps={}) {
     const store=c.data.stores.find(s=>s.id===storeId),service=c.data.services.find(s=>Number(s.id)===Number(serviceId));
     const department=departmentsForStore(c.data,storeId,{activeOnly:false}).find(d=>d.id===departmentId);
     if(!validStore(c.data,storeId)||!person||!service||serviceRemovedForStore(c.data,storeId,serviceId)||!department||
-       person.name!==expectedSellerName||store?.name!==expectedStoreName||service.name!==expectedServiceName||department.name!==expectedDepartmentName)
+       sellerDepartmentId(person)!==departmentId||person.name!==expectedSellerName||store?.name!==expectedStoreName||service.name!==expectedServiceName||department.name!==expectedDepartmentName)
       fail(409,'Le vendeur, le service, le département ou le magasin a changé. Vérifiez votre sélection.');
     if(reset?.data.status==='running'||sellerDeletion?.data.status==='running'||serviceDeletion?.data.status==='running')
       fail(409,'Une suppression ou réinitialisation est en cours dans ce magasin. Attendez sa fin.');
@@ -2008,7 +2018,7 @@ export function createWorker(deps={}) {
       // l'identité du navigateur change pendant qu'une requête est en cours.
       if((Object.hasOwn(selection,'storeId')&&selection.storeId!==owner.storeId)||
          (Object.hasOwn(selection,'sellerId')&&Number(selection.sellerId)!==owner.sellerId))fail(403,'Votre profil a changé. Reconnectez-vous.');
-      return method==='GET'?readGoals(db,owner):saveGoals(db,owner,selection,s.claims.accessVersion);
+      return method==='GET'?readGoals(db,owner):saveGoals(db,owner,selection,{sellerVersion:s.claims.accessVersion});
     }
     if(method==='GET'&&path==='/api/summary-goals') {
       const s=await seller(req,env,db),requested=url.searchParams.get('storeId');
@@ -2061,7 +2071,7 @@ export function createWorker(deps={}) {
       if(method==='GET'&&path==='/api/admin/goals')return readGoals(db,await goalOwner(db,url.searchParams.get('storeId'),url.searchParams.get('sellerId')));
       if(method==='POST'&&path==='/api/admin/goals') {
         const body=await readBody(req), owner=await goalOwner(db,body.storeId,body.sellerId);
-        return saveGoals(db,owner,body);
+        return saveGoals(db,owner,body,{admin:true});
       }
       if(method==='POST'&&path==='/api/admin/workdays') {
         const body=await readBody(req), owner=await goalOwner(db,body.storeId,body.sellerId);
@@ -2102,7 +2112,7 @@ export function createWorker(deps={}) {
     },
     async scheduled(event,env,ctx) {
       const db=createDb(env);
-      if(event.cron==='0 6 1 * *') {
+      if(event.cron==='0 6 * * 1') {
         ctx.waitUntil(refreshDirectory(db).catch(e=>console.warn('PULSE_DIRECTORY_SYNC',e?.code||e?.name||'error')));
         return;
       }

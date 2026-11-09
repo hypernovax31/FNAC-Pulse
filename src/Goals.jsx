@@ -2,22 +2,24 @@ import React, { useId, useState } from 'react';
 import { ArrowRight, Check, Pencil, Plus, Target, RotateCw } from 'lucide-react';
 import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, WORKDAY_NAMES, WORKDAY_ORDER, goalReference, goalTargets, hasGoal, parseGoalInputs, normalizeWorkdays, validWorkdays, workdaysLabel } from './goals.js';
 import { validGoalDate, personalGoalCards, personalGoalMetric } from './goal-display.js';
+import { goalMinimum } from './goal-policy.js';
 import { parisToday } from './cloud-stats.js';
 
 const PERSONAL_PERIOD_LABELS = {day:'Aujourd’hui',week:'Semaine',month:'Mois'};
 const PREVIEW_LABELS = {day:'Cible du jour',week:'Cible semaine',month:'Cible mois'};
+const REFERENCE_LABELS = {day:'par jour travaillé',week:'par semaine',month:'par mois'};
 const numberFormat=new Intl.NumberFormat('fr-FR');
 const formatNumber = value => value===null?'—':numberFormat.format(value);
 const referenceInputs = (period,amount) => Object.fromEntries(GOAL_PERIODS.map(p=>[p,p===period?amount:'']));
-function formReference(entry) {
-  const reference=goalReference(entry);
+function formReference(entry,admin=false) {
+  const reference=(admin&&goalMinimum(entry))||goalReference(entry);
   return reference?{period:reference.period,amount:String(reference.amount)}:{period:'month',amount:''};
 }
 
 // Utilisé par le vendeur et par l'administration pour garder les mêmes règles.
-export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCancel,disabled=false,showPlanning=false,date=parisToday()}) {
+export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCancel,disabled=false,showPlanning=false,admin=false,date=parisToday()}) {
   const initial=services.find(s=>String(s.id)===String(initialServiceId))?.id||services[0]?.id||'';
-  const entry=goals?.[`s${initial}`],initialReference=formReference(entry);
+  const entry=goals?.[`s${initial}`],initialReference=formReference(entry,admin);
   const [service,setService]=useState(String(initial));
   const [basis,setBasis]=useState(initialReference.period);
   const [amount,setAmount]=useState(initialReference.amount);
@@ -25,12 +27,12 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   const [notice,setNotice]=useState('');
-  const current=goals?.[`s${service}`];
+  const current=goals?.[`s${service}`],minimum=goalMinimum(current),effective=goalReference(current);
   const stale=!!service && (current?.revision||null)!==revision;
   const numeric=/^\d+$/.test(amount)?Number(amount):null;
   const preview=numeric!==null&&numeric>=0&&numeric<=GOAL_LIMIT?goalTargets({[basis]:numeric},date,workdays):null;
   function loadService(id) {
-    const next=goals?.[`s${id}`],reference=formReference(next);
+    const next=goals?.[`s${id}`],reference=formReference(next,admin);
     setService(String(id));setBasis(reference.period);setAmount(reference.amount);setRevision(next?.revision||null);setError('');setNotice('');
   }
   function changeBasis(period) {
@@ -42,7 +44,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     try {
       const result=await onSave({serviceId:Number(service),values,revision});
       const next=result?.goals?.[`s${service}`];
-      if(next){const reference=formReference(next);setRevision(next.revision);setBasis(reference.period);setAmount(reference.amount);}
+      if(next){const reference=formReference(next,admin);setRevision(next.revision);setBasis(reference.period);setAmount(reference.amount);}
       setNotice(removed?'Objectif supprimé.':'Objectifs enregistrés.');
     } catch(e){setError(e.message||'Impossible d’enregistrer les objectifs.');}
     finally{setBusy(false);}
@@ -52,10 +54,12 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     if(!service||stale)return;
     let values;try{values=parseGoalInputs(referenceInputs(basis,amount));}catch(e){setError(e.message);return;}
     if(!hasGoal(values)){setError('Indiquez une cible de référence pour ce service.');return;}
+    if(!admin&&minimum&&(basis!==minimum.period||numeric<minimum.amount)){setError('Respectez le minimum et la période fixés par l’administrateur.');return;}
+    if(admin&&minimum&&basis!==minimum.period&&current?.personal&&!window.confirm('Changer la période remplacera la référence et l’ajustement personnel du vendeur. Continuer ?'))return;
     await save(values);
   }
   function remove() {
-    if(!service||stale||busy||disabled)return;
+    if(!service||stale||busy||disabled||(!admin&&minimum))return;
     const name=services.find(s=>String(s.id)===service)?.name||'ce service';
     if(!window.confirm(`Supprimer les objectifs de ${name} pour les trois périodes ?`))return;
     setError('');setNotice('');save({day:null,week:null,month:null},true);
@@ -64,19 +68,23 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     <label><span className="form-label">SERVICE</span><select className="text-input" aria-label="Service pour les objectifs" value={service} onChange={e=>loadService(e.target.value)} disabled={busy||disabled||!services.length}>
       {!services.length&&<option value="">Aucun service disponible</option>}{services.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
     </select></label>
-    <p className="goal-form-intro">Choisissez une cible de référence. Les cibles du jour, de la semaine et du mois sont calculées selon les jours travaillés.</p>
+    <p className="goal-form-intro">{admin?'Fixez un minimum et sa période de référence. Le vendeur peut choisir une cible plus élevée.':'Choisissez une cible de référence. Les cibles du jour, de la semaine et du mois sont calculées selon les jours travaillés.'}</p>
+    {!admin&&minimum&&<p className="goal-minimum"><strong>Minimum administrateur : {formatNumber(minimum.amount)} {REFERENCE_LABELS[minimum.period]}.</strong> Vous pouvez augmenter votre cible ou la redescendre jusqu’à ce minimum.</p>}
+    {admin&&!minimum&&hasGoal(current)&&<p className="goal-minimum">Objectif existant sans minimum : l’enregistrer fixera un minimum.</p>}
+    {admin&&minimum&&effective&&effective.period===minimum.period&&effective.amount>minimum.amount&&<p className="goal-minimum">Cible personnelle actuelle : <strong>{formatNumber(effective.amount)} {REFERENCE_LABELS[effective.period]}</strong>. Elle est conservée si vous modifiez le minimum sans changer de période.</p>}
+    {admin&&minimum&&basis!==minimum.period&&<p className="goal-minimum">Changer de période remplace la référence et son éventuel ajustement personnel.</p>}
     <div className="goal-base-fields">
-      <label><span className="form-label">PÉRIODE DE RÉFÉRENCE</span><select className="text-input" aria-label="Période de référence" value={basis} onChange={e=>changeBasis(e.target.value)} disabled={busy||disabled||!service}>
+      <label><span className="form-label">PÉRIODE DE RÉFÉRENCE</span><select className="text-input" aria-label="Période de référence" value={basis} onChange={e=>changeBasis(e.target.value)} disabled={busy||disabled||!service||(!admin&&!!minimum)}>
         <option value="day">Par jour travaillé</option><option value="week">Par semaine</option><option value="month">Par mois</option>
       </select></label>
-      <label><span className="form-label">CIBLE</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min="0" max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={busy||disabled||!service} onChange={e=>{setAmount(e.target.value);setNotice('');}} required/></label>
+      <label><span className="form-label">{admin?'CIBLE MINIMALE':'CIBLE'}</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min={!admin&&minimum?minimum.amount:0} max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={busy||disabled||!service} onChange={e=>{setAmount(e.target.value);setNotice('');}} required/></label>
     </div>
-    <div className="goal-preview" aria-live="polite"><span className="form-label">CIBLES CALCULÉES POUR LA PÉRIODE EN COURS</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PREVIEW_LABELS[period]}</span><strong>{preview?formatNumber(preview[period]):'—'}</strong></div>)}</div><p className="goal-preview-hint">Ces quantités sont des objectifs à atteindre, pas les ventes déjà réalisées.</p></div>
-    {showPlanning&&<details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Modifiez ces jours dans la fiche du vendeur, onglet Vendeurs. Les jours fériés sont inclus ; la répartition en nombres entiers peut donner 0 certains jours. Si vous changez de période de référence, vérifiez la quantité saisie avant d’enregistrer.</p></details>}
+    <div className="goal-preview" aria-live="polite"><span className="form-label">{admin?'CIBLES CALCULÉES POUR CE MINIMUM':'CIBLES CALCULÉES POUR LA PÉRIODE EN COURS'}</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PREVIEW_LABELS[period]}</span><strong>{preview?formatNumber(preview[period]):'—'}</strong></div>)}</div><p className="goal-preview-hint">Ces quantités sont des objectifs à atteindre, pas les ventes déjà réalisées.</p></div>
+    {showPlanning&&<details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Modifiez ces jours dans la fiche du vendeur, onglet Vendeurs. Les cibles par semaine ou par mois sont réparties en entiers : samedi 6 parts, lundi et vendredi 5, les autres jours travaillés 4. Une cible par jour travaillé reste identique chaque jour. Les jours fériés sont inclus et certains jours peuvent recevoir 0. Changer de période remplace la référence et son éventuelle hausse personnelle.</p></details>}
     {stale&&<div className="goal-conflict" role="alert"><span>Cet objectif a été modifié ailleurs.</span><button type="button" onClick={()=>loadService(service)}><RotateCw size={13}/> Recharger les valeurs</button></div>}
     {error&&<div className="form-error" role="alert">{error}</div>}
     {notice&&<div className="goal-saved" role="status">{notice}</div>}
-    {hasGoal(current)&&<button type="button" className="goal-remove" onClick={remove} disabled={busy||disabled||stale}>Supprimer l’objectif de ce service</button>}
+    {hasGoal(current)&&<button type="button" className="goal-remove" onClick={remove} disabled={busy||disabled||stale||(!admin&&!!minimum)} title={!admin&&minimum?'Seul un administrateur peut supprimer ce minimum.':undefined}>Supprimer l’objectif de ce service</button>}
     <div className="goal-form-actions">{onCancel&&<button type="button" className="outline-button" onClick={onCancel} disabled={busy}>Fermer</button>}<button className="primary-button" type="submit" disabled={busy||disabled||stale||!service||!amount}>{busy?'Enregistrement…':'Enregistrer'} <ArrowRight size={15}/></button></div>
   </form>;
 }

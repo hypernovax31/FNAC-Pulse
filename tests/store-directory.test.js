@@ -148,6 +148,15 @@ test('Recherche magasin : accents, ordre des mots, ville et identifiants distinc
   assert.equal(searchStores(rows,'').length,3);
 });
 
+test('Recherche magasin : Pau ne trouve pas Melun par sa rue Paul Doumer',()=>{
+  const pau=locations.find(s=>s.name==='Fnac Pau'),melun=locations.find(s=>s.name==='Fnac Melun');
+  assert(pau&&melun&&/Paul Doumer/i.test(melun.address));
+  assert.deepEqual(searchStores([melun,pau],'PAU').map(s=>s.name),['Fnac Pau']);
+  assert.deepEqual(searchStores([melun,pau],'paul'),[],'une rue non affichée ne crée pas de faux résultat');
+  assert.deepEqual(searchStores([melun,pau],'MELUN').map(s=>s.name),['Fnac Melun']);
+  assert.equal(searchStores([{id:'ancien',name:'Fnac Nouvelle',city:'Test',previousNames:['Fnac Pau']}],'pau')[0].id,'ancien');
+});
+
 test('Copie non certifiée : statuts distincts et noms remplacés conservés et recherchables',()=>{
   const current=[{id:'ancien',name:'Fnac Ancienne',fnacId:'cl1',directoryStatus:'official',active:true},
     {id:'inchangé',name:'Fnac Même',fnacId:'cl2',directoryStatus:'official',active:true}];

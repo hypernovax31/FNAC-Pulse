@@ -33,7 +33,8 @@ test('Objectifs du jour : cibles à 0 ou absentes cachées, cible atteinte conse
   assert.doesNotMatch(html,/goal-period-context|Objectifs du jour|jeudi 29 octobre 2026|Vos ventes personnelles|Cibles du jour de 1 ou plus/);
   const friday=render(GoalsPanel,{...props,date:'2026-10-30'});
   assert.doesNotMatch(friday,/goal-period-context|Objectifs du jour|vendredi 30 octobre 2026|Vos ventes personnelles/);
-  assert.match(html,/>Ventes</);assert.match(html,/>Cible</);assert.match(html,/Objectif atteint/);
+  assert.match(html,/>Ventes</);assert.match(html,/>Cible</);assert.match(html,/Dépassé de 1/);
+  const reached=render(GoalsPanel,{...props,stats:{...props.stats,day:{mineByService:[{serviceId:1,count:2}]}}});assert.match(reached,/Objectif atteint/);
   assert.match(html,/role="progressbar"[^>]+aria-label="DMax, Aujourd’hui"/);
   assert.doesNotMatch(html,/Planning et calcul|Planning par défaut/);assert.match(html,/Ajouter/);
   const css=readFileSync(new URL('../src/styles.css',import.meta.url),'utf8');
@@ -123,4 +124,38 @@ test('Les sélecteurs de période restent sans bandeau de titre, dates ou descri
       assert(tree.root.findByProps({'aria-label':label}).props['aria-pressed']);
     }
   } finally {if(tree)await act(async()=>tree.unmount());}
+});
+
+test('Formulaire vendeur : minimum visible, période bloquée et contrôle avant appel',async()=>{
+  const goals={s1:{day:null,week:null,month:50,revision:'rev-minimum-001',minimum:{period:'month',amount:20},personal:{period:'month',amount:50}}};
+  const html=render(GoalForm,{services:props.services,goals,workdays:props.workdays,date:props.date,initialServiceId:1,onSave:()=>{}});
+  assert.match(html,/Minimum administrateur : 20 par mois/);assert.match(html,/aria-label="Période de référence"[^>]*disabled/);
+  assert.match(html,/aria-label="Cible de référence"[^>]+min="20"/);assert.match(html,/Seul un administrateur peut supprimer ce minimum/);
+  let tree;const saves=[];
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(GoalForm,{services:props.services,goals,workdays:props.workdays,date:props.date,initialServiceId:1,onSave:async v=>saves.push(v)}));});
+    const input=()=>tree.root.findByProps({'aria-label':'Cible de référence'}),submit=()=>tree.root.findByType('form').props.onSubmit({preventDefault(){}});
+    await act(async()=>input().props.onChange({target:{value:'19'}}));await act(async()=>submit());
+    assert.match(nodeText(tree.toJSON()),/Respectez le minimum et la période/);assert.equal(saves.length,0);
+    await act(async()=>input().props.onChange({target:{value:'20'}}));await act(async()=>submit());
+    assert.equal(saves.length,1);assert.deepEqual(saves[0].values,{day:null,week:null,month:20});
+  } finally {if(tree)await act(async()=>tree.unmount());}
+});
+
+test('Formulaire admin : minimum distinct de la cible personnelle et changement de période confirmé',async()=>{
+  const goals={s1:{day:null,week:null,month:50,revision:'rev-minimum-001',minimum:{period:'month',amount:20},personal:{period:'month',amount:50}}};
+  const p={services:props.services,goals,workdays:props.workdays,date:props.date,initialServiceId:1,admin:true,showPlanning:true};
+  const html=render(GoalForm,{...p,onSave:()=>{}});
+  assert.match(html,/CIBLE MINIMALE/);assert.match(html,/Cible personnelle actuelle/);assert.match(html,/aria-label="Cible de référence"[^>]+value="20"/);
+  assert.match(html,/samedi 6 parts, lundi et vendredi 5/);assert.match(html,/Une cible par jour travaillé reste identique/);
+  const old=Object.getOwnPropertyDescriptor(globalThis,'window');let tree,confirmed=false;const saves=[];
+  Object.defineProperty(globalThis,'window',{configurable:true,value:{confirm:()=>confirmed}});
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(GoalForm,{...p,onSave:async v=>saves.push(v)}));});
+    await act(async()=>tree.root.findByProps({'aria-label':'Période de référence'}).props.onChange({target:{value:'week'}}));
+    assert.match(nodeText(tree.toJSON()),/Changer de période remplace la référence/);
+    const submit=()=>tree.root.findByType('form').props.onSubmit({preventDefault(){}});
+    await act(async()=>submit());assert.equal(saves.length,0);
+    confirmed=true;await act(async()=>submit());assert.equal(saves.length,1);assert.deepEqual(saves[0].values,{day:null,week:20,month:null});
+  } finally {if(tree)await act(async()=>tree.unmount());if(old)Object.defineProperty(globalThis,'window',old);else delete globalThis.window;}
 });

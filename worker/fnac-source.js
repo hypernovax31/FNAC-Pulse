@@ -79,7 +79,7 @@ export async function fetchFnacDirectory(fetcher=fetch) {
   let res;
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
   try {
-    res=await fetcher(FNAC_DIRECTORY_URL,{signal:controller.signal,headers:{'User-Agent':'Fnac-Pulse/1.0 (mise à jour mensuelle des magasins)'}});
+    res=await fetcher(FNAC_DIRECTORY_URL,{signal:controller.signal,headers:{'User-Agent':'Fnac-Pulse/1.0 (mise à jour hebdomadaire des magasins)'}});
     if(!res.ok)bad([401,403,429].includes(res.status)?'blocked':'unavailable');
     if(res.url) {
       const u=new URL(res.url);

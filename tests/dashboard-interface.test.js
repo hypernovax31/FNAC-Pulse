@@ -31,7 +31,7 @@ test('Premier lancement PWA : l’accueil tactile masque le tableau de bord avan
   globalThis.localStorage={getItem(){return null;},setItem(){},removeItem(){}};
   try {
     const html=render(App);
-    assert.match(html,/Appuyez sur le bouton pour accéder à l’application des services/);assert.match(html,/Bienvenue sur/);
+    assert.doesNotMatch(html,/Appuyez sur le bouton pour accéder à l’application des services|startup-sound-toggle/);assert.match(html,/Bienvenue sur/);
     assert.match(html,/class="startup-start" disabled=""/);
     assert.doesNotMatch(html,/class="app-shell"/);assert.doesNotMatch(html,/Continuer sans son/);
   } finally {
@@ -55,7 +55,8 @@ test('Services : la grande zone ajoute, le retrait est distinct et les états re
     await act(async()=>tree.update(React.createElement(ServiceCard,{...props,pending:true})));
     assert(tree.root.findAllByType('button').every(button=>button.props.disabled));
     assert.equal(tree.root.findByProps({'aria-label':`Ajouter une vente ${service.name}`}).props['aria-busy'],true);
-    assert.match(render(ServiceCard,{...props,pending:true}),/Un instant…/);
+    assert.match(render(ServiceCard,{...props,pending:true}),/Envoi…/);
+    assert.match(render(ServiceCard,props),/Ajouter une vente/);assert.match(render(ServiceCard,props),/service-add-indicator/);
     await act(async()=>tree.update(React.createElement(ServiceCard,{...props,session:null,count:0})));
     assert.equal(tree.root.findAllByType('button').length,2);assert.equal(tree.root.findByProps({'aria-label':`Retirer une vente ${service.name}`}).props.disabled,true);
     assert.match(render(ServiceCard,{...props,session:null,count:0}),/Profil à choisir/);

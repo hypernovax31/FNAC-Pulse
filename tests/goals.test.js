@@ -154,8 +154,8 @@ test('Dimanche choisi, planning à 1, 3 ou 7 jours : objectifs jour, semaine et 
   assert.deepEqual(goalTargets({week:7},'2026-11-01',[0]),{day:7,week:7,month:35});
   assert.deepEqual(goalTargets({month:10},'2026-11-01',[0]),{day:2,week:2,month:10});
   assert.equal(goalTargets({week:5},'2026-10-27',[0,6,2]).day,2); // mardi
-  assert.equal(goalTargets({week:5},'2026-10-31',[0,6,2]).day,1); // samedi
-  assert.equal(goalTargets({week:5},'2026-11-01',[0,6,2]).day,2); // dimanche
+  assert.equal(goalTargets({week:5},'2026-10-31',[0,6,2]).day,2); // samedi
+  assert.equal(goalTargets({week:5},'2026-11-01',[0,6,2]).day,1); // dimanche
   assert.equal(goalTargets({day:5},'2026-11-01',[0,1,2,3,4,5,6]).week,35);
   assert.equal(goalTargets({day:5},'2026-11-11',[0,1,2,3,4,5,6]).day,5); // Férié inclus.
 });
@@ -196,4 +196,26 @@ test('Calcul mensuel direct : équivalent aux jours pour tous les plannings',()=
   }
   assert.equal(monthlyGoalTotal({},'2026-10-01'),null);
   assert.equal(monthlyGoalTotal({month:10},'2026-02-30'),null);
+});
+
+test('Pondération demandée : samedi 6, lundi et vendredi 5, autres jours travaillés 4',()=>{
+  const monday='2026-10-26',dates=Array.from({length:7},(_,i)=>plusDays(monday,i));
+  const six=[1,2,3,4,5,6];
+  assert.deepEqual(dates.map(date=>goalTargets({week:28},date,six).day),[5,4,4,4,5,6,0]);
+  assert.deepEqual(dates.map(date=>goalTargets({week:32},date,[...six,0]).day),[5,4,4,4,5,6,4]);
+  assert.deepEqual(dates.map(date=>goalTargets({week:15},date,[2,5,6]).day),[0,4,0,0,5,6,0]);
+  // La référence journalière garde son sens : une cible fixe chaque jour travaillé.
+  assert.deepEqual(dates.map(date=>goalTargets({day:3},date,six).day),[3,3,3,3,3,3,0]);
+  for(const goal of [0,1,2,5,13,28,9999]) {
+    const plan=dates.map(date=>goalTargets({week:goal},date,six).day);
+    assert.equal(plan.reduce((a,b)=>a+b,0),goal);assert(plan.every(Number.isInteger));
+  }
+});
+
+test('Pondération mensuelle : somme exacte, priorités et jours de repos',()=>{
+  const dates=isoDates(2026,11),days=[1,2,3,4,5,6];
+  const weights=dates.map(date=>{const d=new Date(`${date}T12:00:00Z`).getUTCDay();return d===0?0:d===6?6:d===1||d===5?5:4;});
+  const total=weights.reduce((a,b)=>a+b,0);
+  assert.deepEqual(dates.map(date=>goalTargets({month:total},date,days).day),weights);
+  for(const goal of [1,5,17,99,9999])assert.equal(dates.reduce((sum,date)=>sum+goalTargets({month:goal},date,days).day,0),goal);
 });

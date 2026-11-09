@@ -1,3 +1,5 @@
+import {distributeWeighted,goalDayWeight} from './goal-distribution.js';
+
 // Les objectifs sont récurrents et ne remplacent jamais les ventes enregistrées.
 export const GOAL_PERIODS = ['day','week','month'];
 export const GOAL_LIMIT = 9999;
@@ -63,28 +65,44 @@ function workedThrough(year,month,lastDay,workdays) {
     return count+(lastDay<firstOccurrence?0:1+Math.floor((lastDay-firstOccurrence)/7));
   },0);
 }
-// Les différences de cumuls arrondis répartissent les entiers régulièrement
-// sans en créer ni en perdre, même lorsque l'objectif est inférieur aux jours.
-function distributed(amount,slots,index) {
-  const cumulative=n=>Math.floor((amount*n+slots/2)/slots);
-  return cumulative(index)-cumulative(index-1);
+// Les allocations sont déterministes et bornées en mémoire : un changement
+// de planning ou de cible produit une autre clé, sans modifier les données.
+const planCache=new Map();
+function cachedPlan(key,create) {
+  if(planCache.has(key))return planCache.get(key);
+  const result=create();if(planCache.size>=1024)planCache.delete(planCache.keys().next().value);
+  planCache.set(key,result);return result;
+}
+function weeklyPlan(reference,workdays) {
+  return cachedPlan(`w:${reference.amount}:${workdays.join(',')}`,
+    ()=>distributeWeighted(reference.amount,workdays.map(goalDayWeight)));
+}
+function monthlyPlan(reference,date,workdays) {
+  const year=date.getUTCFullYear(),month=date.getUTCMonth(),length=monthDays(date);
+  return cachedPlan(`m:${reference.amount}:${year}:${month}:${workdays.join(',')}`,()=>{
+    const weights=Array.from({length},(_,i)=>{
+      const day=new Date(Date.UTC(year,month,i+1,12)).getUTCDay();
+      return workdays.includes(day)?goalDayWeight(day):0;
+    });
+    return distributeWeighted(reference.amount,weights);
+  });
 }
 function plannedForDate(reference,date,workdays) {
-  const weekday=date.getUTCDay(),indexInWeek=workdays.indexOf(weekday)+1;
-  if(!indexInWeek)return 0; // Jour hors du planning choisi, dimanche compris si décoché.
+  const weekday=date.getUTCDay(),indexInWeek=workdays.indexOf(weekday);
+  if(indexInWeek<0)return 0; // Jour hors du planning choisi, dimanche compris si décoché.
+  // Une cible par jour travaillé reste une quantité fixe par jour ; on pondère
+  // les totaux de référence hebdomadaires et mensuels, sans en changer la somme.
   if(reference.period==='day')return reference.amount;
-  if(reference.period==='week')return distributed(reference.amount,workdays.length,indexInWeek);
-  const year=date.getUTCFullYear(),month=date.getUTCMonth(),length=monthDays(date);
-  const slots=workedThrough(year,month,length,workdays),index=workedThrough(year,month,date.getUTCDate(),workdays);
-  return distributed(reference.amount,slots,index);
+  if(reference.period==='week')return weeklyPlan(reference,workdays)[indexInWeek];
+  return monthlyPlan(reference,date,workdays)[date.getUTCDate()-1];
 }
-// Calcul direct du mensuel équivalent à la somme des jours, sans parcourir
-// chaque jour pour chaque vendeur/service lors d'un récapitulatif magasin.
+// Calcul mensuel direct équivalent à la somme des jours.
 function monthTotal(reference,date,workdays) {
   if(reference.period==='month')return reference.amount;
   const year=date.getUTCFullYear(),month=date.getUTCMonth(),length=monthDays(date);
   if(reference.period==='day')return reference.amount*workedThrough(year,month,length,workdays);
-  return workdays.reduce((sum,weekday,index)=>sum+workedThrough(year,month,length,[weekday])*distributed(reference.amount,workdays.length,index+1),0);
+  const plan=weeklyPlan(reference,workdays);
+  return workdays.reduce((sum,weekday,index)=>sum+workedThrough(year,month,length,[weekday])*plan[index],0);
 }
 export function monthlyGoalTotal(entry,isoDate,days=DEFAULT_WORKDAYS) {
   const reference=goalReference(entry),date=parseDate(isoDate);

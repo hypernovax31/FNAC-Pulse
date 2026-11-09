@@ -1,3 +1,4 @@
+import {summarize,parisToday} from '../src/cloud-stats.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -10,7 +11,7 @@ const require=createRequire(import.meta.url),{act}=TestRenderer;
 const bundled=await build({entryPoints:['src/App.jsx'],bundle:true,platform:'node',format:'cjs',write:false,external:['react','lucide-react'],define:{'import.meta.env':'{"BASE_URL":"/","VITE_BACKEND":"cloud"}'},logLevel:'silent',plugins:[{name:'startup-fixtures',setup(b){
   b.onResolve({filter:/^\.\/api$/},()=>({path:'api',namespace:'mock'}));
   b.onResolve({filter:/^\.\/cloud$/},()=>({path:'cloud',namespace:'mock'}));
-  b.onLoad({filter:/^api$/,namespace:'mock'},()=>({contents:`export const api=(...x)=>globalThis.__startupTest.api(...x);export const uid=()=>"test-id";export const dateLabel=()=>"date";export const timeLabel=()=>"heure";export const kmBetween=(a,b,c,d)=>Math.abs(a-c)+Math.abs(b-d);`,loader:'js'}));
+  b.onLoad({filter:/^api$/,namespace:'mock'},()=>({contents:`export const api=(...x)=>globalThis.__startupTest.api(...x);let counter=0;export const uid=()=>"test-id-"+(++counter);export const dateLabel=()=>"date";export const timeLabel=()=>"heure";export const kmBetween=(a,b,c,d)=>Math.abs(a-c)+Math.abs(b-d);`,loader:'js'}));
   b.onLoad({filter:/^cloud$/,namespace:'mock'},()=>({contents:`
     export const claimAdminAccess=(...x)=>globalThis.__directLogin?.claim?.(...x),registerAdminForApproval=(...x)=>globalThis.__directLogin?.manualRegister?.(...x),deleteTestFirebaseAccount=()=>{}; export const CLOUD=true,ADMIN_SESSION='admin';
     export const observeVendor=fn=>globalThis.__startupTest.observe(fn);
@@ -388,7 +389,9 @@ test('Cartes tactiles : doubles gestes, retrait distinct, annulation préservée
   const period={total:1,byService:[{id:1,name:'DMax',count:1}],bySeller:[],mineByService:[{serviceId:1,count:1}],start:data.today,end:data.today};
   const live={...data,stats:{day:period,week:period,month:period,mine:[{serviceId:1,count:1}],mineTotal:1,leaderboard:[],activity:[]}};
   try {
-    tree=await mount();await act(async()=>{assert(e.onChange);e.onChange(live,true);await tick();});
+    const day=parisToday(),catalog={sellers:data.sellers,services:data.services,stores:data.stores,departmentsByStore:data.departmentsByStore,serviceOrders:{}};
+    const existing={id:'vente-existante',storeId:session.storeId,sellerId:1,departmentId:'tech',serviceId:1,createdAt:new Date().toISOString(),businessDate:day,deletedAt:null,source:'sale'};
+    tree=await mount();await act(async()=>{assert(e.onChange);e.onChange({...live,today:day},true,{catalog,sales:[existing],generation:''});await tick();});
     const add=()=>tree.root.findByProps({'aria-label':'Ajouter une vente DMax'}),remove=()=>tree.root.findByProps({'aria-label':'Retirer une vente DMax'});
     const addClick=add().props.onClick,removeClick=remove().props.onClick;
     await act(async()=>{addClick();addClick();removeClick();await tick();});
@@ -406,7 +409,7 @@ test('Cartes tactiles : doubles gestes, retrait distinct, annulation préservée
     await act(async()=>{e.onError({code:'unavailable'});await tick();});
     const before=e.requests.filter(x=>x.path==='/api/sales'&&x.method==='POST').length;
     await e.press(add());assert.equal(e.requests.filter(x=>x.path==='/api/sales'&&x.method==='POST').length,before);
-    assert.match(text(tree.toJSON()),/Connexion interrompue : la vente n’a pas été enregistrée/);
+    assert.match(text(tree.toJSON()),/Connexion interrompue : aucune nouvelle vente n’a été envoyée/);
   } finally {data.services=previousServices;await finish(tree,e);}
 });
 
@@ -618,7 +621,8 @@ test('Tableau de bord après le lancement : invitation en haut et textes conserv
     tree=await mount();await e.press(button(tree,'Continuer'));
     const output=text(tree.toJSON());
     assert(output.indexOf('Restez informés')>=0&&output.indexOf('Restez informés')<output.indexOf('VOTRE TABLEAU DE BORD'));
-    assert.match(output,/VENTES QUOTIDIENNES/);assert.match(output,/Une vente de services \? Un clic et c’est enregistré\./);
+    assert.match(output,/VENTES QUOTIDIENNES/);assert.match(output,/Touchez un service pour ajouter une vente\./);
+    assert(output.indexOf('VENTES QUOTIDIENNES')<output.indexOf('VOTRE PROGRESSION'));assert.match(output,/En cas d’égalité : Nb de DMAX, puis Nb de FVD/);
     assert.doesNotMatch(output,/VOTRE ESPACE DE VENTE/);assert.match(output,/La vente, c’est notre rayon\. Les services aussi\. 😉/);
     assert(tree.root.findByProps({'aria-label':'Mon profil, Morgan'}));
   } finally {await finish(tree,e);}
@@ -685,4 +689,83 @@ test('Échec de connexion admin au lancement : pas de droit attribué ni déconn
     assert.match(text(dialog()),/Identifiants incorrects/);assert.equal(e.adminValues.get('pulse-admin-token'),undefined);
     assert.equal(e.logoutCount,0);assert.match(text(section(tree,'Sélection du profil vendeur')),/Morgan/);
   } finally {await finish(tree,e);}
+});
+
+test('Ventes rapides : affichage immédiat provisoire, déduplication temps réel, réponse tardive et annulation',async()=>{
+  const previousServices=data.services,service={id:1,name:'DMax',active:true};data.services=[service];
+  const e=environment({geoPermission:'granted',notificationPermission:'granted',wanted:true,auth:session});let tree;
+  const pending=[],api=e.mock.api;
+  e.mock.api=(path,options={})=>{
+    if(path==='/api/sales'&&options.method==='POST'){
+      e.requests.push({path,method:'POST',body:options.body});
+      return new Promise((resolve,reject)=>pending.push({resolve,reject,body:options.body}));
+    }
+    return api(path,options);
+  };
+  const day=parisToday(),catalog={sellers:data.sellers,services:data.services,stores:data.stores,departmentsByStore:data.departmentsByStore,serviceOrders:{}};
+  const emit=sales=>e.onChange({...data,today:day,stats:summarize(catalog,sales,session.sellerId,day,session.storeId)},true,{catalog,sales,generation:'generation-test'});
+  const sale=body=>({id:body.requestId,storeId:session.storeId,sellerId:1,departmentId:'tech',serviceId:1,createdAt:new Date().toISOString(),businessDate:day,deletedAt:null,source:'sale'});
+  try {
+    tree=await mount();await act(async()=>{emit([]);await tick();});
+    const count=()=>text(tree.root.findByProps({id:'service-count-1'})),add=()=>tree.root.findByProps({'aria-label':'Ajouter une vente DMax'});
+    const baseBootstrap=e.requests.filter(x=>x.path.startsWith('/api/bootstrap')).length;
+    await act(async()=>{const click=add().props.onClick;click();click();await tick();});
+    assert.equal(pending.length,1);assert.match(count(),/^1 aujourd’hui1 en cours/);
+    assert.match(text(tree.toJSON()),/les chiffres incluent 1 vente en cours/);assert.doesNotMatch(text(tree.toJSON()),/Vente enregistrée\./);
+    assert(add().props.disabled); // pas de doublon par double geste tant que le POST n'a pas répondu
+    const first=sale(pending[0].body);
+    await act(async()=>{emit([first]);await tick();});
+    assert.match(count(),/^1 aujourd’hui$/);assert.doesNotMatch(text(tree.toJSON()),/les chiffres incluent/);
+    assert(add().props.disabled); // l'instantané a précédé la réponse HTTP
+    await act(async()=>{pending[0].resolve({id:first.id});await tick();await tick();});
+    assert(!add().props.disabled);assert.match(text(tree.toJSON()),/Vente enregistrée\./);
+    assert.equal(e.requests.filter(x=>x.path.startsWith('/api/bootstrap')).length,baseBootstrap,'pas de bootstrap additionnel bloquant');
+    await act(async()=>{add().props.onClick();await tick();});assert.equal(pending.length,2);assert.match(count(),/^2 aujourd’hui1 en cours/);
+    await act(async()=>{pending[1].resolve({id:pending[1].body.requestId});await tick();await tick();});
+    assert(!add().props.disabled);assert.match(count(),/^2 aujourd’hui1 en cours/);assert(button(tree,'Annuler'));
+    await e.press(button(tree,'Annuler'));assert.match(count(),/^1 aujourd’hui$/);assert.match(text(tree.toJSON()),/Vente annulée\./);
+    await act(async()=>{add().props.onClick();await tick();});assert.equal(pending.length,3);assert.match(count(),/^2 aujourd’hui1 en cours/);
+    await act(async()=>{pending[2].reject(Error('réponse perdue'));await tick();await tick();});
+    assert.match(count(),/^1 aujourd’hui$/);assert.match(text(tree.toJSON()),/Résultat non confirmé/);assert.doesNotMatch(text(tree.toJSON()),/Vente enregistrée\./);
+    const retry=()=>tree.root.findByProps({'aria-label':'Vérifier l’envoi DMax'});
+    assert(!retry().props.disabled);assert(tree.root.findByProps({'aria-label':'Retirer une vente DMax'}).props.disabled);
+    await act(async()=>{retry().props.onClick();await tick();});assert.equal(pending.length,4);
+    assert.equal(pending[3].body.requestId,pending[2].body.requestId,'le rejeu garde le même identifiant');
+    await act(async()=>{pending[3].resolve({id:pending[3].body.requestId,duplicate:true});await tick();await tick();});
+    assert(!add().props.disabled);assert.match(text(tree.toJSON()),/Vente enregistrée\./);
+  } finally {data.services=previousServices;await finish(tree,e);}
+});
+
+test('Réponse perdue : reprise du même identifiant après réouverture et résolution par instantané serveur',async()=>{
+  const previousServices=data.services;data.services=[{id:1,name:'DMax',active:true}];
+  const e=environment({geoPermission:'granted',notificationPermission:'granted',wanted:true,auth:session});let tree;
+  const pending=[],api=e.mock.api;
+  e.mock.api=(path,options={})=>{
+    if(path==='/api/sales'&&options.method==='POST'){
+      e.requests.push({path,method:'POST',body:options.body});return new Promise((resolve,reject)=>pending.push({resolve,reject,body:options.body}));
+    }
+    return api(path,options);
+  };
+  const day=parisToday(),catalog={sellers:data.sellers,services:data.services,stores:data.stores,departmentsByStore:data.departmentsByStore,serviceOrders:{}};
+  const emit=sales=>e.onChange({...data,today:day,stats:summarize(catalog,sales,1,day,session.storeId)},true,{catalog,sales,generation:''});
+  try {
+    tree=await mount();await act(async()=>{emit([]);await tick();});
+    await act(async()=>{tree.root.findByProps({'aria-label':'Ajouter une vente DMax'}).props.onClick();await tick();});
+    const id=pending[0].body.requestId;
+    assert.equal(pending[0].body.expectedDate,day);assert.equal(pending[0].body.expectedDepartmentId,'tech');
+    assert.match(e.values.get('fnac-pulse-pending-sales-v1'),new RegExp(id));
+    await act(async()=>{pending[0].reject(Error('réponse perdue'));await tick();});
+    assert(tree.root.findByProps({'aria-label':'Vérifier l’envoi DMax'}));
+    await act(async()=>tree.unmount());tree=null;
+    tree=await mount();await act(async()=>{emit([]);await tick();});
+    const retry=tree.root.findByProps({'aria-label':'Vérifier l’envoi DMax'});
+    await act(async()=>{retry.props.onClick();await tick();});assert.equal(pending[1].body.requestId,id);assert.equal(pending[1].body.expectedDate,day);
+    // L'instantané durable arrive avant une seconde réponse perdue.
+    const committed={id,storeId:session.storeId,sellerId:1,departmentId:'tech',serviceId:1,businessDate:day,createdAt:new Date().toISOString(),deletedAt:null,source:'sale'};
+    await act(async()=>{emit([committed]);await tick();});assert.equal(JSON.parse(e.values.get('fnac-pulse-pending-sales-v1')).length,0);
+    await act(async()=>{pending[1].reject(Error('réponse perdue encore'));await tick();await tick();});
+    assert.match(text(tree.toJSON()),/Vente enregistrée\./);assert.doesNotMatch(text(tree.toJSON()),/Résultat non confirmé/);
+    assert.match(text(tree.root.findByProps({id:'service-count-1'})),/^1 aujourd’hui$/);
+    assert(!tree.root.findByProps({'aria-label':'Ajouter une vente DMax'}).props.disabled);
+  } finally {data.services=previousServices;await finish(tree,e);}
 });

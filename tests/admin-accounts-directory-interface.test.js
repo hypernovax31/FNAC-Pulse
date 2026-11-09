@@ -73,7 +73,7 @@ test('Administration : ordre exact des onglets et accès clavier',async()=>{
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(AdminTabs,{tab:'stores',onSelect:x=>selected.push(x)}));await tick();});
     const tabs=tree.root.findAllByProps({role:'tab'});
-    assert.deepEqual(tabs.map(text),['Magasins','Ventes','Objectifs','Vendeurs','Services','Départements','Administrateur']);
+    assert.deepEqual(tabs.map(text),['Magasins','Vendeurs','Objectifs','Ventes','Services','Départements','Administrateurs']);
     await act(async()=>tabs[6].props.onClick());assert.deepEqual(selected,['security']);
     await act(async()=>tabs[6].props.onKeyDown({key:'ArrowRight',preventDefault(){}}));assert.deepEqual(selected,['security','stores']);
   } finally {if(tree)await act(async()=>tree.unmount());e.restore();}

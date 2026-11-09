@@ -495,8 +495,13 @@ test('Cloud départements : affectations, agrégats privés, historique et notif
   const added=await req('/api/admin/departments','POST',{storeId:store,name:'Univers photo'},'admin');assert.equal(added.status,200);
   assert.equal((await req('/api/admin/departments','POST',{storeId:store,name:'univers PHOTO'},'admin')).status,409);
   assert.equal((await req(`/api/admin/departments/${added.body.id}`,'PATCH',{storeId:store,name:'Image'},'admin')).status,200);
-  assert.equal((await req('/api/admin/entities/sellers/2','PATCH',{storeId:store,departmentId:'editorial'},'admin')).status,200);
-  assert.equal((await req('/api/admin/entities/sellers/4','PATCH',{storeId:store,departmentId:'editorial'},'admin')).status,200);
+  // Les mutations sont refusées. On prépare directement un catalogue fictif
+  // avec deux personnes déjà en éditorial, comme après une ancienne version.
+  assert.equal((await req('/api/admin/entities/sellers/2','PATCH',{storeId:store,departmentId:'editorial'},'admin')).status,409);
+  assert.equal((await req('/api/admin/entities/sellers/4','PATCH',{storeId:store,departmentId:'editorial'},'admin')).status,409);
+  const prior=(await db.get('pulse/catalog')).data;
+  for(const id of [2,4])prior.sellers.find(s=>s.id===id).departmentId='editorial';
+  await db.commit([db.write('pulse/catalog',prior)]);
   assert.equal((await req('/api/admin/departments/editorial','PATCH',{storeId:store,active:false},'admin')).status,409);
   assert.equal((await req('/api/admin/entities/sellers/3','PATCH',{storeId:other,departmentId:'editorial'},'admin')).status,400);
   assert.equal((await req('/api/admin/entities/sellers','POST',{storeId:other,name:'Autre équipe',departmentId:'tech'},'admin')).status,200);
@@ -530,11 +535,15 @@ test('Cloud départements : affectations, agrégats privés, historique et notif
   assert.equal(await flush(),1);assert.equal(sent.at(-1).token,'registration-token-for-seller-4-123456');
   assert.equal((await db.get(`pulseStores/${store}/sales/tech-sale-000001`)).data.departmentId,'tech');
   assert.equal((await db.get(`pulseStores/${store}/sales/editorial-sale-00001`)).data.departmentId,'editorial');
-  // An queued target may move before delivery; the consumer rechecks membership.
+  // Vérifier aussi une donnée historique qui aurait été réaffectée avant le
+  // verrouillage : la notification ancienne doit toujours être filtrée.
   assert.equal((await req('/api/sales','POST',{serviceId:1,requestId:'before-move-sale-001'},'seller-1')).status,200);
   await Promise.all(waits.splice(0));assert.equal(queued.length,1);
-  assert.equal((await req('/api/admin/entities/sellers/3','PATCH',{storeId:store,departmentId:'editorial'},'admin')).status,200);
-  assert.equal((await req('/api/admin/entities/sellers/1','PATCH',{storeId:store,departmentId:'editorial'},'admin')).status,200);
+  assert.equal((await req('/api/admin/entities/sellers/3','PATCH',{storeId:store,departmentId:'editorial'},'admin')).status,409);
+  assert.equal((await req('/api/admin/entities/sellers/1','PATCH',{storeId:store,departmentId:'editorial'},'admin')).status,409);
+  const legacy=(await db.get('pulse/catalog')).data;
+  for(const id of [1,3])legacy.sellers.find(s=>s.id===id).departmentId='editorial';
+  await db.commit([db.write('pulse/catalog',legacy)]);
   const movedMessage=makeMessage(queued.shift());await worker.queue({messages:[movedMessage]},env);assert(movedMessage.acked);assert.equal(sent.length,2);
   const oldSale=(await db.get(`pulseStores/${store}/sales/tech-sale-000001`)).data;assert.equal(oldSale.departmentId,'tech');
   assert.equal((await req('/api/sales/remove','POST',{serviceId:1},'seller-1')).status,409);
@@ -725,10 +734,10 @@ function simulatedFnacPage(entries,declared=entries.length+2) {
   const list=entries.map(s=>`<a href="https://www.fnac.com/ville/fiche/${s.fnacId}/w-4">${s.name.replace(/^Fnac /,'').replaceAll('&','&amp;')}</a>`).join('');
   return `<!doctype html><html><body><h1>Trouver un magasin Fnac</h1><span>${declared}</span><span>Magasins</span>${list}</body></html>`;
 }
-test('Annuaire cloud : refus, essai mensuel, succès simulé concurrent et liste partielle sans perte',async()=>{
+test('Annuaire cloud : essai hebdomadaire silencieux, refus, succès simulé concurrent et liste partielle sans perte',async()=>{
   const db=new MemoryDb();let supplied=new Response('Fnac refuse les requêtes automatiques',{status:403});
   const worker=createWorker({createDb:()=>db,fetchDirectory:async()=>supplied.clone(),verifyIdToken:async(_env,t)=>{if(t!=='admin')throw Error();return {sub:'admin-uid'};}});
-  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'admin-uid'},waiting=[],ctx={waitUntil(p){waiting.push(p)}};
+  const queued=[],env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'admin-uid',PULSE_QUEUE:{async sendBatch(items){queued.push(...items)}}},waiting=[],ctx={waitUntil(p){waiting.push(p)}};
   const req=async(path,method='GET',token)=>{
     const response=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:token?{authorization:`Bearer ${token}`}:{}}),env,ctx);
     return {status:response.status,body:await response.json()};
@@ -739,7 +748,8 @@ test('Annuaire cloud : refus, essai mensuel, succès simulé concurrent et liste
   await db.commit([db.write('pulseAccess/x',pin),db.write(`pulseStores/${LEGACY_STORE_ID}/sales/ancienne`,sale)]);
   const before=(await db.get('pulse/catalog')).data;
   assert.equal((await req('/api/admin/stores/sync','POST')).status,401);
-  await worker.scheduled({cron:'0 6 1 * *'},env,ctx);await Promise.all(waiting.splice(0));
+  await worker.scheduled({cron:'0 6 * * 1'},env,ctx);await Promise.all(waiting.splice(0));
+  assert.deepEqual(queued,[],'la recherche de magasins ne crée aucune notification');
   let after=(await db.get('pulse/catalog')).data;
   assert.equal(after.directorySync.lastResult,'blocked');assert.deepEqual(after.stores,before.stores);assert.deepEqual(after.sellers,before.sellers);
   assert.equal((await req('/api/admin/stores/sync','POST','admin')).body.result,'blocked');
@@ -771,7 +781,7 @@ test('Annuaire cloud : refus, essai mensuel, succès simulé concurrent et liste
 
   const safe=structuredClone(after.stores);
   supplied=new Response(simulatedFnacPage(fresh.slice(0,100),191),{status:200});
-  await worker.scheduled({cron:'0 6 1 * *'},env,ctx);await Promise.all(waiting.splice(0));
+  await worker.scheduled({cron:'0 6 * * 1'},env,ctx);await Promise.all(waiting.splice(0));
   after=(await db.get('pulse/catalog')).data;
   assert.equal(after.directorySync.lastResult,'incomplete');assert.deepEqual(after.stores,safe);
 });
@@ -2072,7 +2082,7 @@ test('Cloud : ajout historique ciblé, confirmé, idempotent, sans notification 
   const req=async(path,method='GET',body,token='admin')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
   const bootstrap=(await req('/api/bootstrap','GET',undefined,'')).body,other=bootstrap.stores.find(s=>s.name==='Fnac Bordeaux').id;
   const catalog=(await db.get('pulse/catalog')).data,seller=catalog.sellers.find(s=>s.id===1),service=catalog.services.find(s=>s.id===1),storeName=catalog.stores.find(s=>s.id===store).name;
-  seller.active=false;catalog.sellerFlags.s1=false;service.active=false;
+  seller.active=false;seller.departmentId='editorial';catalog.sellerFlags.s1=false;service.active=false;
   catalog.departmentsByStore={[store]:[{id:'tech',name:'Produits Techniques',active:true},{id:'editorial',name:'Ancien département',active:false}]};
   const access={active:true,storeId:store,sellerId:2,sellerKey:'s2',version:'existing-session',pinMac:'test-only'},status={active:true,storeId:store,sellerId:2,sellerKey:'s2',version:'existing-session'};
   await db.commit([db.write('pulse/catalog',catalog),db.write(`pulseGoals/${store}-1`,{targets:{s1:10}}),db.write('pulseAccess/existing-session',access),db.write('pulseStatus/existing-session',status),
@@ -2085,6 +2095,7 @@ test('Cloud : ajout historique ciblé, confirmé, idempotent, sans notification 
     assert.equal((await req(url,'POST',{...body,...invalid})).status,400,JSON.stringify(invalid));
   for(const changed of [{storeId:other},{sellerId:999999},{serviceId:999999},{departmentId:'unknown'},{expectedStoreName:'Incorrect'},{expectedSellerName:'Incorrect'},{expectedServiceName:'Incorrect'},{expectedDepartmentName:'Incorrect'}])
     assert.equal((await req(url,'POST',{...body,...changed})).status,409,JSON.stringify(changed));
+  assert.equal((await req(url,'POST',{...body,departmentId:'tech',expectedDepartmentName:'Produits Techniques'})).status,409); // autre département valide, refusé
   const [one,two]=await Promise.all([req(url,'POST',body),req(url,'POST',body)]);
   assert.equal(one.status,200);assert.equal(two.status,200);assert.deepEqual([one.body.duplicate,two.body.duplicate].sort(),[false,true]);
   assert.equal(one.body.added,3);assert.equal(two.body.added,3);
@@ -2469,4 +2480,94 @@ test('Activation par lien : blocage avant mot de passe, échec sûr et compatibi
   assert.equal((await req('/api/auth/admin-invitations/accept',{confirmed:true},'invited')).status,200,'reprise idempotente après accès');outage=false;
   const oldLookup=lookups;assert.equal((await req('/api/admin/invitations',{email:'old@example.test',requestId:'old-invitation-001',showInPanel:true},'root')).status,200);
   assert.equal((await req('/api/auth/admin-invitations/accept',{confirmed:true},'old')).status,200);assert.equal(lookups,oldLookup,'invitations existantes sans nouveau marqueur conservées');
+});
+
+test('Minimum cloud : anciens objectifs libres, contrainte serveur, réglages concurrents et autres données préservées',async()=>{
+  const db=new MemoryDb(),store=LEGACY_STORE_ID,uid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;
+  const identities={admin:{sub:'administrator'},seller:{sub:uid,role:'seller',storeId:store,sellerId:1,sellerKey:'s1',accessVersion:'kept-version'}};
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async(_env,t)=>{if(!identities[t])throw Error('invalid');return identities[t];}});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator'},ctx={waitUntil(){}};
+  const call=async(path,method='GET',body,token='seller')=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{authorization:`Bearer ${token}`,...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  await call('/api/bootstrap','GET',undefined,'admin');
+  const access={active:true,storeId:store,sellerId:1,sellerKey:'s1',version:'kept-version'},legacy={day:4,week:12,month:30,revision:'legacy-revision-001'},other={day:null,week:7,month:null,revision:'legacy-revision-002'};
+  await db.commit([db.write(`pulseAccess/${uid}`,access),db.write(`pulseStatus/${uid}`,access),db.write(`pulseGoals/${uid}`,{storeId:store,sellerId:1,goals:{s1:legacy,s2:other},workdays:[1,2,3,4,5,6]})]);
+  const get=async()=>(await call('/api/goals')).body.goals;
+  assert.deepEqual((await get()).s1,legacy);assert.deepEqual((await get()).s2,other);
+  const month=n=>({day:null,week:null,month:n}),week=n=>({day:null,week:n,month:null}),empty=month(null);
+  const personal=(values,revision)=>call('/api/goals','POST',{serviceId:1,values,revision});
+  const admin=(values,revision)=>call('/api/admin/goals','POST',{storeId:store,sellerId:1,serviceId:1,values,revision},'admin');
+  let result=await personal(month(25),legacy.revision);assert.equal(result.status,200);assert.equal(result.body.goals.s1.minimum,undefined);
+  result=await admin(month(20),result.body.goals.s1.revision);assert.equal(result.status,200);
+  let entry=result.body.goals.s1;assert.deepEqual(entry.minimum,{period:'month',amount:20});assert.equal(entry.month,25);
+  for(const values of [month(19),week(9999),empty,{day:9999,week:9999,month:0}]) {
+    const denied=await personal(values,entry.revision);assert.equal(denied.status,403);assert.match(denied.body.error,/minimum/);
+  }
+  assert.deepEqual((await get()).s1,entry); // aucun client ancien ou malveillant ne peut contourner le plancher
+  result=await personal(month(50),entry.revision);assert.equal(result.status,200);entry=result.body.goals.s1;
+  result=await admin(month(60),entry.revision);entry=result.body.goals.s1;assert.equal(entry.month,60);assert.equal(entry.personal.amount,50);
+  result=await admin(month(20),entry.revision);entry=result.body.goals.s1;assert.equal(entry.month,50);assert.equal(entry.minimum.amount,20);
+  result=await personal(month(20),entry.revision);entry=result.body.goals.s1;assert.equal(entry.month,20);
+  const race=await Promise.all([personal(month(21),entry.revision),admin(month(70),entry.revision)]);
+  assert.deepEqual(race.map(x=>x.status).sort(),[200,409]);
+  entry=(await get()).s1;
+  if(entry.minimum.amount!==70){result=await admin(month(70),entry.revision);assert.equal(result.status,200);entry=result.body.goals.s1;}
+  assert.equal(entry.minimum.amount,70);assert(entry.month>=70);
+  assert.equal((await personal(month(0),entry.revision)).status,403);
+  result=await admin(week(8),entry.revision);entry=result.body.goals.s1;assert.deepEqual(entry.minimum,{period:'week',amount:8});
+  assert.equal((await personal(month(9999),entry.revision)).status,403);
+  result=await admin(empty,entry.revision);entry=result.body.goals.s1;assert.equal(entry.minimum,undefined);
+  assert.equal((await personal(month(1),entry.revision)).status,200);
+  assert.deepEqual((await get()).s2,other);assert.deepEqual((await db.get(`pulseAccess/${uid}`)).data,access);
+  assert.deepEqual((await db.get(`pulseGoals/${uid}`)).data.workdays,[1,2,3,4,5,6]);
+});
+
+test('Vente cloud : reprise liée à la journée, au département et à la génération, sans recréer une vente annulée',async()=>{
+  const db=new MemoryDb(),store=LEGACY_STORE_ID,uid=`seller-${(await digestBase64(`${store}:1`)).slice(0,28)}`;
+  const worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:uid,role:'seller',storeId:store,sellerId:1,sellerKey:'s1',accessVersion:'v1'})});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac'},ctx={waitUntil(p){p.catch(()=>{});}};
+  const call=async(path,method='GET',body)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{authorization:'Bearer vendeur',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  await call('/api/bootstrap');const access={active:true,storeId:store,sellerId:1,sellerKey:'s1',version:'v1'};
+  await db.commit([db.write(`pulseAccess/${uid}`,access),db.write(`pulseStatus/${uid}`,access),db.write(`pulseStores/${store}/sales/~sales-reset~`,{generation:'reset-test-0001'})]);
+  const body={serviceId:1,requestId:'sale-safe-replay-0001',clientId:'appareil',expectedDepartmentId:'tech',expectedGeneration:'reset-test-0001',expectedDate:parisToday()};
+  const previousDay=await call('/api/sales','POST',{...body,expectedDate:'2020-01-01'});
+  assert.equal(previousDay.status,409);assert.match(previousDay.body.error,/journée a changé/);
+  assert.equal((await call('/api/sales','POST',{...body,expectedDate:null})).status,409);
+  assert.equal((await call('/api/sales','POST',{...body,expectedGeneration:''})).status,409);
+  assert.equal((await call('/api/sales','POST',{...body,expectedDepartmentId:'editorial'})).status,409);
+  assert.equal((await db.query(`pulseStores/${store}/sales`)).filter(row=>!row.id.startsWith('~')).length,0);
+  const first=await call('/api/sales','POST',body),duplicate=await call('/api/sales','POST',body);
+  assert.equal(first.status,200);assert.equal(duplicate.status,200);assert.equal(duplicate.body.duplicate,true);
+  assert.equal((await db.query(`pulseStores/${store}/sales`)).filter(row=>!row.id.startsWith('~')).length,1);
+  assert.equal((await call(`/api/sales/${body.requestId}`,'DELETE',{})).status,200);
+  const deletedReplay=await call('/api/sales','POST',body);assert.equal(deletedReplay.status,409);assert.match(deletedReplay.body.error,/déjà été annulée/);
+  assert.equal((await db.get(`pulseStores/${store}/sales/${body.requestId}`)).data.deletedAt!==null,true);
+  // Les anciennes interfaces n'envoient pas les nouveaux champs et restent compatibles.
+  const legacy=await call('/api/sales','POST',{serviceId:1,requestId:'sale-legacy-client-0001',clientId:'ancien'});
+  assert.equal(legacy.status,200);
+  assert.equal((await db.get(`pulseStores/${store}/sales/${legacy.body.id}`)).data.businessDate,parisToday());
+});
+
+test('Département vendeur définitif : création, anciennes interfaces, archivage et données préservées',async()=>{
+  const db=new MemoryDb(),worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'administrator'})});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator'},ctx={waitUntil(){}};
+  const call=async(path,method='GET',body)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{authorization:'Bearer admin',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  await call('/api/bootstrap');const store=LEGACY_STORE_ID;
+  const created=await call('/api/admin/entities/sellers','POST',{storeId:store,name:'Vendeur fictif',departmentId:'editorial'});
+  assert.equal(created.status,200);const id=created.body.id,path=`/api/admin/entities/sellers/${id}`;
+  const goal={storeId:store,sellerId:id,goals:{s1:{month:22}}},sale={id:'legacy-fictif-0001',storeId:store,sellerId:id,departmentId:'editorial'};
+  await db.commit([db.write('pulseGoals/fictif',goal),db.write(`pulseStores/${store}/sales/${sale.id}`,sale)]);
+  const before=(await db.get('pulse/catalog')).data.sellers.find(s=>s.id===id);
+  const denied=await call(path,'PATCH',{storeId:store,departmentId:'tech',name:'Ne doit pas changer'});
+  assert.equal(denied.status,409);assert.match(denied.body.error,/ne peut pas être modifié/);
+  assert.deepEqual((await db.get('pulse/catalog')).data.sellers.find(s=>s.id===id),before);
+  assert.equal((await call(path,'PATCH',{storeId:store,departmentId:'editorial',name:'Nom modifié'})).status,200,'même département pour une ancienne interface');
+  assert.equal((await call('/api/admin/departments/editorial','PATCH',{storeId:store,active:false})).status,409);
+  assert.equal((await call(path,'PATCH',{storeId:store,active:false})).status,200);
+  assert.equal((await call(path,'PATCH',{storeId:store,departmentId:'tech'})).status,409,'un vendeur archivé reste protégé');
+  assert.equal((await call('/api/admin/departments/editorial','PATCH',{storeId:store,active:false})).status,200);
+  const restore=await call(path,'PATCH',{storeId:store,active:true});assert.equal(restore.status,409);assert.match(restore.body.error,/Restaurez/);
+  assert.equal((await call('/api/admin/departments/editorial','PATCH',{storeId:store,active:true})).status,200);
+  assert.equal((await call(path,'PATCH',{storeId:store,active:true})).status,200);
+  const after=(await db.get('pulse/catalog')).data.sellers.find(s=>s.id===id);assert.equal(after.departmentId,'editorial');assert.equal(after.name,'Nom modifié');
+  assert.deepEqual((await db.get('pulseGoals/fictif')).data,goal);assert.deepEqual((await db.get(`pulseStores/${store}/sales/${sale.id}`)).data,sale);
 });

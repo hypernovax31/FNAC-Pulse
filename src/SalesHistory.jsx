@@ -5,7 +5,7 @@ import {sellerDepartmentId} from './departments.js';
 import {MAX_SALE_CORRECTION,SALE_CORRECTION_CONFIRMATION,SALE_ADDITION_CONFIRMATION,saleHistoryRange,validAdditionDate} from './sale-history.js';
 
 const dateText=value=>dateLabel(value,{day:'numeric',month:'long',year:'numeric'});
-const emptyAddition=()=>({serviceId:'',departmentId:'',quantity:'1'});
+const emptyAddition=()=>({serviceId:'',quantity:'1'});
 function hour(value) {try{return value&&Number.isFinite(Date.parse(value))?timeLabel(value):'Heure inconnue';}catch{return 'Heure inconnue';}}
 function recordedAt(value) {
   try {return value&&Number.isFinite(Date.parse(value))?new Intl.DateTimeFormat('fr-FR',{timeZone:'Europe/Paris',dateStyle:'short',timeStyle:'short'}).format(new Date(value)):'';}
@@ -68,9 +68,10 @@ export function SalesHistoryPanel({storeId,storeName,sellers,services,additionSe
   function prepareAdd(event) {
     event.preventDefault();
     if(!seller||!range||disabled||saving||pending)return;
-    const service=additionServices.find(s=>String(s.id)===addition.serviceId),department=departments.find(d=>d.id===addition.departmentId);
+    const service=additionServices.find(s=>String(s.id)===addition.serviceId),department=departments.find(d=>d.id===sellerDepartmentId(seller));
     const quantity=Number(addition.quantity);
-    if(!service||!department){report('Choisissez le service et le département de la vente.');return;}
+    if(!service){report('Choisissez le service à ajouter.');return;}
+    if(!department){report('Le département actuel du vendeur est indisponible. Rechargez la sélection.');return;}
     if(!validAdditionDate('day',anchor,anchor,today)){report('Choisissez une journée valide, aujourd’hui ou dans le passé.');return;}
     if(!Number.isInteger(quantity)||quantity<1||quantity>MAX_SALE_CORRECTION){report(`Choisissez de 1 à ${MAX_SALE_CORRECTION} ventes maximum.`);return;}
     report('');setNotice('');setUncertain(false);
@@ -122,17 +123,17 @@ export function SalesHistoryPanel({storeId,storeName,sellers,services,additionSe
         <button type="button" aria-pressed={mode==='add'} className={mode==='add'?'active':''} disabled={locked} onClick={()=>changeMode('add')}><Plus size={16}/> Ajouter</button>
       </div>
       {mode==='add'?<div className="history-add-panel">
-        <div className="history-subheading"><div><h4>Ajouter des ventes</h4><p>Indiquez le département où la vente a été réalisée.</p></div></div>
+        <div className="history-subheading"><div><h4>Ajouter des ventes</h4><p>La vente sera rattachée au département actuel du vendeur, même pour une date passée.</p></div></div>
         <form className="history-add-form" onSubmit={prepareAdd}>
           <label><span className="form-label">SERVICE</span><select className="text-input" aria-label="Service à ajouter" value={addition.serviceId} disabled={locked||!additionServices.length} required onChange={e=>{setAddition(v=>({...v,serviceId:e.target.value}));report('');}}><option value="">Choisir un service</option>{additionServices.map(s=><option key={s.id} value={s.id}>{s.name}{s.active===false||s.active===0?' · inactif':''}</option>)}</select></label>
-          <label><span className="form-label">DÉPARTEMENT DE LA VENTE</span><select className="text-input" aria-label="Département de la vente" value={addition.departmentId} disabled={locked||!departments.length} required onChange={e=>{setAddition(v=>({...v,departmentId:e.target.value}));report('');}}><option value="">Choisir le département</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}{d.active===false||d.active===0?' · archivé':d.id===sellerDepartmentId(seller)?' · actuel':''}</option>)}</select></label>
+          <p className="history-current-department">Département actuel : <strong>{departments.find(d=>d.id===sellerDepartmentId(seller))?.name||'indisponible'}</strong></p>
           <label><span className="form-label">NOMBRE DE VENTES · {MAX_SALE_CORRECTION} MAXIMUM</span><input className="text-input" type="number" inputMode="numeric" aria-label="Nombre de ventes à ajouter" min="1" max={MAX_SALE_CORRECTION} step="1" value={addition.quantity} disabled={locked} required onChange={e=>{setAddition(v=>({...v,quantity:e.target.value}));report('');}}/></label>
-          <button type="submit" className="history-add-button" disabled={locked||!additionServices.length||!departments.length}><Plus size={15}/> Vérifier l’ajout</button>
+          <button type="submit" className="history-add-button" disabled={locked||!additionServices.length||!departments.some(d=>d.id===sellerDepartmentId(seller))}><Plus size={15}/> Vérifier l’ajout</button>
         </form>
         {pending?.kind==='add'&&<div className="history-confirm history-confirm-add" role="group" aria-label="Confirmer l’ajout des ventes">
           <strong>Ajouter {pending.body.quantity} {pending.body.quantity>1?'ventes':'vente'} ?</strong>
           <p>{pending.body.expectedSellerName} · {pending.body.expectedStoreName}</p>
-          <p><b>{pending.body.expectedServiceName}</b> · {pending.body.expectedDepartmentName}<br/>Jour de la vente : <b>{dateText(pending.body.saleDate)}</b></p>
+          <p><b>{pending.body.expectedServiceName}</b> · Département actuel : <b>{pending.body.expectedDepartmentName}</b><br/>Jour de la vente : <b>{dateText(pending.body.saleDate)}</b></p>
           <p>Les bilans seront recalculés, sans modifier les objectifs. Aucune notification ne sera envoyée.</p>
           {error&&<div className="form-error history-error" role="alert">{error}</div>}
           <div><button type="button" className="outline-button" disabled={saving} onClick={cancelConfirmation}>{uncertain?'Vérifier les ventes':'Annuler'}</button><button type="button" className="history-confirm-add-button" disabled={disabled||saving} onClick={confirm}>{saving?'Ajout…':uncertain?'Réessayer':'Confirmer l’ajout'}</button></div>

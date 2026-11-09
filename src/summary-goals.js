@@ -1,5 +1,7 @@
 import {monthlyGoalTotal,hasGoal,normalizeWorkdays} from './goals.js';
 import {sellerDepartmentId} from './departments.js';
+import {distributeWeighted,goalDayWeight} from './goal-distribution.js';
+export {distributeWeighted} from './goal-distribution.js';
 
 function dateAt(iso) {
   if(typeof iso!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(iso))throw new Error('Date invalide.');
@@ -13,19 +15,9 @@ function datesInMonth(key) {
   const [year,month]=key.split('-').map(Number),count=new Date(Date.UTC(year,month,0,12)).getUTCDate();
   return Array.from({length:count},(_,i)=>new Date(Date.UTC(year,month-1,i+1,12)));
 }
-// Répartition entière, régulière et déterministe : une différence de cumuls
-// arrondis garantit que tous les jours additionnés valent exactement le mensuel.
-export function distributeWeighted(total,weights) {
-  if(!Number.isSafeInteger(total)||total<0||!Array.isArray(weights)||weights.some(n=>!Number.isSafeInteger(n)||n<0))throw new Error('Répartition invalide.');
-  const weight=weights.reduce((sum,n)=>sum+n,0);
-  if(!weight)return weights.map(()=>0);
-  let prior=0,cumulative=0;
-  return weights.map(n=>{cumulative+=n;const next=Math.floor((total*cumulative+weight/2)/weight);const part=next-prior;prior=next;return part;});
-}
-
 // Ne renvoie que des totaux par service et par périmètre, jamais les objectifs
 // ou les jours individuels. Les mois sont répartis selon le nombre de vendeurs
-// habituellement présents chaque jour ; les jours fériés restent inclus.
+// habituellement présents chaque jour, pondérés selon le jour de semaine ; les jours fériés restent inclus.
 export function summaryGoals(sellers,services,departments,isoDate) {
   const today=dateAt(isoDate),start=addDays(today,-((today.getUTCDay()+6)%7));
   const week=Array.from({length:7},(_,i)=>addDays(start,i));
@@ -44,7 +36,7 @@ export function summaryGoals(sellers,services,departments,isoDate) {
     return {...s,workdays,targets};
   });
   const resultFor=people=>{
-    const byService={},weights=Object.fromEntries(monthKeys.map(month=>[month,months[month].weekdays.map(day=>people.reduce((n,s)=>n+(s.workdays.includes(day)?1:0),0))]));
+    const byService={},weights=Object.fromEntries(monthKeys.map(month=>[month,months[month].weekdays.map(day=>people.reduce((n,s)=>n+(s.workdays.includes(day)?goalDayWeight(day):0),0))]));
     for(const service of services||[]) {
       const key=`s${service.id}`,configured=people.filter(s=>s.targets[key]);
       if(!configured.length){byService[key]={day:null,week:null,month:null,configured:0,sellers:people.length};continue;}

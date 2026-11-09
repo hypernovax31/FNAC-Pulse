@@ -33,11 +33,14 @@ test('Administration : vendeurs, ajout, réinitialisation PIN et suppression dan
   };let tree;
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},session:{storeId:store,sellerId:1},data:{stores:[{id:store,name:'Fnac Test'}],services:[],today:'2026-11-01'}}));await tick();});
-    const tabs=tree.root.findAllByProps({role:'tab'});assert.deepEqual(tabs.map(text),['Magasins','Ventes','Objectifs','Vendeurs','Services','Départements','Administrateur']);assert(!tabs.some(x=>text(x)==='Codes PIN'));
+    const tabs=tree.root.findAllByProps({role:'tab'});assert.deepEqual(tabs.map(text),['Magasins','Vendeurs','Objectifs','Ventes','Services','Départements','Administrateurs']);assert(!tabs.some(x=>text(x)==='Codes PIN'));
     await act(async()=>{tabs.find(x=>text(x)==='Vendeurs').props.onClick();await tick();});
     const copy=text(tree.toJSON());assert.match(copy,/Vendeurs et accès/);assert.match(copy,/Accès et codes PIN/);assert.match(copy,/Supprimer définitivement un vendeur/);assert.match(copy,/Benoît/);
     const alice=tree.root.findAllByType('article').find(card=>text(card).includes('Alice'));assert(alice);
-    assert(alice.findByProps({'aria-label':'Département de Alice'}));
+    const assigned=alice.findByProps({'aria-label':'Département de Alice'});
+    assert.equal(assigned.type,'div');assert.match(text(assigned),/Technique/);assert.match(text(assigned),/Affectation définitive/);
+    assert.equal(alice.findAllByType('select').length,0,'le département déjà attribué est en lecture seule');
+    assert.match(copy,/ne pourra plus être modifié après la création/);
     await act(async()=>{alice.findAllByType('button').find(button=>text(button).includes('Jours travaillés')).props.onClick();await tick();});
     const workdays=alice.findByProps({className:'workdays-form'});assert.equal(workdays.findAllByType('input').length,7);
     assert.equal(workdays.props['aria-labelledby'],workdays.findByType('h4').props.id);
@@ -51,7 +54,10 @@ test('Administration : vendeurs, ajout, réinitialisation PIN et suppression dan
     await act(async()=>input.props.onChange({target:{value:'Clara'}}));
     const addForm=tree.root.findAllByType('form').find(f=>f.findAllByProps({'aria-label':'Nom du vendeur'}).length);
     await act(async()=>{addForm.props.onSubmit({preventDefault(){}});await tick();});
-    assert(calls.some(x=>x.path==='/api/admin/entities/sellers'&&x.method==='POST'&&x.body.name==='Clara'&&x.body.storeId===store));
+    assert(!calls.some(x=>x.path==='/api/admin/entities/sellers'&&x.method==='POST'),'le département doit être choisi explicitement');
+    await act(async()=>tree.root.findByProps({'aria-label':'Département du nouveau vendeur'}).props.onChange({target:{value:'tech'}}));
+    await act(async()=>{addForm.props.onSubmit({preventDefault(){}});await tick();});
+    assert(calls.some(x=>x.path==='/api/admin/entities/sellers'&&x.method==='POST'&&x.body.name==='Clara'&&x.body.storeId===store&&x.body.departmentId==='tech'));
     const reset=tree.root.findAllByType('button').find(b=>text(b).includes('Réinitialiser l’accès'));
     assert(reset&&!reset.props.disabled);await act(async()=>{reset.props.onClick();await tick();});
     assert(calls.some(x=>x.path==='/api/admin/pin-reset'&&x.body.sellerId===1));
@@ -83,6 +89,7 @@ test('Magasin administré : recherche, historique masqué, mémorisation et déc
   const open=async()=>act(async()=>{tree=TestRenderer.create(React.createElement(Admin,props));await tick();});
   try {
     await open();assert.equal(tab('Magasins').props['aria-selected'],true,'le profil historique reste connecté, mais non proposé');
+    assert.doesNotMatch(text(tree.toJSON()),/Annuaire des magasins|Vérifier maintenant|Importer manuellement une copie Fnac|Dernière vérification officielle/);
     await search('Ancienne');assert.equal(tree.root.findAllByProps({role:'option'}).length,0);
     await search('Copie');const option=tree.root.findByProps({role:'option'});assert.match(text(option),/Copie non vérifiée/);
     await act(async()=>{option.props.onClick();await tick();});assert.equal(saved.get('pulse-admin-managed-store-v1'),'manuel');
@@ -93,7 +100,7 @@ test('Magasin administré : recherche, historique masqué, mémorisation et déc
     await act(async()=>tree.unmount());await open();assert.match(text(tree.toJSON()),/Fnac Copie Test/);
     await act(async()=>{tab('Magasins').props.onClick();await tick();});await search('Labège');
     await act(async()=>{tree.root.findByProps({role:'option'}).props.onClick();await tick();});assert.equal(saved.get('pulse-admin-managed-store-v1'),'officiel');
-    await act(async()=>{tab('Administrateur').props.onClick();await tick();});
+    await act(async()=>{tab('Administrateurs').props.onClick();await tick();});
     await act(async()=>{tree.root.findAllByType('button').find(b=>text(b).includes('Se déconnecter')).props.onClick();await tick();});
     assert.equal(saved.has('pulse-admin-managed-store-v1'),false);assert.equal(saved.has('pulse-admin-token'),false);assert.deepEqual(seller,{storeId:'historique',sellerId:41});
     await act(async()=>tree.unmount());

@@ -61,7 +61,8 @@ test('Inscription : prénom libre puis deux PIN à 4 chiffres avant création',a
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(SessionForm,{data,onSubmit:async(...args)=>submissions.push(args)}));});
     await chooseScope(tree);await change(tree,'Votre prénom','Alice');
-    assert.match(text(tree.toJSON()),/Créez votre profil/);assert.equal(field(tree,'Votre nouveau code PIN').props.maxLength,4);assert.equal(requests.length,0);
+    assert.match(text(tree.toJSON()),/Créez votre profil/);assert.match(text(tree.toJSON()),/Vérifiez votre département : il ne pourra plus être modifié/);
+    assert.equal(field(tree,'Votre nouveau code PIN').props.maxLength,4);assert.equal(requests.length,0);
     await change(tree,'Votre nouveau code PIN','4829');await change(tree,'Confirmer votre code PIN','4828');
     await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();});assert.equal(submissions.length,0);assert.match(text(tree.toJSON()),/ne correspondent pas/);
     await change(tree,'Confirmer votre code PIN','4829');await act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});await tick();});

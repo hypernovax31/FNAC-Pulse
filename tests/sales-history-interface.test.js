@@ -108,22 +108,22 @@ test('Ajout : même jour choisi, département historique, confirmation et repris
     return {sales:[],next:null};
   }});
   try {
-    const fixture={...props,departments:[{id:'tech',name:'Technique',active:true},{id:'editorial',name:'Éditorial',active:false}]};
+    const fixture={...props,sellers:props.sellers.map(s=>s.id===2?{...s,departmentId:'editorial'}:s),departments:[{id:'tech',name:'Technique',active:true},{id:'editorial',name:'Éditorial',active:false}]};
     await act(async()=>{tree=TestRenderer.create(React.createElement(SalesHistoryPanel,{...fixture,onBusy:value=>busy.push(value),onUpdate:()=>updated++}));await tick();});
     assert.match(text(tree.toJSON()),/Correction des ventes/);assert.doesNotMatch(text(tree.toJSON()),/Semaine|Mois/);
     await act(async()=>{tree.root.findByProps({'aria-label':'Vendeur pour l’historique'}).props.onChange({target:{value:'2'}});await tick();});
     await act(async()=>{tree.root.findByProps({'aria-label':'Date de référence des ventes'}).props.onChange({target:{value:'2026-10-29'}});await tick();});
     await act(async()=>btn(tree,'Ajouter').props.onClick());
     assert.equal(tree.root.findAllByProps({'aria-label':'Jour exact de la vente à ajouter'}).length,0);
-    assert(tree.root.findAllByType('option').some(option=>text(option).includes('Éditorial · archivé')));
+    assert.equal(tree.root.findAllByProps({'aria-label':'Département de la vente'}).length,0);
+    assert.match(text(tree.toJSON()),/Département actuel : Éditorial/);assert.match(text(tree.toJSON()),/même pour une date passée/);
     await act(async()=>{
       tree.root.findByProps({'aria-label':'Service à ajouter'}).props.onChange({target:{value:'1'}});
-      tree.root.findByProps({'aria-label':'Département de la vente'}).props.onChange({target:{value:'editorial'}});
       tree.root.findByProps({'aria-label':'Nombre de ventes à ajouter'}).props.onChange({target:{value:'2'}});
     });
     const submit=()=>tree.root.findByProps({className:'history-add-form'}).props.onSubmit({preventDefault(){}});
     await act(async()=>submit());assert.equal(calls.filter(x=>x.method==='POST').length,0);
-    let confirmation=tree.root.findByProps({'aria-label':'Confirmer l’ajout des ventes'});assert.match(text(confirmation),/Ajouter 2 ventes/);assert.match(text(confirmation),/Alice · Fnac Test/);assert.match(text(confirmation),/DMax · Éditorial/);assert.match(text(confirmation),/2026-10-29/);
+    let confirmation=tree.root.findByProps({'aria-label':'Confirmer l’ajout des ventes'});assert.match(text(confirmation),/Ajouter 2 ventes/);assert.match(text(confirmation),/Alice · Fnac Test/);assert.match(text(confirmation),/DMax · Département actuel : Éditorial/);assert.match(text(confirmation),/2026-10-29/);
     assert.match(text(confirmation),/sans modifier les objectifs/);assert.match(text(confirmation),/Aucune notification/);
     await act(async()=>btn(tree,'Annuler').props.onClick());assert.equal(calls.filter(x=>x.method==='POST').length,0);
     await act(async()=>submit());await act(async()=>{btn(tree,'Confirmer l’ajout').props.onClick();await tick();});assert.match(text(tree.toJSON()),/Résultat incertain/);
@@ -144,7 +144,6 @@ test('Ajout : date partagée, quantité contrôlée et aucune période hebdomada
     await act(async()=>btn(tree,'Ajouter').props.onClick());
     await act(async()=>{
       tree.root.findByProps({'aria-label':'Service à ajouter'}).props.onChange({target:{value:'1'}});
-      tree.root.findByProps({'aria-label':'Département de la vente'}).props.onChange({target:{value:'tech'}});
       tree.root.findByProps({'aria-label':'Nombre de ventes à ajouter'}).props.onChange({target:{value:'21'}});
     });
     const submit=()=>tree.root.findByProps({className:'history-add-form'}).props.onSubmit({preventDefault(){}});

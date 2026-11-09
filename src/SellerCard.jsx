@@ -3,7 +3,8 @@ import {Archive,Check,Pencil,RotateCcw,X} from 'lucide-react';
 import {sellerDepartmentId} from './departments';
 import {SellerWorkdays} from './SellerWorkdays';
 
-export function SellerCard({seller,departments,storeId,token,busy,editing,editName,onEditName,onEdit,onCancelEdit,onRename,onDepartment,onArchive,workdaysOpen,onToggleWorkdays,onBusy,onChanged}) {
+export function SellerCard({seller,departments,storeId,token,busy,editing,editName,onEditName,onEdit,onCancelEdit,onRename,onArchive,workdaysOpen,onToggleWorkdays,onBusy,onChanged}) {
+  const department=departments.find(d=>d.id===sellerDepartmentId(seller));
   return <article className={`seller-card ${!seller.active?'is-archived':''}`}>
     <div className="seller-card-top">
       {editing?<form className="edit-entity" onSubmit={event=>{event.preventDefault();onRename();}}>
@@ -14,9 +15,7 @@ export function SellerCard({seller,departments,storeId,token,busy,editing,editNa
           <button type="button" className="icon-button" aria-label={`${seller.active?'Archiver':'Restaurer'} ${seller.name}`} title={seller.active?'Archiver':'Restaurer'} disabled={busy||!!seller.deletingJob} onClick={onArchive}>{seller.active?<Archive size={15}/>:<RotateCcw size={15}/>}</button>
         </div></>}
     </div>
-    <label className="seller-card-department"><span>DÉPARTEMENT</span><select className="text-input" aria-label={`Département de ${seller.name}`} value={sellerDepartmentId(seller)} disabled={busy||!!seller.deletingJob} onChange={event=>onDepartment(event.target.value)}>
-      {departments.filter(d=>d.active||d.id===sellerDepartmentId(seller)).map(d=><option value={d.id} key={d.id}>{d.name}{d.active?'':' · archivé'}</option>)}
-    </select></label>
+    <div className="seller-card-department"><span>DÉPARTEMENT</span><div className="seller-department-value" aria-label={`Département de ${seller.name}`}><strong>{department?.name||'Département indisponible'}</strong>{department&&!department.active&&<span> · archivé</span>}<small>Affectation définitive</small></div></div>
     <SellerWorkdays seller={seller} storeId={storeId} token={token} open={workdaysOpen} onToggle={onToggleWorkdays} disabled={busy} onBusy={onBusy} onChanged={onChanged}/>
   </article>;
 }
