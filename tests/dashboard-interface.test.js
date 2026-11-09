@@ -25,6 +25,22 @@ test('En-tête : son séparé, cloche barrée et aucun point vert de direct',()=
   assert.match(error,/Activation des notifications à finaliser/);assert.match(error,/lucide-bell-off/);
 });
 
+test('En-tête : le carré du profil et son nom ouvrent le même profil sans double appel',async()=>{
+  const calls=[],{act}=TestRenderer;let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Header,{session:{sellerId:1},seller:{id:1,name:'Morgan'},store:{name:'Fnac Test'},showInstall:true,onSession:()=>calls.push('profil')}));});
+    const profile=tree.root.findByProps({'aria-label':'Mon profil, Morgan'}),group=tree.root.findByProps({className:'profile-control'});
+    assert.equal(profile.type,'button');assert.equal(profile.props.title,'Mon profil, Morgan');
+    assert.equal(group.findByProps({className:'profile-text'}).findByType('strong').children.join(''),'Morgan');
+    const buttons=tree.root.findAllByType('button');
+    for(const name of ['theme-trigger','sound-trigger','top-bell','install-trigger','profile-trigger','mobile-settings'])assert.equal(buttons.filter(button=>button.props.className?.split(' ').includes(name)).length,1);
+    await act(async()=>{profile.props.onClick();group.props.onClick({target:{closest:()=>profile}});});
+    assert.deepEqual(calls,['profil'],'le clic sur le carré ne déclenche qu’une action');
+    await act(async()=>group.props.onClick({target:{closest:()=>null}}));
+    assert.deepEqual(calls,['profil','profil'],'le nom reste cliquable sur les grands écrans');
+  }finally{if(tree)await act(async()=>tree.unmount());}
+});
+
 test('Premier lancement PWA : l’accueil tactile masque le tableau de bord avant le geste',()=>{
   const oldWindow=globalThis.window,oldStorage=globalThis.localStorage;
   globalThis.window={navigator:{standalone:true},isSecureContext:false};

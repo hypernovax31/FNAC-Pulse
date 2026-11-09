@@ -58,6 +58,23 @@ test('Boutons tactiles : cartes, icônes d’édition et choix de période',()=>
   assert.match(rule('.stat-detail-action'),/border:1px solid/);
 });
 
+test('Ventes : relief prononcé, enfoncement et désactivation en clair et en sombre',()=>{
+  const relief=css.slice(css.indexOf("/* Ajout d'un service : face lumineuse"));
+  assert.match(relief,/\.service-add-label\s*\{[^}]*background:linear-gradient\([^}]*0 4px 0/);
+  assert.match(relief,/\.service-add:active:not\(:disabled\) \.service-add-label\s*\{[^}]*transform:translateY\(3px\)[^}]*0 1px 0/);
+  assert.match(relief,/\.service-add:disabled \.service-add-label,\.service-add:disabled \.service-add-indicator\s*\{\s*box-shadow:none/);
+  assert.match(relief,/\[data-theme='dark'\] \.service-add-label\s*\{[^}]*background:linear-gradient\([^}]*0 4px 0/);
+  assert.match(relief,/@media\s*\(prefers-reduced-motion:reduce\)\s*\{\s*\.service-add-label,\.service-add-indicator\s*\{\s*transition:none/);
+});
+
+test('En-tête : mêmes dimensions de toutes les commandes et adaptation mobile',()=>{
+  const header=css.slice(css.indexOf("/* L'en-tête utilise un carré identique"));
+  assert.match(header,/--header-control-size:44px/);
+  assert.match(header,/\.topbar-actions > \.icon-button,\.topbar-actions \.profile-trigger\s*\{[^}]*width:var\(--header-control-size\)[^}]*height:var\(--header-control-size\)[^}]*flex:0 0 var\(--header-control-size\)/);
+  assert.match(header,/@media\s*\(max-width:690px\)\s*\{[^}]*\.profile-control/);
+  assert.match(header,/@media\s*\(max-width:385px\)\s*\{\s*\.mobile-brand \.brand-word/);
+});
+
 test('Page e-mail : actions et fermeture visibles en clair comme en sombre',()=>{
   assert.match(html,/\.email-action-content button,\.email-action-content \.email-action-button\s*\{[^}]*border:1px solid #b98c08[^}]*box-shadow:/);
   assert.match(html,/\.email-action-content \.email-action-secondary\s*\{[^}]*border:1px solid #c4cabd[^}]*box-shadow:/);

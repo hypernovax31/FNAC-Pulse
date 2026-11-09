@@ -250,10 +250,12 @@ function Header({session,seller,store,connected,notificationsEnabled,notificatio
       <button className="icon-button sound-trigger" title={soundLabel} aria-label={soundLabel} aria-pressed={soundEnabled} onClick={onSound}>{soundEnabled?<Volume2 size={19}/>:<VolumeX size={19}/>}</button>
       <button className="icon-button top-bell" title={bellLabel} aria-label={bellLabel} onClick={onBell}>{notificationsEnabled===true||notificationsEnabled===null||(notificationPendingProfile&&!notificationPendingError)?<Bell size={19}/>:<BellOff size={19}/>}</button>
       {showInstall&&<button className="icon-button install-trigger" title="Installer Fnac Pulse" aria-label="Installer Fnac Pulse" onClick={onInstall}><Download size={19}/></button>}
-      <button className="profile-trigger" onClick={onSession} aria-label={session?`Mon profil, ${seller?.name||''}`:'Choisir mon profil'}>
-        {seller?<Avatar name={seller.name} id={seller.id}/>:<span className="avatar avatar-blank"><UserRound size={17}/></span>}
-        <span className="profile-text"><strong>{seller?.name||'Mon profil'}</strong><small>{store?.name||'Choisir mon espace'}</small></span><ChevronDown size={15}/>
-      </button>
+      <div className="profile-control" onClick={event=>{if(!event.target.closest('button'))onSession?.();}}>
+        <button type="button" className="profile-trigger" onClick={onSession} aria-label={session?`Mon profil, ${seller?.name||''}`:'Choisir mon profil'} title={session?`Mon profil, ${seller?.name||''}`:'Choisir mon profil'}>
+          {seller?<Avatar name={seller.name} id={seller.id}/>:<span className="avatar avatar-blank"><UserRound size={17}/></span>}
+        </button>
+        <span className="profile-text"><strong>{seller?.name||'Mon profil'}</strong><small>{store?.name||'Choisir mon espace'}</small></span><ChevronDown size={15} aria-hidden="true"/>
+      </div>
       <button className="icon-button mobile-settings" title="Administration" aria-label="Administration" onClick={onAdmin}><Settings2 size={19}/></button>
     </div>
   </header>;
