@@ -74,3 +74,12 @@ test('Tous les retours : colonne commune sous l’en-tête, couleurs inversées 
   assert.match(html,/\.email-action-feedback\s*\{[^}]*background:#242b23;\s*color:#f5f8ef/);
   assert.match(html,/\[data-theme='dark'\] \.email-action-feedback\s*\{[^}]*background:#f7f8f3;[^}]*color:#252d23/);
 });
+
+test('Administration : panneau élargi, centré et limité aux zones sûres',()=>{
+  const admin=readFileSync(new URL('../src/Admin.jsx',import.meta.url),'utf8');
+  assert.match(admin,/className=\{`modal-overlay\$\{fixedTabs\?' admin-modal-overlay':''\}`\}/);
+  assert.match(css,/\.modal-wide\s*\{\s*width:min\(100%,700px\)/);
+  assert.match(css,/\.modal-wide\.admin-modal\s*\{\s*width:min\(100%,800px\)/);
+  assert.match(css,/\.modal-overlay\.admin-modal-overlay\s*\{[^}]*padding-left:8px;[^}]*padding-right:8px;[^}]*padding-left:max\(8px,env\(safe-area-inset-left\)\);[^}]*padding-right:max\(8px,env\(safe-area-inset-right\)\)/);
+  assert.match(css,/\.admin-modal\s*\{[^}]*height:min\(760px,calc\(100dvh - 40px\)\)/);
+});

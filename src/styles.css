@@ -357,8 +357,11 @@ p,h1,h2,h3 { margin:0; }
 .app-loading { min-height:100vh; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:20px; color:#999b92; font-size:12px; }
 /* Dialogs and administration */
 .modal-overlay { position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; padding:20px; background:rgba(31,33,27,.42); backdrop-filter:blur(3px); }
+/* L’administration utilise plus de largeur, sans empiéter sur les zones sûres. */
+.modal-overlay.admin-modal-overlay { padding-left:8px; padding-right:8px; padding-left:max(8px,env(safe-area-inset-left)); padding-right:max(8px,env(safe-area-inset-right)); }
 .modal { width:min(100%,470px); max-height:calc(100vh - 40px); overflow-y:auto; padding:26px; background:#fff; border:1px solid #ecece6; border-radius:12px; box-shadow:0 24px 90px rgba(31,33,25,.18); }
 .modal-wide { width:min(100%,700px); }
+.modal-wide.admin-modal { width:min(100%,800px); }
 .modal-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:22px; }
 .modal-head h2 { font-size:20px; letter-spacing:-.6px; }
 .modal-head p { margin-top:6px; color:#969890; font-size:12px; line-height:1.5; }

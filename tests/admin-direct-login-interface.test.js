@@ -219,6 +219,7 @@ test('Connexion simplifiée : demande de lien depuis une adresse préremplie, sa
     assert.match(text(tree.toJSON()),/Connectez-vous avec votre adresse e-mail et votre mot de passe/);
     assert.doesNotMatch(text(tree.toJSON()),/Anciennes demandes|Gardez la main|Créer mon accès avec un code|Aide à la connexion|Première connexion/);
     assert(button('Mot de passe oublié ?'));assert(!button('Aide à la connexion'));
+    assert(tree.root.findByProps({className:'modal-overlay'}),'la connexion conserve ses marges');
     assert.deepEqual(tree.root.findAllByType('input').map(node=>node.props.id),['admin-email','admin-password']);
     assert.deepEqual(tree.root.findAllByType('button').map(node=>text(node).trim()||node.props['aria-label']),['Fermer','Se connecter','Mot de passe oublié ?']);
     assert.equal(tree.root.findAllByType('a').length,0,'aucun lien de secours visible');
@@ -273,7 +274,7 @@ test('Session administrateur existante : ouverture et fermeture ne la modifient 
   });
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){closed++;},onChanged(){},data:{stores:[],services:[]},session:null}));await tick();await tick();});
-    assert(tree.root.findByProps({'aria-label':'Administration'}));assert.equal(values.get('pulse-admin-token'),'admin-session');
+    assert(tree.root.findByProps({'aria-label':'Administration'}));assert(tree.root.findByProps({className:'modal-overlay admin-modal-overlay'}));assert.equal(values.get('pulse-admin-token'),'admin-session');
     await act(async()=>tree.root.findByProps({'aria-label':'Fermer'}).props.onClick());
     assert.equal(closed,1);assert.equal(values.get('pulse-admin-token'),'admin-session');
     assert(!calls.includes('login')&&!calls.includes('logout'));assert.deepEqual(calls.filter(x=>Array.isArray(x)).map(x=>x[0]),['/api/admin/all']);

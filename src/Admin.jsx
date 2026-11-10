@@ -42,7 +42,7 @@ function Modal({title,subtitle,onClose,children,wide=false,fixedTabs=false,toolb
     document.addEventListener('keydown',onKeyDown);
     return ()=>{document.body.style.overflow=previous;document.removeEventListener('keydown',onKeyDown);previousFocus?.focus?.();};
   },[]);
-  return <div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget) onClose();}}>
+  return <div className={`modal-overlay${fixedTabs?' admin-modal-overlay':''}`} onMouseDown={e=>{if(e.target===e.currentTarget) onClose();}}>
     <div ref={dialog} role="dialog" aria-modal="true" aria-label={title} className={`modal ${wide?'modal-wide':''} ${fixedTabs?'admin-modal':''}`}>
       <VisibleFeedbackProvider header={<><div className="modal-head"><div><h2>{title}</h2>{subtitle&&<p>{subtitle}</p>}</div><button className="icon-button close-button" aria-label="Fermer" onClick={onClose}><X size={19}/></button></div>{toolbar}</>}>
         <ModalToastOutlet/>
