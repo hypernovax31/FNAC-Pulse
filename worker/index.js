@@ -1144,7 +1144,11 @@ export function createWorker(deps={}) {
       const row=list.find(x=>x.id===Number(id));if(!row)fail(404,'Élément introuvable.');
       if(kind==='sellers'&&row.deletingJob)fail(409,'La suppression définitive de ce vendeur est en cours.');
       if(kind==='sellers'&&body.storeId!==undefined&&body.storeId!==sellerStoreId(row))fail(400,'Ce vendeur appartient à un autre magasin.');
-      if(typeof body.name==='string') {const name=cleanName(body.name);if(!name)fail(400,'Saisissez un nom valide.');row.name=name;}
+      if(typeof body.name==='string') {
+        if(body.expectedName!==undefined&&(typeof body.expectedName!=='string'||body.expectedName!==row.name))
+          fail(409,'Ce nom a changé ailleurs. Rechargez les valeurs avant de le modifier.');
+        const name=cleanName(body.name);if(!name)fail(400,'Saisissez un nom valide.');row.name=name;
+      }
       // Le département est choisi à la création et reste définitif, y compris
       // pour les anciennes interfaces qui proposaient une réaffectation.
       if(kind==='sellers'&&body.departmentId!==undefined&&body.departmentId!==sellerDepartmentId(row))
@@ -1173,7 +1177,11 @@ export function createWorker(deps={}) {
     } else {
       if(!STORE_ID.test(id||''))fail(400,'Département invalide.');
       const row=list.find(x=>x.id===id);if(!row)fail(404,'Département introuvable.');
-      if(typeof body.name==='string'){const name=cleanName(body.name);if(!name)fail(400,'Saisissez le nom du département.');row.name=name;}
+      if(typeof body.name==='string'){
+        if(body.expectedName!==undefined&&(typeof body.expectedName!=='string'||body.expectedName!==row.name))
+          fail(409,'Ce nom a changé ailleurs. Rechargez les valeurs avant de le modifier.');
+        const name=cleanName(body.name);if(!name)fail(400,'Saisissez le nom du département.');row.name=name;
+      }
       if(typeof body.active==='boolean') {
         if(!body.active&&d.sellers.some(s=>s.active&&sellerStoreId(s)===storeId&&sellerDepartmentId(s)===id))fail(409,'Archivez les vendeurs actifs avant d’archiver leur département.');
         if(!body.active&&list.filter(x=>x.active).length<=1)fail(409,'Conservez au moins un département actif.');

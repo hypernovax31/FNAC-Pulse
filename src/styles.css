@@ -1820,3 +1820,20 @@ p,h1,h2,h3 { margin:0; }
   .admin-modal .toast-stack-dialog .toast { min-height:52px; padding:3px 6px; }
   .admin-modal:has(> .toast-stack-dialog,> .visible-feedback-dialog) > .modal-content { margin-top:8px; }
 }
+
+/* Autosauvegarde : état discret près de la donnée, rappel des erreurs sous l’en-tête. */
+.autosave-status { min-width:0; font-size:11px; line-height:1.45; }
+.autosave-hint { color:#676d62; }
+.autosave-name { flex-wrap:wrap; }
+.autosave-name .text-input { flex:1 1 140px; }
+.autosave-name .autosave-status { flex:0 0 100%; }
+[data-theme='dark'] .autosave-hint { color:#c8cebf; }
+/* Avec une action, le texte de l'autosauvegarde garde assez de place sur mobile. */
+@media (max-width:480px) and (min-height:421px) {
+  .visible-feedback.is-autosave { display:grid; grid-template-columns:28px minmax(0,1fr) 44px; gap:4px 9px; }
+  .visible-feedback.is-autosave .visible-feedback-icon { grid-column:1; grid-row:1; }
+  .visible-feedback.is-autosave .visible-feedback-text { grid-column:2; grid-row:1; }
+  .visible-feedback.is-autosave .visible-feedback-close { grid-column:3; grid-row:1; }
+  .visible-feedback.is-autosave .visible-feedback-action { grid-column:2 / 4; grid-row:2; justify-self:start; }
+}
+.autosave-status .goal-conflict button { min-height:44px; }

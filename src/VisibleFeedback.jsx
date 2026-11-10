@@ -21,7 +21,7 @@ export function VisibleFeedbackProvider({children,placement='dialog',header=null
   useLayoutEffect(()=>{if(!current)return;const node=container.current;return ()=>{if(typeof document!=='undefined'&&node?.contains(document.activeElement))restoreDialogFocus({currentTarget:document.activeElement});};},[!!current]);
   const context=useMemo(()=>({show,remove,rail:placement==='page'?rail:null}),[show,remove,rail,placement]);
   const Icon=current?.tone==='error'?Info:Check;
-  const feedback=current&&<aside ref={container} className={`visible-feedback visible-feedback-${placement} ${current.tone==='error'?'is-error':'is-success'}`} aria-label="Message" aria-live="off">
+  const feedback=current&&<aside ref={container} className={`visible-feedback visible-feedback-${placement} ${current.tone==='error'?'is-error':'is-success'}${current.variant==='autosave'?' is-autosave':''}`} aria-label="Message" aria-live="off">
     <span className="visible-feedback-icon" aria-hidden="true"><Icon size={19}/></span>
     <div className="visible-feedback-text">{current.message}</div>
     {current.actionLabel&&<button type="button" className="visible-feedback-action" onClick={event=>{restoreDialogFocus(event);current.onAction?.();remove(current.owner);}}>{current.actionLabel}</button>}
@@ -39,15 +39,15 @@ export function usePageFeedbackRail() {return useContext(FeedbackContext)?.rail|
 // Conserver le message initial à proximité de son formulaire, notamment ses
 // éventuelles actions, et le rappeler dans la zone visible du dialogue. Le
 // message initial porte déjà role=status/alert : le rappel ne l'annonce pas deux fois.
-export function VisibleFeedback({message,tone='success',revision=0,actionLabel='',onAction}) {
+export function VisibleFeedback({message,tone='success',revision=0,actionLabel='',onAction,variant=''}) {
   const context=useContext(FeedbackContext),owner=useRef(Symbol('feedback')),action=useRef(onAction);
   action.current=onAction;
   useEffect(()=>{
     if(!context||!message)return;
     const id=owner.current;
-    context.show(id,{message,tone,actionLabel,...(actionLabel?{onAction:()=>action.current?.()}: {})});
+    context.show(id,{message,tone,actionLabel,variant,...(actionLabel?{onAction:()=>action.current?.()}: {})});
     return ()=>context.remove(id);
-  },[context,message,tone,revision,actionLabel]);
+  },[context,message,tone,revision,actionLabel,variant]);
   return null;
 }
 

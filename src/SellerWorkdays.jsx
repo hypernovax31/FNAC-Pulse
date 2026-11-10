@@ -22,10 +22,10 @@ export function SellerWorkdays({seller,storeId,token,open,onToggle,disabled,onBu
   async function save(body) {
     onBusy(true);setError('');
     try {
-      const result=await api('/api/admin/workdays',{method:'POST',token,body:{...body,storeId,sellerId:Number(seller.id)}});
+      const result=await api('/api/admin/workdays',{method:'POST',token,keepalive:true,body:{...body,storeId,sellerId:Number(seller.id)}});
       setPlanning({workdays:normalizeWorkdays(result.workdays),revision:result.workdaysRevision||null});onChanged();return result;
     } catch(e) {
-      if(e.status===409)try {
+      if(e.status===409||!e.status||e.status>=500)try {
         const latest=await api(url,{token});setPlanning({workdays:normalizeWorkdays(latest.workdays),revision:latest.workdaysRevision||null});
       } catch { /* La fiche peut être rechargée sans écraser d'autres données. */ }
       throw e;

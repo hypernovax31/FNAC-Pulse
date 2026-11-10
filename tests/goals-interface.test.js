@@ -153,9 +153,11 @@ test('Formulaire admin : minimum distinct de la cible personnelle et changement 
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(GoalForm,{...p,onSave:async v=>saves.push(v)}));});
     await act(async()=>tree.root.findByProps({'aria-label':'Période de référence'}).props.onChange({target:{value:'week'}}));
+    assert.equal(tree.root.findByProps({'aria-label':'Période de référence'}).props.value,'month','refuser la confirmation conserve la période');
+    assert.equal(saves.length,0);
+    confirmed=true;await act(async()=>tree.root.findByProps({'aria-label':'Période de référence'}).props.onChange({target:{value:'week'}}));
     assert.match(nodeText(tree.toJSON()),/Changer de période remplace la référence/);
     const submit=()=>tree.root.findByType('form').props.onSubmit({preventDefault(){}});
-    await act(async()=>submit());assert.equal(saves.length,0);
-    confirmed=true;await act(async()=>submit());assert.equal(saves.length,1);assert.deepEqual(saves[0].values,{day:null,week:20,month:null});
+    await act(async()=>submit());assert.equal(saves.length,1);assert.deepEqual(saves[0].values,{day:null,week:20,month:null});
   } finally {if(tree)await act(async()=>tree.unmount());if(old)Object.defineProperty(globalThis,'window',old);else delete globalThis.window;}
 });

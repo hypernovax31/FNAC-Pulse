@@ -28,6 +28,7 @@ import { readPushOrigin } from './push-origin.js';
 import { calendarChip } from './calendar';
 import { readDeviceProfile, saveDeviceProfile, clearDeviceProfile } from './device-profile';
 import { GoalForm, GoalsPanel } from './Goals';
+import { AutoSaveProvider, useAutoSaveRegistry } from './AutoSave';
 import { todayBreakdown } from './today-breakdown.js';
 import { normalizeWorkdays } from './goals.js';
 import { saleMessage } from './sale-message';
@@ -194,7 +195,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
         <NameSuggestions key={`${store}:${department}`} id={nameId} sellers={storeSellers} value={name} onChange={value=>{cancelLocate();setName(value);clearSecrets();}} disabled={formBusy||!department}/>
       </>}
       {CLOUD&&mode==='login'&&<label className="session-field pin-field"><span>CODE PIN PERSONNEL</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{4}" maxLength={4} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} placeholder="4 chiffres" disabled={formBusy} required/></label>}
-      {(mode==='local'||mode==='login')&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==4)}>{formBusy?'Connexion…':modal&&!startup?'Enregistrer':'Se connecter'} <ArrowRight size={16}/></button>}
+      {(mode==='local'||mode==='login')&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==4)}>{formBusy?'Connexion…':modal&&!startup?'Utiliser ce profil':'Se connecter'} <ArrowRight size={16}/></button>}
     </div>
     {!fixed&&!store&&unselectedStore&&<p id={`store-search-${modal?'dialog':'welcome'}-hint`} className="store-search-hint">Choisissez un magasin dans les résultats.</p>}
     {regionalChoice&&<div className="regional-choice-notice" role="status"><Info size={16} aria-hidden="true"/><span>Cette mention régionale ne désigne pas un magasin précis. Les bilans sont communs à cet espace et les notifications partagées entre vendeurs d’un même département. Pour séparer des points de vente, demandez à un administrateur d’ajouter leurs noms précis.</span></div>}
@@ -359,7 +360,10 @@ function Toast({notice,onClose,icon}) {
 }
 
 export { Header, Sidebar, DateChip, ActivityCard, Summary, MobileNav, TodayOverview, TodayDetails, ServiceCard, Toast };
-export default function App() {
+export default function App(){return <AutoSaveProvider><AppContent/></AutoSaveProvider>;}
+
+function AppContent() {
+  const autoSave=useAutoSaveRegistry();
   const [session,setSession]=useState(()=>CLOUD?null:getSession());
   const [deviceProfile,setDeviceProfile]=useState(()=>CLOUD?readDeviceProfile(undefined,getSession()):null);
   const [data,setData]=useState(()=>{if(CLOUD)return null;const cached=getCached();return cached&&JSON.stringify(cached.session)===JSON.stringify(getSession())?cached.data:null;});
@@ -702,6 +706,7 @@ export default function App() {
   },[data,session,authReady,installModal,startupGate,startupPermissionsOpen,sessionModal,adminModal,themeModal,goalModal,notificationsModal,notificationBusy,notificationsEnabled,notificationCheckedKey,notificationKey,platform,installed,pushAvailable]);
 
   async function selectSession(next,pin,setup=null){
+    if(!await autoSave.flush())return;
     let authenticated;
     if(CLOUD) {
       if(setup?.mode==='register')authenticated=await sellerRegister(api,next,setup.name,pin,{regionalConsent:setup.regionalConsent});
@@ -721,6 +726,7 @@ export default function App() {
   }
   function forgetDeviceProfile(){clearDeviceProfile();setDeviceProfile(null);}
   async function logoutSeller(){
+    if(!await autoSave.flush())return;
     notificationAbort.current?.abort();notificationAbort.current=null;setStartupPushPending(false);setStartupNotificationPending(false);setStartupNotificationError('');setNotificationBusy(true);
     try {
       let warning=false;
@@ -807,13 +813,14 @@ export default function App() {
     if(!session||connection==='offline')throw new Error('Connexion interrompue. Réessayez en ligne.');
     const targetOwner=goalOwnerKey(session);
     try {
-      const result=await api('/api/goals',{method:'POST',body:{...body,storeId:session.storeId,sellerId:session.sellerId}});
+      const result=await api('/api/goals',{method:'POST',keepalive:true,body:{...body,storeId:session.storeId,sellerId:session.sellerId}});
       if(ownerRef.current!==targetOwner)throw new Error('Votre profil a changé. Sélectionnez-le à nouveau.');
-      setGoalState({owner:targetOwner,...goalData(result),loading:false,error:''});cacheGoals(targetOwner,result);
-      loadGoals();setGoalModal(null);flash('Objectifs enregistrés.',{tone:'success'});
+      goalRequest.current++;setGoalState({owner:targetOwner,...goalData(result),loading:false,error:''});cacheGoals(targetOwner,result);
+      void loadGoals();
       return result;
-    } catch(e){if(e.status===409)await loadGoals();throw e;}
+    } catch(e){if(e.status===409||!e.status||e.status>=500)await loadGoals();throw e;}
   }
+  async function closeGoalModal(){if(await autoSave.flush())setGoalModal(null);}
   function updateSaleRetries(change) {
     const before=saleRetriesRef.current,after=change(before);
     if(after.length===before.length&&after.every((item,i)=>item===before[i]))return;
@@ -1014,7 +1021,7 @@ export default function App() {
     <MobileNav onNavigate={navigate} active={activeNav}/>
     {sessionDialog}
     {todayDetail&&session&&stats&&<TodayDetails scope={todayDetail} stats={stats} services={data.services} date={data.today} department={department} offline={connection==='offline'} onClose={()=>setTodayDetail(null)}/>}
-    {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={()=>setGoalModal(null)}><GoalForm services={data.services} goals={currentGoals} workdays={goalState.workdays} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={()=>setGoalModal(null)} disabled={connection==='offline'}/></Modal>}
+    {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={closeGoalModal}><GoalForm services={data.services} goals={currentGoals} workdays={goalState.workdays} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={closeGoalModal} disabled={connection==='offline'}/></Modal>}
     {adminDialog}
     {notificationsModal&&<NotificationsDialog permission={notificationPermission} enabled={displayedEnabled} checkError={displayedError} unconfirmed={displayedUnconfirmed} pushAvailable={pushAvailable} platform={platform} installed={installed} hasSession={!!session} pendingProfile={notificationPendingProfile} pendingError={!!startupNotificationError} busy={notificationBusy} onClose={()=>setNotificationsModal(false)} onEnable={enableNotifications} onDisable={disableNotifications} onRetry={retryNotifications} onInstall={openInstall} onSelectProfile={()=>{setNotificationsModal(false);changeSession();}}/>}
     {themeModal&&<Modal title="Apparence" subtitle="Vos préférences sur cet appareil." onClose={()=>setThemeModal(false)}>

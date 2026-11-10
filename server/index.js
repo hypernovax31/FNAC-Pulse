@@ -645,6 +645,9 @@ app.patch('/api/admin/departments/:id',requireAdmin,(req,res)=>{
   if(!activeStore(storeId))return failure(res,'Choisissez d’abord un magasin valide.');
   const list=localDepartments(storeId,false),row=list.find(d=>d.id===id);
   if(!row)return failure(res,'Département introuvable.',404);
+  if(typeof req.body?.name==='string'&&req.body.expectedName!==undefined&&
+    (typeof req.body.expectedName!=='string'||req.body.expectedName!==row.name))
+    return failure(res,'Ce nom a changé ailleurs. Rechargez les valeurs avant de le modifier.',409);
   const name=typeof req.body?.name==='string'?cleanName(req.body.name):row.name;
   const active=typeof req.body?.active==='boolean'?req.body.active:!!row.active;
   if(!name)return failure(res,'Saisissez le nom du département.');
@@ -684,6 +687,9 @@ app.patch('/api/admin/entities/:kind/:id',requireAdmin,(req,res) => {
   const row=table&&isId(id)?db.prepare(`SELECT *,${table==='sellers'?'store_id':'NULL'} AS storeId FROM ${table} WHERE id=?`).get(id):null;
   if(!row)return failure(res,'Élément introuvable.',404);
   if(table==='sellers'&&req.body?.storeId!==undefined&&req.body.storeId!==row.storeId)return failure(res,'Ce vendeur appartient à un autre magasin.');
+  if(typeof req.body?.name==='string'&&req.body.expectedName!==undefined&&
+    (typeof req.body.expectedName!=='string'||req.body.expectedName!==row.name))
+    return failure(res,'Ce nom a changé ailleurs. Rechargez les valeurs avant de le modifier.',409);
   const name=typeof req.body?.name==='string'?cleanName(req.body.name):row.name;
   const active=typeof req.body?.active==='boolean'?req.body.active:!!row.active;
   const departmentId=table==='sellers'?(row.department_id||TECH_DEPARTMENT_ID):null;

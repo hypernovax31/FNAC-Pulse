@@ -2657,3 +2657,28 @@ test('Création vendeur admin cloud : aucun demi-vendeur sur conflit ou document
     }
   }
 });
+
+test('Renommage cloud : précondition optionnelle, conflits sans écrasement et anciennes interfaces',async()=>{
+  const db=new MemoryDb(),worker=createWorker({createDb:()=>db,verifyIdToken:async()=>({sub:'administrator'})});
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',ADMIN_UID:'administrator'},ctx={waitUntil(){}};
+  const call=async(path,method='GET',body)=>{const r=await worker.fetch(new Request(`https://worker.test${path}`,{method,headers:{authorization:'Bearer admin',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),env,ctx);return {status:r.status,body:await r.json()};};
+  await call('/api/bootstrap');const store=LEGACY_STORE_ID;
+  const original=(await db.get('pulse/catalog')).data;
+  const checks=[
+    {path:`/api/admin/entities/sellers/${original.sellers[0].id}`,name:original.sellers[0].name,extra:{storeId:store},locate:c=>c.sellers.find(x=>x.id===original.sellers[0].id)},
+    {path:`/api/admin/entities/services/${original.services[0].id}`,name:original.services[0].name,extra:{},locate:c=>c.services.find(x=>x.id===original.services[0].id)},
+    {path:'/api/admin/departments/tech',name:original.departmentsByStore?.[store]?.find(x=>x.id==='tech')?.name||'Produits Techniques',extra:{storeId:store},locate:c=>c.departmentsByStore[store].find(x=>x.id==='tech')},
+  ];
+  for(const [i,row] of checks.entries()) {
+    const before=(await db.get('pulse/catalog')).data;
+    assert.equal((await call(row.path,'PATCH',{...row.extra,name:`Nom concurrent ${i}`,expectedName:row.name})).status,200);
+    const after=(await db.get('pulse/catalog')).data;
+    assert.equal(row.locate(after).name,`Nom concurrent ${i}`);
+    const conflict=await call(row.path,'PATCH',{...row.extra,name:'Ne pas écraser',expectedName:row.name});
+    assert.equal(conflict.status,409);assert.match(conflict.body.error,/changé ailleurs/);
+    assert.deepEqual((await db.get('pulse/catalog')).data,after,'aucune modification sur conflit');
+    assert.equal((await call(row.path,'PATCH',{...row.extra,name:`Ancien client ${i}`})).status,200,'les anciennes PWA restent compatibles');
+    assert.equal(row.locate((await db.get('pulse/catalog')).data).name,`Ancien client ${i}`);
+    assert.equal(before.sellers.length,original.sellers.length);
+  }
+});

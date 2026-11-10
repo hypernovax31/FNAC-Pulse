@@ -43,8 +43,8 @@ test('Planning vendeur : conflit 409, rechargement explicite et révision fraîc
     await act(async()=>{tree=TestRenderer.create(React.createElement(SellerWorkdays,{...props,onBusy:x=>busy.push(x),onChanged:()=>changes++}));await tick();});
     await act(async()=>dayInput(tree,'Dimanche').props.onChange());
     await act(async()=>{tree.root.findByProps({className:'workdays-form'}).props.onSubmit({preventDefault(){}});await tick();});
-    assert.match(text(tree.toJSON()),/Ces jours ont été modifiés ailleurs/);assert(button(tree,'Enregistrer les jours').props.disabled);assert.equal(calls.find(x=>x.method==='POST').body.revision,'r1');
-    await act(async()=>button(tree,'Recharger les jours').props.onClick());assert.equal(dayInput(tree,'Samedi').props.checked,true);assert.equal(dayInput(tree,'Dimanche').props.checked,false);
+    assert.match(text(tree.toJSON()),/Ces jours ont été modifiés ailleurs/);assert(!button(tree,'Enregistrer les jours')); assert.equal(calls.find(x=>x.method==='POST').body.revision,'r1');
+    await act(async()=>button(tree,'Recharger les valeurs').props.onClick());assert.equal(dayInput(tree,'Samedi').props.checked,true);assert.equal(dayInput(tree,'Dimanche').props.checked,false);
     await act(async()=>dayInput(tree,'Dimanche').props.onChange());
     await act(async()=>{tree.root.findByProps({className:'workdays-form'}).props.onSubmit({preventDefault(){}});await tick();});
     assert.equal(calls.filter(x=>x.method==='POST')[1].body.revision,'r2');assert.match(text(tree.toJSON()),/Jours travaillés enregistrés/);assert.equal(changes,1);assert.deepEqual(busy,[true,false,true,false]);

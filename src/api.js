@@ -1,5 +1,5 @@
 import { CLOUD, WORKER_URL, ADMIN_SESSION, vendorToken, adminToken } from './cloud';
-export async function api(path, { method = 'GET', body, token, signal } = {}) {
+export async function api(path, { method = 'GET', body, token, signal, keepalive = false } = {}) {
   let destination=path,auth=token||'';
   if(CLOUD) {
     let worker;try{worker=new URL(WORKER_URL);}catch{throw new Error('L’adresse du Worker Cloudflare reste à configurer.');}
@@ -10,7 +10,7 @@ export async function api(path, { method = 'GET', body, token, signal } = {}) {
     if((token===ADMIN_SESSION||/^\/api\/(sales|push|goals|summary-goals)/.test(path))&&!auth)throw new Error('Session expirée. Reconnectez-vous.');
   }
   const options={
-    method,signal,headers:{...(body!==undefined?{'Content-Type':'application/json'}:{}),...(auth?{Authorization:`Bearer ${auth}`}:{})},
+    method,signal,...(keepalive?{keepalive:true}:{}),headers:{...(body!==undefined?{'Content-Type':'application/json'}:{}),...(auth?{Authorization:`Bearer ${auth}`}:{})},
     ...(body!==undefined?{body:JSON.stringify(body)}:{}),
   };
   let response;

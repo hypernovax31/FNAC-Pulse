@@ -604,3 +604,26 @@ test('SQLite : ajout admin avec département et jours obligatoires, transaction 
     assert.deepEqual((await request(`/api/goals?storeId=${store}&sellerId=${id}`)).body.workdays,[0]);
   } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
 });
+
+test('SQLite : préconditions de renommage et compatibilité des anciens clients',async()=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'fnac-pulse-rename-')),port=await freePort(),url=`http://127.0.0.1:${port}`;let server;
+  async function request(route,method='GET',body,token) {
+    const r=await fetch(url+route,{method,headers:{...(body?{'content-type':'application/json'}:{}),...(token?{authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});
+    return {status:r.status,body:await r.json()};
+  }
+  try {
+    server=await start(port,folder);const base=(await request('/api/bootstrap')).body,store=LEGACY_STORE_ID;
+    const token=(await request('/api/admin/login','POST',{password:'MotDePasseDeTest!2026'})).body.token;
+    const all=(await request('/api/admin/all','GET',undefined,token)).body;
+    const checks=[
+      {path:`/api/admin/entities/sellers/${base.sellers[0].id}`,name:base.sellers[0].name,extra:{storeId:store}},
+      {path:`/api/admin/entities/services/${base.services[0].id}`,name:base.services[0].name,extra:{}},
+      {path:'/api/admin/departments/tech',name:(all.departmentsByStore[store]||[{id:'tech',name:'Produits Techniques'}]).find(x=>x.id==='tech').name,extra:{storeId:store}},
+    ];
+    for(const [i,row] of checks.entries()) {
+      assert.equal((await request(row.path,'PATCH',{...row.extra,name:`Nom concurrent ${i}`,expectedName:row.name},token)).status,200);
+      const denied=await request(row.path,'PATCH',{...row.extra,name:'Ne pas écraser',expectedName:row.name},token);assert.equal(denied.status,409);assert.match(denied.body.error,/changé ailleurs/);
+      assert.equal((await request(row.path,'PATCH',{...row.extra,name:`Ancien client ${i}`},token)).status,200);
+    }
+  } finally {if(server)await stop(server);fs.rmSync(folder,{recursive:true,force:true});}
+});

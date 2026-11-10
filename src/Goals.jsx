@@ -1,6 +1,7 @@
-import React, { useEffect, useId, useState } from 'react';
-import { VisibleFeedback, useFeedbackState, useRetryFeedback } from './VisibleFeedback';
-import { ArrowRight, Check, Pencil, Plus, Target, RotateCw } from 'lucide-react';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { VisibleFeedback, useRetryFeedback } from './VisibleFeedback';
+import { AutoSaveStatus, useAutomaticSave } from './AutoSave';
+import { ArrowRight, Check, Pencil, Plus, Target } from 'lucide-react';
 import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, WORKDAY_NAMES, WORKDAY_ORDER, goalReference, goalTargets, hasGoal, parseGoalInputs, normalizeWorkdays, validWorkdays, workdaysLabel } from './goals.js';
 import { validGoalDate, personalGoalCards, personalGoalMetric } from './goal-display.js';
 import { goalMinimum } from './goal-policy.js';
@@ -20,111 +21,108 @@ function formReference(entry,admin=false) {
 // Utilisé par le vendeur et par l'administration pour garder les mêmes règles.
 export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCancel,disabled=false,showPlanning=false,admin=false,date=parisToday()}) {
   const initial=services.find(s=>String(s.id)===String(initialServiceId))?.id||services[0]?.id||'';
-  const entry=goals?.[`s${initial}`],initialReference=formReference(entry,admin);
   const [service,setService]=useState(String(initial));
-  const [basis,setBasis]=useState(initialReference.period);
-  const [amount,setAmount]=useState(initialReference.amount);
-  const [revision,setRevision]=useState(entry?.revision||null);
-  const [busy,setBusy]=useState(false);
-  const [error,setError,errorRevision]=useFeedbackState('');
-  const [notice,setNotice,noticeRevision]=useFeedbackState('');
+  const goalsRef=useRef(goals);goalsRef.current=goals;
   const current=goals?.[`s${service}`],minimum=goalMinimum(current),effective=goalReference(current);
-  const stale=!!service && (current?.revision||null)!==revision;
-  const numeric=/^\d+$/.test(amount)?Number(amount):null;
-  const preview=numeric!==null&&numeric>=0&&numeric<=GOAL_LIMIT?goalTargets({[basis]:numeric},date,workdays):null;
-  function loadService(id) {
-    const next=goals?.[`s${id}`],reference=formReference(next,admin);
-    setService(String(id));setBasis(reference.period);setAmount(reference.amount);setRevision(next?.revision||null);setError('');setNotice('');
-  }
-  function changeBasis(period) {
-    // Changer de période ne remplace jamais silencieusement le nombre saisi.
-    setBasis(period);setError('');setNotice('');
-  }
-  async function save(values,removed=false) {
-    setBusy(true);
-    try {
+  const editor=useAutomaticSave({
+    remoteValue:formReference(current,admin),remoteVersion:current?.revision||null,disabled:disabled||!service,
+    equals:(a,b)=>{
+      if(a?.remove||b?.remove)return !!a?.remove===!!b?.remove;
+      if(!a.amount&&!b.amount)return true;
+      return a.period===b.period&&a.amount===b.amount;
+    },
+    validate:value=>{
+      if(value.remove)return '';
+      let values;try{values=parseGoalInputs(referenceInputs(value.period,value.amount));}catch(e){return e.message;}
+      if(!hasGoal(values))return 'Indiquez une cible de référence. Pour supprimer un objectif, utilisez l’action de suppression.';
+      if(!admin&&minimum&&(value.period!==minimum.period||Number(value.amount)<minimum.amount))return 'Respectez le minimum et la période fixés par l’administrateur.';
+      return '';
+    },
+    onSave:async(value,revision)=>{
+      const values=value.remove?{day:null,week:null,month:null}:parseGoalInputs(referenceInputs(value.period,value.amount));
       const result=await onSave({serviceId:Number(service),values,revision});
       const next=result?.goals?.[`s${service}`];
-      if(next){const reference=formReference(next,admin);setRevision(next.revision);setBasis(reference.period);setAmount(reference.amount);}
-      setNotice(removed?'Objectif supprimé.':'Objectifs enregistrés.');
-    } catch(e){setError(e.message||'Impossible d’enregistrer les objectifs.');}
-    finally{setBusy(false);}
+      if(!next||typeof next.revision!=='string')throw new Error('Enregistrement non confirmé. Vérifiez les dernières valeurs avant de réessayer.');
+      return {value:formReference(next,admin),version:next.revision,...(value.remove?{notice:'Objectif supprimé.'}:{})};
+    },
+  });
+  const {period:basis,amount}=editor.draft;
+  const numeric=/^\d+$/.test(amount)?Number(amount):null;
+  const preview=numeric!==null&&numeric>=0&&numeric<=GOAL_LIMIT?goalTargets({[basis]:numeric},date,workdays):null;
+  async function loadService(id) {
+    if(!await editor.flush())return;
+    const next=goalsRef.current?.[`s${id}`];
+    editor.reset(formReference(next,admin),next?.revision||null);setService(String(id));
   }
-  async function submit(event) {
-    event.preventDefault();setError('');setNotice('');
-    if(!service||stale)return;
-    let values;try{values=parseGoalInputs(referenceInputs(basis,amount));}catch(e){setError(e.message);return;}
-    if(!hasGoal(values)){setError('Indiquez une cible de référence pour ce service.');return;}
-    if(!admin&&minimum&&(basis!==minimum.period||numeric<minimum.amount)){setError('Respectez le minimum et la période fixés par l’administrateur.');return;}
-    if(admin&&minimum&&basis!==minimum.period&&current?.personal&&!window.confirm('Changer la période remplacera la référence et l’ajustement personnel du vendeur. Continuer ?'))return;
-    await save(values);
+  function changeBasis(period) {
+    // Un changement de période admin peut effacer la hausse personnelle : il
+    // reste une décision explicite, avant toute sauvegarde automatique.
+    if(admin&&minimum&&period!==minimum.period&&current?.personal&&
+      !window.confirm('Changer la période remplacera la référence et l’ajustement personnel du vendeur. Continuer ?'))return;
+    editor.change({...editor.current(),period});
   }
-  function remove() {
-    if(!service||stale||busy||disabled||(!admin&&minimum))return;
+  async function remove() {
+    if(!service||editor.stale||editor.busy||disabled||(!admin&&minimum))return;
     const name=services.find(s=>String(s.id)===service)?.name||'ce service';
     if(!window.confirm(`Supprimer les objectifs de ${name} pour les trois périodes ?`))return;
-    setError('');setNotice('');save({day:null,week:null,month:null},true);
+    if(!await editor.flush())return;
+    editor.change({period:basis,amount:'',remove:true});
+    await editor.flush();
   }
-  return <form className="goal-form" onSubmit={submit}>
-    <label><span className="form-label">SERVICE</span><select className="text-input" aria-label="Service pour les objectifs" value={service} onChange={e=>loadService(e.target.value)} disabled={busy||disabled||!services.length}>
+  return <form className="goal-form" onSubmit={event=>{event.preventDefault();void editor.flush();}}>
+    <label><span className="form-label">SERVICE</span><select className="text-input" aria-label="Service pour les objectifs" value={service} onChange={e=>{const id=e.target.value;void loadService(id);}} disabled={disabled||!services.length}>
       {!services.length&&<option value="">Aucun service disponible</option>}{services.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
     </select></label>
     <p className="goal-form-intro">{admin?'Fixez un minimum et sa période de référence. Le vendeur peut choisir une cible plus élevée.':'Choisissez une cible de référence. Les cibles du jour, de la semaine et du mois sont calculées selon les jours travaillés.'}</p>
     {!admin&&minimum&&<p className="goal-minimum"><strong>Minimum administrateur : {formatNumber(minimum.amount)} {REFERENCE_LABELS[minimum.period]}.</strong> Vous pouvez augmenter votre cible ou la redescendre jusqu’à ce minimum.</p>}
-    {admin&&!minimum&&hasGoal(current)&&<p className="goal-minimum">Objectif existant sans minimum : l’enregistrer fixera un minimum.</p>}
+    {admin&&!minimum&&hasGoal(current)&&<p className="goal-minimum">Objectif existant sans minimum : toute modification fixera un minimum.</p>}
     {admin&&minimum&&effective&&effective.period===minimum.period&&effective.amount>minimum.amount&&<p className="goal-minimum">Cible personnelle actuelle : <strong>{formatNumber(effective.amount)} {REFERENCE_LABELS[effective.period]}</strong>. Elle est conservée si vous modifiez le minimum sans changer de période.</p>}
     {admin&&minimum&&basis!==minimum.period&&<p className="goal-minimum">Changer de période remplace la référence et son éventuel ajustement personnel.</p>}
     <div className="goal-base-fields">
-      <label><span className="form-label">PÉRIODE DE RÉFÉRENCE</span><select className="text-input" aria-label="Période de référence" value={basis} onChange={e=>changeBasis(e.target.value)} disabled={busy||disabled||!service||(!admin&&!!minimum)}>
+      <label><span className="form-label">PÉRIODE DE RÉFÉRENCE</span><select className="text-input" aria-label="Période de référence" value={basis} onChange={e=>changeBasis(e.target.value)} disabled={disabled||!service||(!admin&&!!minimum)}>
         <option value="day">Par jour travaillé</option><option value="week">Par semaine</option><option value="month">Par mois</option>
       </select></label>
-      <label><span className="form-label">{admin?'CIBLE MINIMALE':'CIBLE'}</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min={!admin&&minimum?minimum.amount:0} max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={busy||disabled||!service} onChange={e=>{setAmount(e.target.value);setNotice('');}} required/></label>
+      <label><span className="form-label">{admin?'CIBLE MINIMALE':'CIBLE'}</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min={!admin&&minimum?minimum.amount:0} max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={disabled||!service} onChange={e=>editor.change({period:editor.current().period,amount:e.target.value})} required/></label>
     </div>
     <div className="goal-preview" aria-live="polite"><span className="form-label">{admin?'CIBLES CALCULÉES POUR CE MINIMUM':'CIBLES CALCULÉES POUR LA PÉRIODE EN COURS'}</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PREVIEW_LABELS[period]}</span><strong>{preview?formatNumber(preview[period]):'—'}</strong></div>)}</div><p className="goal-preview-hint">Ces quantités sont des objectifs à atteindre, pas les ventes déjà réalisées.</p></div>
     {showPlanning&&<details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Modifiez ces jours dans la fiche du vendeur, onglet Vendeurs. Les cibles par semaine ou par mois sont réparties en entiers : samedi 6 parts, lundi et vendredi 5, les autres jours travaillés 4. Une cible par jour travaillé reste identique chaque jour. Les jours fériés sont inclus et certains jours peuvent recevoir 0. Changer de période remplace la référence et son éventuelle hausse personnelle.</p></details>}
-    {stale&&<><VisibleFeedback message="Cet objectif a été modifié ailleurs." tone="error" actionLabel="Recharger" onAction={()=>loadService(service)}/><div className="goal-conflict" role="alert"><span>Cet objectif a été modifié ailleurs.</span><button type="button" onClick={()=>loadService(service)}><RotateCw size={13}/> Recharger les valeurs</button></div></>}
-    {error&&<><VisibleFeedback message={error} tone="error" revision={errorRevision}/><div className="form-error" role="alert">{error}</div></>}
-    {notice&&<><VisibleFeedback message={notice} revision={noticeRevision}/><div className="goal-saved" role="status">{notice}</div></>}
-    {hasGoal(current)&&<button type="button" className="goal-remove" onClick={remove} disabled={busy||disabled||stale||(!admin&&!!minimum)} title={!admin&&minimum?'Seul un administrateur peut supprimer ce minimum.':undefined}>Supprimer l’objectif de ce service</button>}
-    <div className="goal-form-actions">{onCancel&&<button type="button" className="outline-button" onClick={onCancel} disabled={busy}>Fermer</button>}<button className="primary-button" type="submit" disabled={busy||disabled||stale||!service||!amount}>{busy?'Enregistrement…':'Enregistrer'} <ArrowRight size={15}/></button></div>
+    <AutoSaveStatus editor={editor} saved="Objectifs enregistrés automatiquement." conflict="Cet objectif a été modifié ailleurs. Votre saisie n’a pas été enregistrée."/>
+    {hasGoal(current)&&<button type="button" className="goal-remove" onClick={remove} disabled={editor.busy||disabled||editor.stale||(!admin&&!!minimum)} title={!admin&&minimum?'Seul un administrateur peut supprimer ce minimum.':undefined}>Supprimer l’objectif de ce service</button>}
+    {onCancel&&<div className="goal-form-actions"><button type="button" className="outline-button" onClick={onCancel}>Fermer</button></div>}
   </form>;
 }
 
 // Jours habituels par vendeur, du lundi au dimanche ; formulaire réservé à l'administration.
 export function WorkdaysForm({workdays,revision,onSave,disabled=false}) {
-  const titleId=useId();
-  const [selected,setSelected]=useState(()=>normalizeWorkdays(workdays));
-  const [editRevision,setEditRevision]=useState(revision||null);
-  const [busy,setBusy]=useState(false);
-  const [error,setError,errorRevision]=useFeedbackState(''),[notice,setNotice,noticeRevision]=useFeedbackState('');
-  const stale=(revision||null)!==editRevision;
-  const changed=selected.join(',')!==normalizeWorkdays(workdays).join(',');
-  function reload() {setSelected(normalizeWorkdays(workdays));setEditRevision(revision||null);setError('');setNotice('');}
+  const titleId=useId(),[hint,setHint]=useState('');
+  const editor=useAutomaticSave({
+    remoteValue:normalizeWorkdays(workdays),remoteVersion:revision||null,disabled,
+    equals:(a,b)=>a.join(',')===b.join(','),
+    validate:days=>validWorkdays(days)?'':'Choisissez au moins un jour travaillé.',
+    onSave:async(days,expected)=>{
+      const result=await onSave({workdays:days,revision:expected});
+      if(!validWorkdays(result?.workdays)||typeof result?.workdaysRevision!=='string')throw new Error('Enregistrement non confirmé. Vérifiez les jours avant de réessayer.');
+      return {value:normalizeWorkdays(result.workdays),version:result.workdaysRevision};
+    },
+  });
+  const selected=editor.draft;
   function toggle(day) {
-    setSelected(days=>{const next=days.includes(day)?days.filter(x=>x!==day):[...days,day];return WORKDAY_ORDER.filter(x=>next.includes(x));});
-    setError('');setNotice('');
+    const days=editor.current();
+    if(days.length===1&&days.includes(day)){setHint('Cochez d’abord un autre jour : au moins un jour est nécessaire.');return;}
+    setHint('');const next=days.includes(day)?days.filter(x=>x!==day):[...days,day];
+    editor.change(WORKDAY_ORDER.filter(x=>next.includes(x)));
   }
-  async function submit(event) {
-    event.preventDefault();setError('');setNotice('');
-    if(stale||!validWorkdays(selected))return;
-    setBusy(true);
-    try {
-      const result=await onSave({workdays:selected,revision:editRevision});
-      setSelected(normalizeWorkdays(result.workdays));setEditRevision(result.workdaysRevision||null);setNotice('Jours travaillés enregistrés.');
-    } catch(e){setError(e.message||'Impossible d’enregistrer les jours travaillés.');}
-    finally{setBusy(false);}
-  }
-  return <form className="workdays-form" aria-labelledby={titleId} onSubmit={submit}>
+  return <form className="workdays-form" aria-labelledby={titleId} onSubmit={event=>{event.preventDefault();void editor.flush();}}>
     <div className="workdays-heading"><div><h4 id={titleId}>Jours travaillés</h4><p>Choisissez les jours habituels de ce vendeur, du lundi au dimanche. Sélectionnez au moins un jour.</p></div>{!revision&&<span>Par défaut · à vérifier</span>}</div>
-    <fieldset className="workdays-list" disabled={busy||disabled}><legend className="sr-only">Jours travaillés de ce vendeur</legend>
+    <fieldset className="workdays-list" disabled={disabled}><legend className="sr-only">Jours travaillés de ce vendeur</legend>
       {WORKDAY_ORDER.map(id=><label className={`workday-option ${selected.includes(id)?'is-selected':''}`} key={id}>
         <input type="checkbox" checked={selected.includes(id)} onChange={()=>toggle(id)}/><span>{WORKDAY_NAMES[id][0].toUpperCase()+WORKDAY_NAMES[id].slice(1)}</span>
       </label>)}
     </fieldset>
-    <div className="workdays-actions"><span aria-live="polite">{selected.length} {selected.length>1?'jours sélectionnés':'jour sélectionné'}</span><button type="submit" className="outline-button" disabled={busy||disabled||stale||!validWorkdays(selected)||(!changed&&!!editRevision)}>{busy?'Enregistrement…':'Enregistrer les jours'}</button></div>
+    <div className="workdays-actions"><span aria-live="polite">{selected.length} {selected.length>1?'jours sélectionnés':'jour sélectionné'}</span></div>
+    {hint&&<p className="goal-form-hint" role="status">{hint}</p>}
+    <AutoSaveStatus editor={editor} saved="Jours travaillés enregistrés automatiquement." conflict="Ces jours ont été modifiés ailleurs. Votre saisie n’a pas été enregistrée."/>
     <p className="goal-form-hint">Jours fériés inclus. Le planning se répète chaque semaine et ne gère pas les absences ponctuelles ; toutes les ventes restent comptées.</p>
-    {stale&&<><VisibleFeedback message="Ces jours ont été modifiés ailleurs." tone="error" actionLabel="Recharger" onAction={reload}/><div className="goal-conflict" role="alert"><span>Ces jours ont été modifiés ailleurs.</span><button type="button" onClick={reload}><RotateCw size={13}/> Recharger les jours</button></div></>}
-    {error&&<><VisibleFeedback message={error} tone="error" revision={errorRevision}/><div className="form-error" role="alert">{error}</div></>}{notice&&<><VisibleFeedback message={notice} revision={noticeRevision}/><div className="goal-saved" role="status">{notice}</div></>}
   </form>;
 }
 
