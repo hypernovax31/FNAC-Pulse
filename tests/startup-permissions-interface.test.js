@@ -36,7 +36,7 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
   const storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)};
   const adminValues=new Map(Object.entries(initialAdminValues));
   const adminStorage={getItem:key=>adminValues.get(key)??null,setItem:(key,value)=>adminValues.set(key,value),removeItem:key=>adminValues.delete(key)};
-  const e={values,adminValues,failBootstrap:false,adminFail:false,pinStatus:null,logoutCount:0,adminLogins:[],gesture:false,notifications:[],locations:[],sounds:[],audioLoads:0,audioInstances:0,audioReject:false,listenCalls:0,onSale:null,prepares:0,prepareFails:false,subscriptions:0,requests:[],sellerCalls:[],auth:null,geoSuccess:null,geoResult};
+  const e={values,adminValues,failBootstrap:false,adminFail:false,sellerLoginFails:false,pinStatus:null,logoutCount:0,adminLogins:[],gesture:false,notifications:[],locations:[],sounds:[],audioLoads:0,audioInstances:0,audioReject:false,audioHang:false,audioPauses:0,listenCalls:0,onSale:null,prepares:0,prepareFails:false,subscriptions:0,requests:[],sellerCalls:[],auth:null,geoSuccess:null,geoResult};
   const permission={permission:notificationPermission,requestPermission(){
     e.notifications.push({gesture:e.gesture});
     if(notificationDeferred)return new Promise(resolve=>{e.resolveNotification=value=>{this.permission=value;resolve(value);};});
@@ -51,17 +51,21 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
   }};
   const registration={pushManager:{getSubscription:async()=>null}};
   const nav={standalone,userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)',platform:'iPhone',maxTouchPoints:5,geolocation:geo,serviceWorker:{register:async()=>registration,ready:Promise.resolve(registration)},permissions:{query:async({name})=>({state:name==='geolocation'?geoPermission:permission.permission,addEventListener(){},removeEventListener(){}})}};
-  const media=query=>({matches:standalone&&query==='(display-mode: standalone)',addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}});
+  const mediaEvents=new Map();
+  const media=query=>({get matches(){return standalone&&query==='(display-mode: standalone)';},addEventListener(name,fn){if(name==='change'){if(!mediaEvents.has(query))mediaEvents.set(query,new Set());mediaEvents.get(query).add(fn);}},removeEventListener(name,fn){if(name==='change')mediaEvents.get(query)?.delete(fn);},addListener(){},removeListener(){}});
+  e.displayAs=value=>{standalone=value;nav.standalone=value;for(const listeners of mediaEvents.values())for(const fn of listeners)fn({matches:value});};
   const windowEvents=new Map();
   const win={navigator:nav,__fnacOpenAdminInvitation:directInvitation,isSecureContext:true,PushManager:function(){},Notification:permission,matchMedia:media,addEventListener(name,fn){if(!windowEvents.has(name))windowEvents.set(name,new Set());windowEvents.get(name).add(fn);},removeEventListener(name,fn){windowEvents.get(name)?.delete(fn);},scrollTo(){}};
   e.dispatchWindow=(name,event)=>{for(const fn of windowEvents.get(name)||[])fn(event);};
-  const doc={visibilityState:'visible',body:{style:{}},documentElement:{dataset:{},style:{}},activeElement:null,addEventListener(){},removeEventListener(){},getElementById(){return null;},querySelector(){return null;}};
+  const documentEvents=new Map();
+  const doc={visibilityState:'visible',body:{style:{}},documentElement:{dataset:{},style:{}},activeElement:null,addEventListener(name,fn){if(!documentEvents.has(name))documentEvents.set(name,new Set());documentEvents.get(name).add(fn);},removeEventListener(name,fn){documentEvents.get(name)?.delete(fn);},getElementById(){return null;},querySelector(){return null;}};
+  e.dispatchDocument=(name,event)=>{for(const fn of documentEvents.get(name)||[])fn(event);};
   const mock={
     observe(fn){e.auth=fn;if(auth!=='manual')queueMicrotask(()=>fn(auth));return ()=>{if(e.auth===fn)e.auth=null;};},
     listen(_session,_day,_client,onChange,onSale,onError){e.listenCalls++;e.onSale=onSale;e.onChange=onChange;e.onError=onError;return ()=>{if(e.onSale===onSale){e.onSale=null;e.onChange=null;e.onError=null;}};},
     async api(path,options={}){e.requests.push({path,method:options.method||'GET',body:options.body});if(path.startsWith('/api/bootstrap')){if(e.failBootstrap)throw Error('Connexion indisponible');return e.addedSeller?{...data,sellers:[...data.sellers,e.addedSeller]}:data;}if(path==='/api/auth/status')return e.pinStatus||{needsPin:false,pinLength:4,pinSalt:'sel-fictif'};if(path==='/api/auth/admin-account-status')return {passwordChangeRequired:false};if(path==='/api/admin/all')return {sellers:[],services:[],serviceOrders:{},serviceRemovalsByStore:{},departmentsByStore:{}};if(path==='/api/goals')return {goals:{}};if(path.startsWith('/api/summary-goals'))return {};return {};},
     async sellerLogout(){e.logoutCount++;},async adminLogin(email,password){e.adminLogins.push({email,password});if(e.adminFail)throw Error('Identifiants incorrects');return 'admin';},async adminLogout(){},
-    async sellerLogin(_api,selection,pin,pinSalt){e.sellerCalls.push({mode:'login',selection,pin,pinSalt});return {...selection,uid:'fictif',accessVersion:'v1'};},
+    async sellerLogin(_api,selection,pin,pinSalt){e.sellerCalls.push({mode:'login',selection,pin,pinSalt});if(e.sellerLoginFails)throw Object.assign(Error('Code PIN incorrect.'),{status:401});return {...selection,uid:'fictif',accessVersion:'v1'};},
     async sellerMigratePin(_api,selection,oldPin,newPin,pinSalt){e.sellerCalls.push({mode:'migrate',selection,oldPin,newPin,pinSalt});return {...selection,uid:'fictif',accessVersion:'v1'};},
     async sellerRegister(_api,selection,name,pin){e.sellerCalls.push({mode:'register',selection,name,pin});e.addedSeller={id:2,name,storeId:selection.storeId,departmentId:selection.departmentId,active:true};return {...selection,sellerId:2,uid:'fictif-nouveau',accessVersion:'v1'};},
     async prepare({signal}={}){
@@ -73,7 +77,7 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
     async unsubscribe(){storage.removeItem('fnac-pulse-fcm-enabled');},
   };
   const put=(name,value)=>Object.defineProperty(globalThis,name,{configurable:true,writable:true,value});
-  class AudioMock {constructor(){e.audioInstances++;this.paused=true;}load(){e.audioLoads++;}play(){e.sounds.push({gesture:e.gesture});if(e.audioReject)return Promise.reject(Error('lecture refusée'));this.paused=false;return Promise.resolve();}pause(){this.paused=true;}}
+  class AudioMock {constructor(){e.audioInstances++;this.paused=true;}load(){e.audioLoads++;}play(){e.sounds.push({gesture:e.gesture});if(e.audioHang)return new Promise(()=>{});if(e.audioReject)return Promise.reject(Error('lecture refusée'));this.paused=false;return Promise.resolve();}pause(){e.audioPauses++;this.paused=true;}}
   e.doc=doc;e.permission=permission;e.mock=mock;
   put('window',win);put('navigator',nav);put('document',doc);put('Notification',permission);put('localStorage',storage);put('sessionStorage',adminStorage);put('Audio',AudioMock);put('__startupTest',mock);
   e.restore=()=>{for(const [name,descriptor] of old)if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];};
@@ -86,12 +90,18 @@ function action(tree,name){return section(tree,name).findByType('button');}
 function button(tree,name){return tree.root.findAllByType('button').find(item=>text(item).includes(name));}
 async function mount({stayAtLaunch=false}={}){
   let tree;await act(async()=>{tree=TestRenderer.create(React.createElement(React.StrictMode,null,React.createElement(App)));await tick();await tick();});
-  // Les tests historiques ciblent les permissions et le tableau de bord ; ils
-  // franchissent explicitement le nouvel écran sans modifier son état stocké.
-  if(!stayAtLaunch)await act(async()=>{tree.root.findByProps({className:'startup-start'}).props.onClick();await tick();await tick();});
+  // Seuls les parcours sans session franchissent l'écran de bienvenue. Quand
+  // Auth est encore en attente, la sortie explicite reste également testable.
+  if(!stayAtLaunch){
+    const start=tree.root.findAllByProps({className:'startup-start'})[0]||tree.root.findAllByProps({className:'outline-button startup-wait-continue'})[0];
+    if(start)await act(async()=>{start.props.onClick();await tick();await tick();});
+  }
   return tree;
 }
 async function finish(tree,e){if(tree)await act(async()=>tree.unmount());e.restore();}
+async function documentGesture(e,{trusted=true,target={closest:()=>null},type='pointerdown'}={}){
+  await act(async()=>{e.gesture=true;try{e.dispatchDocument(type,{isTrusted:trusted,target});}finally{e.gesture=false;}await tick();await tick();});
+}
 
 test('PWA : autorisations dès le démarrage, avant données ou profil, puis rattachement automatique',async()=>{
   const e=environment();let tree;
@@ -132,8 +142,11 @@ test('PWA : autorisations existantes réutilisées sans nouvelle demande et sess
 test('PWA : refus et notifications coupées ne sont pas activés silencieusement, accès toujours possible',async()=>{
   const e=environment({geoPermission:'denied',geoResult:'denied',notificationPermission:'granted',auth:session});let tree;
   try {
-    tree=await mount();assert.match(text(tree.toJSON()),/Bien démarrer/);assert.doesNotMatch(text(section(tree,'Géolocalisation')),/refusé/);
+    tree=await mount();assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);
     assert.equal(e.locations.length,0);assert.equal(e.notifications.length,0);assert.equal(e.subscriptions,0);
+    await e.press(section(tree,'Autorisations de cet appareil').findAllByType('button').find(b=>text(b).includes('Configurer')));
+    assert.match(text(tree.toJSON()),/Bien démarrer/);assert.doesNotMatch(text(section(tree,'Géolocalisation')),/refusé/);
     await e.press(action(tree,'Géolocalisation'));assert.equal(e.locations[0].gesture,true);
     assert.match(text(section(tree,'Géolocalisation')),/Vérification 1 : accès refusé/);
     await e.press(button(tree,'Continuer'));await act(async()=>{await tick();});
@@ -325,7 +338,7 @@ test('Permission en attente : double appui ignoré et rattachement si le profil 
 test('Déconnexion pendant la demande : ne pas réactiver les notifications après coup',async()=>{
   const e=environment({notificationDeferred:true,auth:session});let tree;
   try {
-    tree=await mount();await e.press(action(tree,'Notifications d’équipe'));await e.press(button(tree,'Continuer'));
+    tree=await mount();await e.press(button(tree,'Configurer'));await e.press(action(tree,'Notifications d’équipe'));await e.press(button(tree,'Continuer'));
     await e.press(tree.root.findByProps({'aria-label':'Mon profil, Morgan'}));await e.press(button(tree,'Se déconnecter'));
     await act(async()=>{e.resolveNotification('granted');await tick();await tick();});
     assert.equal(e.prepares,0);assert.equal(e.subscriptions,0);assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),undefined);assert.equal(e.values.get('fnac-pulse-fcm-enabled'),undefined);
@@ -441,7 +454,7 @@ test('Bien démarrer : connexion du profil dans la modale puis association des n
   } finally {await finish(tree,e);}
 });
 
-test('Bien démarrer : création d’un profil et PIN sans quitter la modale ; permissions facultatives',async()=>{
+test('Bien démarrer : création d’un profil et accès direct ; permissions facultatives',async()=>{
   const e=environment({auth:null});let tree;
   try {
     tree=await mount();const profile=()=>section(tree,'Votre profil pour les notifications');
@@ -453,13 +466,15 @@ test('Bien démarrer : création d’un profil et PIN sans quitter la modale ; p
     await act(async()=>{await profile().findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
     assert.deepEqual(e.sellerCalls,[{mode:'register',selection:{storeId:'near',departmentId:'tech'},name:'Alice',pin:'7264'}]);
     assert.equal(e.notifications.length,0);assert.equal(e.locations.length,0);assert.equal(e.subscriptions,0);
-    assert.match(text(profile()),/Votre profil est déjà connecté/);
-    await e.press(button(tree,'Continuer'));assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer/);
+    assert.doesNotMatch(text(tree.toJSON()),/Bien démarrer|Bienvenue sur/);
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);
+    assert(tree.root.findByProps({'aria-label':'Autorisations de cet appareil'}));
     assert.match(e.values.get('fnac-pulse-device-profile-v1'),/"sellerId":2/);
   } finally {await finish(tree,e);}
 });
 
-async function selectMorganOnLaunch(tree) {
+async function selectMorganOnLaunch(tree,e=null) {
   const profile=()=>section(tree,'Sélection du profil vendeur');
   const change=async(label,value)=>act(async()=>{profile().findByProps({'aria-label':label}).props.onChange({target:{value}});await tick();});
   await change('Votre magasin Fnac','Fnac Près');
@@ -470,10 +485,14 @@ async function selectMorganOnLaunch(tree) {
   assert(profile().findAllByProps({role:'option'}).some(item=>text(item).includes('Morgan')),'suggestion de prénom dès le lancement');
   await act(async()=>{profile().findAllByProps({role:'option'}).find(item=>text(item).includes('Morgan')).props.onClick();await tick();await tick();});
   await change('Code PIN personnel','4829');
-  await act(async()=>{await profile().findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
+  await act(async()=>{
+    if(e)e.gesture=true;
+    let pending;try {pending=profile().findByType('form').props.onSubmit({preventDefault(){},isTrusted:!!e});} finally {if(e)e.gesture=false;}
+    await pending;await tick();await tick();
+  });
 }
 
-test('Navigateur : profil, suggestions et PIN avant l’accueil ; accès différé toujours possible',async()=>{
+test('Navigateur : profil, suggestions et PIN puis accueil immédiat',async()=>{
   const e=environment({standalone:false,auth:null});let tree;
   try {
     tree=await mount({stayAtLaunch:true});
@@ -483,16 +502,27 @@ test('Navigateur : profil, suggestions et PIN avant l’accueil ; accès différ
     assert(section(tree,'Sélection du profil vendeur').findByProps({'aria-label':'Votre magasin Fnac'}));
     await selectMorganOnLaunch(tree);
     assert.deepEqual(e.sellerCalls,[{mode:'login',selection:{storeId:'near',departmentId:'tech',sellerId:1},pin:'4829',pinSalt:'sel-fictif'}]);
-    assert.match(text(section(tree,'Sélection du profil vendeur')),/Morgan/);
-    assert.doesNotMatch(text(section(tree,'Sélection du profil vendeur')),/Code PIN personnel/);
-    assert.doesNotMatch(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.equal(tree.root.findAllByProps({'aria-label':'Sélection du profil vendeur'}).length,0);
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.match(text(tree.toJSON()),/Bonjour, Morgan/);
+    assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur|Accéder aux services/);
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);
     assert.match(e.values.get('fnac-pulse-device-profile-v1'),/"sellerId":1/);
-    await e.press(button(tree,'Accéder aux services'));
-    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.equal(e.sounds.length,0);
+    assert.equal(e.sounds.length,0);
   } finally {await finish(tree,e);}
 });
 
-test('Lancement : création autonome du vendeur et PIN sans quitter l’écran',async()=>{
+test('PIN incorrect : rester sur le choix du profil sans ouvrir une fausse session',async()=>{
+  const e=environment({standalone:false,auth:null});let tree;
+  try {
+    e.sellerLoginFails=true;tree=await mount({stayAtLaunch:true});await selectMorganOnLaunch(tree);
+    assert.match(text(tree.toJSON()),/Code PIN incorrect/);assert.match(text(tree.toJSON()),/Bienvenue sur/);
+    assert.doesNotMatch(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.equal(e.logoutCount,0);assert.equal(e.values.get('fnac-pulse-session-v1'),undefined);
+    assert(section(tree,'Sélection du profil vendeur').findByProps({'aria-label':'Code PIN personnel'}));
+  } finally {await finish(tree,e);}
+});
+
+test('Lancement : création autonome du vendeur et accueil immédiat',async()=>{
   const e=environment({standalone:false,auth:null});let tree;
   try {
     tree=await mount({stayAtLaunch:true});const profile=()=>section(tree,'Sélection du profil vendeur');
@@ -503,7 +533,7 @@ test('Lancement : création autonome du vendeur et PIN sans quitter l’écran',
     await change('Votre nouveau code PIN','7264');await change('Confirmer votre code PIN','7264');
     await act(async()=>{await profile().findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
     assert.deepEqual(e.sellerCalls,[{mode:'register',selection:{storeId:'near',departmentId:'tech'},name:'Alice',pin:'7264'}]);
-    assert.match(text(profile()),/Alice|Profil connecté/);assert.match(text(tree.toJSON()),/Bienvenue sur/);
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur|Accéder aux services/);
     assert.match(e.values.get('fnac-pulse-device-profile-v1'),/"sellerId":2/);
     assert.equal(e.notifications.length,0);assert.equal(e.sounds.length,0);
   } finally {await finish(tree,e);}
@@ -533,25 +563,120 @@ test('Administration depuis le lancement : connexion indépendante, retour et sa
   } finally {await finish(tree,e);}
 });
 
-test('Session vendeur et magasin admin déjà mémorisés : affichés sans déconnexion ni effacement',async()=>{
+test('Session vendeur et magasin admin mémorisés : accueil immédiat sans déconnexion ni effacement',async()=>{
   const e=environment({auth:session,adminValues:{'pulse-admin-token':'admin','pulse-admin-managed-store-v1':'far'}});let tree;
   try {
     tree=await mount({stayAtLaunch:true});
-    assert.match(text(section(tree,'Sélection du profil vendeur')),/Morgan/);
-    assert.match(text(section(tree,'Sélection du profil vendeur')),/Fnac Près/);
-    assert.doesNotMatch(text(tree.toJSON()),/Plus tard/);assert.equal(e.logoutCount,0);
-    await e.press(button(tree,'Gérer'));
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.match(text(tree.toJSON()),/Morgan/);assert.match(text(tree.toJSON()),/Fnac Près/);
+    assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur|Accéder aux services/);
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);assert.equal(e.logoutCount,0);
+    await e.press(tree.root.findByProps({'aria-label':'Mon profil, Morgan'}));
     const personal=tree.root.findByProps({role:'dialog','aria-label':'Mon profil'});
     assert.match(text(personal),/Votre session reste ouverte/);
     await e.press(personal.findByProps({'aria-label':'Fermer'}));
     assert.equal(e.logoutCount,0);assert.match(text(tree.toJSON()),/Morgan/);
-    await e.press(tree.root.findByProps({'aria-label':'Ouvrir l’administration'}));
+    await e.press(tree.root.findByProps({'aria-label':'Administration'}));
     const admin=tree.root.findByProps({role:'dialog','aria-label':'Administration'});
     assert.match(text(admin),/Magasin sélectionné : Fnac Loin/);
     assert.equal(e.adminValues.get('pulse-admin-managed-store-v1'),'far');assert.equal(e.logoutCount,0);
     await e.press(admin.findByProps({'aria-label':'Fermer'}));
-    assert.match(text(section(tree,'Sélection du profil vendeur')),/Morgan/);
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.match(text(tree.toJSON()),/Morgan/);
   } finally {await finish(tree,e);}
+});
+
+test('Authentification lente : aucun écran de bienvenue avant la restauration, navigateur comme PWA',async()=>{
+  for(const standalone of [false,true]) {
+    const e=environment({standalone,auth:'manual',adminValues:{'pulse-admin-managed-store-v1':'far'}});let tree;
+    try {
+      const cached=JSON.stringify(session);e.values.set('fnac-pulse-session-v1',cached);
+      tree=await mount({stayAtLaunch:true});
+      assert.match(text(tree.toJSON()),/Vérification de votre session/);
+      assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur|Accéder aux services|VOTRE TABLEAU DE BORD/);
+      assert.equal(e.sounds.length,0);assert.equal(e.notifications.length,0);assert.equal(e.locations.length,0);
+      await e.authAs(session);
+      assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.match(text(tree.toJSON()),/Bonjour, Morgan/);
+      assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur|Accéder aux services/);
+      assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0,'aucune étape automatique ne masque l’accueil');
+      assert.equal(e.values.get('fnac-pulse-session-v1'),cached);assert.equal(e.logoutCount,0);
+      assert.equal(e.adminValues.get('pulse-admin-managed-store-v1'),'far');
+    } finally {await finish(tree,e);}
+  }
+});
+
+test('Session absente après vérification : profil et choix Plus tard restent proposés',async()=>{
+  const e=environment({auth:'manual',standalone:false});let tree;
+  try {
+    e.values.set('fnac-pulse-device-profile-v1',JSON.stringify({storeId:'near',sellerId:1}));
+    tree=await mount({stayAtLaunch:true});assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur/);
+    await e.authAs(null);
+    assert.match(text(tree.toJSON()),/Bienvenue sur/);assert.match(text(tree.toJSON()),/Morgan/);
+    assert(section(tree,'Sélection du profil vendeur').findByProps({'aria-label':'Code PIN personnel'}));
+    assert(button(tree,'Plus tard'));assert.equal(e.logoutCount,0);
+  } finally {await finish(tree,e);}
+});
+
+test('Session devenue invalide : profil à reconnecter, sans conserver un accès fantôme',async()=>{
+  const e=environment({auth:session});let tree;
+  try {
+    e.values.set('fnac-pulse-session-v1',JSON.stringify(session));tree=await mount({stayAtLaunch:true});
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert(e.onError);
+    await act(async()=>{e.onError({code:'permission-denied'});await tick();await tick();});
+    assert.equal(e.logoutCount,1);assert.equal(e.values.get('fnac-pulse-session-v1'),undefined);
+    assert.match(text(tree.toJSON()),/Reconnectez-vous avec votre code PIN/);
+    assert(tree.root.findByProps({'aria-label':'Code PIN personnel'}));
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0,'aucune ancienne invitation ne bloque la reconnexion');
+    assert.doesNotMatch(text(tree.toJSON()),/Bonjour, Morgan/);
+  } finally {await finish(tree,e);}
+});
+
+test('PWA connectée : autorisations non bloquantes, consentement explicite et réglages retrouvables',async()=>{
+  const e=environment({auth:session});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);
+    assert.equal(e.notifications.length,0);assert.equal(e.locations.length,0);
+    await e.press(button(tree,'Configurer'));
+    assert(tree.root.findByProps({role:'dialog','aria-label':'Bien démarrer'}));
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/,'le tableau de bord reste derrière le dialogue volontaire');
+    await e.press(action(tree,'Notifications d’équipe'));await e.press(action(tree,'Géolocalisation'));
+    assert.deepEqual(e.notifications,[{gesture:true}]);assert.equal(e.locations.length,1);assert.equal(e.locations[0].gesture,true);
+    assert.equal(e.subscriptions,1);assert.equal(e.values.get('fnac-pulse-fcm-enabled'),'1');
+    await e.press(button(tree,'Continuer'));
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);assert.match(text(tree.toJSON()),/Bonjour, Morgan/);
+    await e.press(tree.root.findByProps({className:'permissions-link'}));
+    assert(tree.root.findByProps({role:'dialog','aria-label':'Bien démarrer'}),'les autorisations restent accessibles même après configuration');
+    await e.press(button(tree,'Continuer'));
+    assert.equal(e.notifications.length,1);assert.equal(e.locations.length,1);
+  } finally {await finish(tree,e);}
+});
+
+test('Navigateur connecté : installation uniquement à la demande',async()=>{
+  const e=environment({auth:session,standalone:false});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);
+    await e.press(tree.root.findByProps({'aria-label':'Installer Fnac Pulse'}));
+    const dialog=tree.root.findByProps({role:'dialog','aria-label':'Installer Fnac Pulse'});
+    assert.match(text(dialog),/Sur l’écran d’accueil/);
+    await e.press(dialog.findByProps({'aria-label':'Fermer'}));
+    assert.match(text(tree.toJSON()),/Bonjour, Morgan/);assert.equal(e.logoutCount,0);
+  } finally {await finish(tree,e);}
+});
+
+test('Invitation admin avec vendeur connecté : le dialogue voulu ouvre sur l’accueil, sans écran intermédiaire',async()=>{
+  for(const standalone of [false,true]) {
+    const e=environment({standalone,auth:'manual',directInvitation:true,adminValues:{'pulse-admin-token':'admin','pulse-admin-managed-store-v1':'far'}});let tree;
+    try {
+      tree=await mount({stayAtLaunch:true});assert.match(text(tree.toJSON()),/Ouverture de l’administration/);
+      await e.authAs(session);
+      const admin=tree.root.findByProps({role:'dialog','aria-label':'Administration'});
+      assert.match(text(admin),/Magasin sélectionné : Fnac Loin/);assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+      assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur|Accéder aux services/);
+      assert.equal(tree.root.findAllByProps({role:'dialog'}).length,1);assert.equal(e.logoutCount,0);
+      await e.press(admin.findByProps({'aria-label':'Fermer'}));assert.match(text(tree.toJSON()),/Bonjour, Morgan/);
+    } finally {await finish(tree,e);}
+  }
 });
 
 test('Lancement : chargement et panne actionnables, sans effacer le magasin admin',async()=>{
@@ -559,7 +684,8 @@ test('Lancement : chargement et panne actionnables, sans effacer le magasin admi
   try {
     e.failBootstrap=true;tree=await mount({stayAtLaunch:true});
     assert.match(text(tree.toJSON()),/Vérification de votre session/);
-    assert.equal(tree.root.findByProps({'aria-label':'Ouvrir l’administration'}).props.disabled,true);
+    assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur|VOTRE TABLEAU DE BORD/);
+    assert(button(tree,'Continuer sans attendre'));
     assert.equal(e.adminValues.get('pulse-admin-managed-store-v1'),'far');
     await e.authAs(null);
     assert.match(text(tree.toJSON()),/Profil indisponible/);assert.match(text(tree.toJSON()),/Administration indisponible/);
@@ -579,7 +705,7 @@ test('Invitation directe : administration avant l’accueil, y compris pendant l
       tree=await mount({stayAtLaunch:true});
       assert.match(text(tree.toJSON()),/Ouverture de l’administration après le chargement/);
       assert.equal(e.adminValues.get('pulse-admin-managed-store-v1'),'far');
-      if(leaveBeforeData){await e.press(button(tree,'Accéder aux services'));assert.match(text(tree.toJSON()),/Bien démarrer/);}
+      if(leaveBeforeData){await e.press(button(tree,'Continuer sans attendre'));assert.match(text(tree.toJSON()),/Bien démarrer/);}
       await e.authAs(null);
       const dialog=tree.root.findByProps({role:'dialog','aria-label':'Administration'});
       assert.match(text(dialog),/Magasin sélectionné : Fnac Loin/);
@@ -591,15 +717,82 @@ test('Invitation directe : administration avant l’accueil, y compris pendant l
   }
 });
 
-test('PWA : choisir le profil ne joue pas le son ; le geste d’accès le joue une fois',async()=>{
+test('PWA : le geste de connexion joue le son une fois et ouvre directement l’accueil',async()=>{
+  const e=environment({auth:null,existingTouch:false});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});await selectMorganOnLaunch(tree,e);
+    assert.deepEqual(e.sounds,[{gesture:true}]);assert.equal(e.values.get('fnac-pulse-touch-welcome-v1'),'done');
+    assert.equal(e.notifications.length,0);assert.equal(e.locations.length,0);
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.match(text(tree.toJSON()),/Morgan/);
+    assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur|Accéder aux services/);
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);assert.equal(e.logoutCount,0);
+  } finally {await finish(tree,e);}
+});
+
+test('PWA restaurée : aucun autoplay, son au premier vrai geste et aucune répétition',async()=>{
+  const e=environment({auth:session,existingTouch:false});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.equal(e.sounds.length,0);assert.equal(e.values.get('fnac-pulse-touch-welcome-v1'),undefined);
+    await documentGesture(e,{trusted:false});assert.equal(e.sounds.length,0,'un événement artificiel ne déclenche pas la lecture');
+    await documentGesture(e);assert.deepEqual(e.sounds,[{gesture:true}]);
+    assert.equal(e.values.get('fnac-pulse-touch-welcome-v1'),'done');
+    await documentGesture(e,{type:'click'});await documentGesture(e,{type:'keydown'});
+    assert.equal(e.sounds.length,1);assert.equal(e.notifications.length,0);assert.equal(e.locations.length,0);
+  } finally {await finish(tree,e);}
+});
+
+test('PWA restaurée : son désactivé conservé et échec de lecture non bloquant avec réessai',async()=>{
+  const muted=environment({auth:session,existingTouch:false});let tree;
+  try {
+    muted.values.set('fnac-pulse-sale-sound-v1','off');tree=await mount({stayAtLaunch:true});
+    await documentGesture(muted);assert.equal(muted.sounds.length,0);
+    assert.equal(muted.values.get('fnac-pulse-sale-sound-v1'),'off');assert.equal(muted.values.get('fnac-pulse-touch-welcome-v1'),'done');
+    assert(tree.root.findByProps({'aria-label':'Activer le son Fnac'}));
+  } finally {await finish(tree,muted);}
+  const rejected=environment({auth:session,existingTouch:false});tree=null;
+  try {
+    rejected.audioReject=true;tree=await mount({stayAtLaunch:true});await documentGesture(rejected);
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.match(text(tree.toJSON()),/Le son Fnac n’a pas pu être lu/);
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);
+    rejected.audioReject=false;
+    await rejected.press(tree.root.findByProps({className:'toast toast-warning toast-sound-error'}).findByProps({className:'toast-action'}));
+    assert.deepEqual(rejected.sounds,[{gesture:true},{gesture:true}]);assert.equal(rejected.values.get('fnac-pulse-touch-welcome-v1'),'done');
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+  } finally {await finish(tree,rejected);}
+});
+
+test('PWA : lecteur bloqué libéré sans bloquer l’accueil, puis réessai au geste',async()=>{
+  const e=environment({auth:session,existingTouch:false});let tree;
+  try {
+    e.audioHang=true;tree=await mount({stayAtLaunch:true});await documentGesture(e);
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.equal(e.sounds.length,1);
+    await act(async()=>{await new Promise(resolve=>setTimeout(resolve,6200));await tick();});
+    assert.match(text(tree.toJSON()),/Le son Fnac n’a pas pu être lu/);assert(e.audioPauses>=1);
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);
+    e.audioHang=false;await e.press(tree.root.findByProps({className:'toast toast-warning toast-sound-error'}).findByProps({className:'toast-action'}));
+    assert.deepEqual(e.sounds,[{gesture:true},{gesture:true}]);assert.equal(e.values.get('fnac-pulse-touch-welcome-v1'),'done');
+  } finally {await finish(tree,e);}
+});
+
+test('PWA : soumission artificielle sans son, prochain geste réel pris en compte',async()=>{
   const e=environment({auth:null,existingTouch:false});let tree;
   try {
     tree=await mount({stayAtLaunch:true});await selectMorganOnLaunch(tree);
-    assert.equal(e.sounds.length,0);assert.equal(e.notifications.length,0);
-    await e.press(button(tree,'Accéder aux services'));
-    assert.deepEqual(e.sounds,[{gesture:true}]);assert.equal(e.values.get('fnac-pulse-touch-welcome-v1'),'done');
-    assert.match(text(tree.toJSON()),/Bien démarrer/);assert.match(text(tree.toJSON()),/Morgan/);
-    assert.equal(e.logoutCount,0);
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.equal(e.sounds.length,0);
+    await documentGesture(e);assert.deepEqual(e.sounds,[{gesture:true}]);
+  } finally {await finish(tree,e);}
+});
+
+test('Changement vers la PWA : une session ouverte ne rappelle jamais l’écran de bienvenue',async()=>{
+  const e=environment({auth:session,existingTouch:false,standalone:false});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    await act(async()=>{e.displayAs(true);await tick();await tick();});
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur|Accéder aux services/);
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);assert.equal(e.sounds.length,0);
+    assert(tree.root.findByProps({'aria-label':'Autorisations de cet appareil'}));
+    await documentGesture(e);assert.deepEqual(e.sounds,[{gesture:true}]);assert.equal(e.logoutCount,0);
   } finally {await finish(tree,e);}
 });
 
@@ -618,7 +811,7 @@ test('PWA : lecture refusée, accès sans son et choix des permissions préserv�
 test('Tableau de bord après le lancement : invitation en haut et textes conservés',async()=>{
   const e=environment({auth:session});let tree;
   try {
-    tree=await mount();await e.press(button(tree,'Continuer'));
+    tree=await mount();
     const output=text(tree.toJSON());
     assert(output.indexOf('Restez informés')>=0&&output.indexOf('Restez informés')<output.indexOf('VOTRE TABLEAU DE BORD'));
     assert.match(output,/VENTES QUOTIDIENNES/);assert.match(output,/Touchez un service pour ajouter une vente\./);
@@ -641,7 +834,7 @@ test('Plus tard dans un navigateur : accès à l’accueil sans profil ni lectur
 test('Invitation directe dans un navigateur : pas de modale d’installation au-dessus de l’administration',async()=>{
   const e=environment({standalone:false,auth:'manual',directInvitation:true});let tree;
   try {
-    tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Plus tard'));await e.authAs(null);
+    tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Continuer sans attendre'));await e.authAs(null);
     assert(tree.root.findByProps({role:'dialog','aria-label':'Espace administrateur'}));
     assert.equal(tree.root.findAllByProps({role:'dialog'}).length,1,'une seule modale visible');
     await e.press(tree.root.findByProps({role:'dialog','aria-label':'Espace administrateur'}).findByProps({'aria-label':'Fermer'}));
@@ -660,7 +853,8 @@ test('Profil mémorisé déconnecté au lancement : PIN requis, sans redemander 
     await act(async()=>{profile().findByProps({'aria-label':'Code PIN personnel'}).props.onChange({target:{value:'4829'}});await tick();});
     await act(async()=>{await profile().findByType('form').props.onSubmit({preventDefault(){}});await tick();await tick();});
     assert.deepEqual(e.sellerCalls,[{mode:'login',selection:{storeId:'near',departmentId:'tech',sellerId:1},pin:'4829',pinSalt:'sel-fictif'}]);
-    assert.equal(e.logoutCount,0);assert.match(text(tree.toJSON()),/Bienvenue sur/);
+    assert.equal(e.logoutCount,0);assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur|Accéder aux services/);
   } finally {await finish(tree,e);}
 });
 
@@ -682,12 +876,12 @@ test('Ancien PIN au lancement : migration individuelle à 4 chiffres sans perte 
 test('Échec de connexion admin au lancement : pas de droit attribué ni déconnexion vendeur',async()=>{
   const e=environment({auth:session});let tree;
   try {
-    e.adminFail=true;tree=await mount({stayAtLaunch:true});await e.press(tree.root.findByProps({'aria-label':'Ouvrir l’administration'}));
+    e.adminFail=true;tree=await mount({stayAtLaunch:true});await e.press(tree.root.findByProps({'aria-label':'Administration'}));
     const dialog=()=>tree.root.findByProps({role:'dialog','aria-label':'Espace administrateur'});
     await act(async()=>{dialog().findByProps({id:'admin-email'}).props.onChange({target:{value:'admin@example.test'}});dialog().findByProps({id:'admin-password'}).props.onChange({target:{value:'incorrect'}});await tick();});
     await act(async()=>{await dialog().findByProps({className:'admin-login-form'}).props.onSubmit({preventDefault(){}});await tick();await tick();});
     assert.match(text(dialog()),/Identifiants incorrects/);assert.equal(e.adminValues.get('pulse-admin-token'),undefined);
-    assert.equal(e.logoutCount,0);assert.match(text(section(tree,'Sélection du profil vendeur')),/Morgan/);
+    assert.equal(e.logoutCount,0);assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.match(text(tree.toJSON()),/Morgan/);
   } finally {await finish(tree,e);}
 });
 

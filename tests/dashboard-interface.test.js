@@ -41,7 +41,7 @@ test('En-tête : le carré du profil et son nom ouvrent le même profil sans dou
   }finally{if(tree)await act(async()=>tree.unmount());}
 });
 
-test('Premier lancement PWA : l’accueil tactile masque le tableau de bord avant le geste',()=>{
+test('Premier lancement PWA sans session : le choix du profil précède le tableau de bord',()=>{
   const oldWindow=globalThis.window,oldStorage=globalThis.localStorage;
   globalThis.window={navigator:{standalone:true},isSecureContext:false};
   globalThis.localStorage={getItem(){return null;},setItem(){},removeItem(){}};

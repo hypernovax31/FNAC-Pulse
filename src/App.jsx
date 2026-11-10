@@ -163,7 +163,7 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
     setFormBusy(true);setFormError('');
     const selection={storeId:store,departmentId:department,...(seller?{sellerId:Number(seller)}:{})};
     try {
-      await onSubmit(selection,mode==='login'?pin:newPin,{mode,name:typed,oldPin:mode==='migrate'?pin:'',pinSalt,regionalConsent:needsRegionalConsent&&regionalConsent});
+      await onSubmit(selection,mode==='login'?pin:newPin,{mode,name:typed,oldPin:mode==='migrate'?pin:'',pinSalt,regionalConsent:needsRegionalConsent&&regionalConsent,gesture:event.isTrusted===true});
       clearSecrets();
     } catch(error){
       if(mode==='register') {
@@ -352,7 +352,7 @@ function readNotificationPermission() {return typeof Notification==='undefined'?
 function Toast({notice,onClose,icon}) {
   const Icon=icon||(notice.tone==='warning'?Info:CircleCheck),container=useRef(null);
   useLayoutEffect(()=>{const node=container.current;return ()=>{if(typeof document!=='undefined'&&node?.contains(document.activeElement))restoreDialogFocus({currentTarget:document.activeElement});};},[]);
-  return <div ref={container} className={`toast toast-${notice.tone||'default'}${notice.variant==='profile-required'?' toast-profile-required':''}`} role="status" aria-atomic="true">
+  return <div ref={container} className={`toast toast-${notice.tone||'default'}${notice.variant==='profile-required'?' toast-profile-required':notice.variant==='sound-error'?' toast-sound-error':''}`} role="status" aria-atomic="true">
     <span className="toast-icon" aria-hidden="true"><Icon size={22}/></span><span className="toast-message">{notice.message}</span>
     {notice.action&&<button type="button" className="toast-action" onClick={event=>{restoreDialogFocus(event);onClose();notice.action();}}>{notice.actionLabel}</button>}
     <button type="button" className="toast-close" aria-label="Fermer la notification" onClick={event=>{restoreDialogFocus(event);onClose();}}><X size={19} aria-hidden="true"/></button>
@@ -378,7 +378,9 @@ function AppContent() {
   const [notificationsModal,setNotificationsModal]=useState(false);
   const [installed,setInstalled]=useState(isStandalone);
   const [platform]=useState(installPlatform);
-  const [installModal,setInstallModal]=useState(()=>typeof window!=='undefined'&&!isStandalone());
+  // L'aide automatique à l'installation reste proposée sans profil ; une
+  // session restaurée ne doit pas être masquée par cette modale.
+  const [installModal,setInstallModal]=useState(()=>typeof window!=='undefined'&&!isStandalone()?'automatic':false);
   const [installError,setInstallError]=useState('');
   const [themeModal,setThemeModal]=useState(false);
   const [goalModal,setGoalModal]=useState(null);
@@ -387,12 +389,13 @@ function AppContent() {
   const [summaryState,setSummaryState]=useState({key:'',data:null,loading:false,error:''});
   const [theme,setTheme]=useState(readTheme);
   const [soundEnabled,setSoundEnabled]=useState(readSoundEnabled);
-  // Le choix du profil et l'accès administrateur sont proposés à chaque ouverture,
-  // sans rejouer le son lorsque le premier geste PWA est déjà enregistré.
+  // Sans session, proposer le profil et l'accès administrateur. Une session
+  // restaurée ou une connexion réussie ouvre directement le tableau de bord.
   const [startupGate,setStartupGate]=useState(true);
   const [startupReady,setStartupReady]=useState(false);
   const [startupStatus,setStartupStatus]=useState('ready');
   const [startupPermissionsOpen,setStartupPermissionsOpen]=useState(isStandalone);
+  const [startupPermissionsReview,setStartupPermissionsReview]=useState(false);
   const [locationStatus,setLocationStatus]=useState('checking');
   const [locationFeedback,setLocationFeedback]=useState(null);
   const [startupLocation,setStartupLocation]=useState(null);
@@ -412,16 +415,20 @@ function AppContent() {
   const [toast,setToast]=useState(null);
   const [soundNotice,setSoundNotice]=useState(null);
   const toastSequence=useRef(0),soundNoticeSequence=useRef(0);
-  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), soundNoticeTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), notificationPrompted=useRef(false), notificationAbort=useRef(null), notificationStartInFlight=useRef(false), locationRequest=useRef(0), locationAttempt=useRef(0), locationInFlight=useRef(false), locationTimer=useRef(null);
+  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), soundNoticeTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), startupGestureAttempted=useRef(false), startupGestureAttempt=useRef(0), startupGestureTimer=useRef(null), notificationPrompted=useRef(false), notificationAbort=useRef(null), notificationStartInFlight=useRef(false), locationRequest=useRef(0), locationAttempt=useRef(0), locationInFlight=useRef(false), locationTimer=useRef(null);
   const pushAvailable=typeof window!=='undefined'&&!(platform.os==='ios'&&!installed)&&window.isSecureContext&&'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
   const notificationKey=JSON.stringify([session?.storeId,session?.sellerId,session?.uid,session?.accessVersion,authReady,notificationPermission,pushAvailable,notificationCheck]);
   const checkingCurrent=notificationCheckedKey!==notificationKey;
   const displayedEnabled=checkingCurrent?(notificationPermission==='granted'?null:false):notificationsEnabled,displayedError=checkingCurrent?'':notificationError,displayedUnconfirmed=!checkingCurrent&&notificationUnconfirmed;
   const notificationPendingProfile=!session&&startupNotificationPending&&notificationPermission==='granted'&&pushAvailable;
   const notificationNotice=notificationBanner({permission:notificationPermission,enabled:displayedEnabled,hasSession:!!session,platform,installed,error:displayedError,unconfirmed:displayedUnconfirmed,pushAvailable,pendingProfile:notificationPendingProfile,pendingError:!!startupNotificationError});
-  const startupGateRef=useRef(startupGate),soundEnabledRef=useRef(soundEnabled),alertSoundReady=useRef(false);
-  startupGateRef.current=startupGate;soundEnabledRef.current=soundEnabled;
-  alertSoundReady.current=displayedEnabled===true&&!notificationBusy&&notificationPermission==='granted'&&!startupGate&&!startupPermissionsOpen;
+  const sessionConnected=authReady&&!!session,hadSession=useRef(false);
+  const startupGateActive=startupGate&&!sessionConnected;
+  const permissionsBlocking=startupPermissionsOpen&&(startupPermissionsReview||(!sessionConnected&&!hadSession.current));
+  const installOpen=!!installModal&&(installModal!=='automatic'||!sessionConnected);
+  const startupGateRef=useRef(startupGateActive),sessionRef=useRef(session),soundEnabledRef=useRef(soundEnabled),alertSoundReady=useRef(false);
+  startupGateRef.current=startupGateActive;sessionRef.current=session;soundEnabledRef.current=soundEnabled;
+  alertSoundReady.current=displayedEnabled===true&&!notificationBusy&&notificationPermission==='granted'&&!startupGateActive&&!permissionsBlocking;
   const startupNotificationReady=pushAvailable&&notificationPermission==='granted'&&!notificationError&&!startupNotificationError&&(notificationsEnabled===true||(CLOUD&&notificationsWanted())||(!session&&startupNotificationPending));
   const store=data?.stores?.find(s=>s.id===session?.storeId), seller=data?.sellers?.find(s=>s.id===session?.sellerId&&sellerStoreId(s)===session?.storeId);
   const activeDepartmentId=seller?sellerDepartmentId(seller):'';
@@ -444,6 +451,34 @@ function AppContent() {
     return pending.length?summarize(snap.catalog,[...snap.sales,...pending],session.sellerId,cloudDay,session.storeId):data?.stats;
   },[session,liveSnapshot,provisional,owner,cloudDay,data?.stats]);
 
+  // Quand l'écran d'accès n'est plus nécessaire, conserver le premier son
+  // uniquement dans un vrai geste (connexion ou première interaction PWA).
+  // Une lecture refusée ne doit jamais empêcher l'accès au tableau de bord.
+  function cancelStartupGestureAttempt(){startupGestureAttempt.current++;clearTimeout(startupGestureTimer.current);startupGestureTimer.current=null;}
+  function playStartupSoundNonBlocking(retry=false){
+    const player=sound.current;
+    if(!player||!isStandalone()||document.visibilityState==='hidden'||!needsStartupTouch({standalone:true})||(!retry&&startupGestureAttempted.current))return false;
+    startupGestureAttempted.current=true;
+    const attempt=++startupGestureAttempt.current;
+    const failed=()=>{
+      if(sound.current!==player||!soundEnabledRef.current)return;
+      clearTimeout(soundNoticeTimer.current);
+      setSoundNotice({message:'Le son Fnac n’a pas pu être lu. Vérifiez le volume et réessayez.',tone:'warning',variant:'sound-error',actionLabel:'Réessayer',action:()=>playStartupSoundNonBlocking(true),sequence:++soundNoticeSequence.current});
+      soundNoticeTimer.current=setTimeout(()=>setSoundNotice(null),8000);
+    };
+    const operation=player.playFromGesture({standalone:true,visible:true});
+    clearTimeout(startupGestureTimer.current);
+    startupGestureTimer.current=setTimeout(()=>{
+      if(startupGestureAttempt.current!==attempt)return;
+      cancelStartupGestureAttempt();player.stop();failed();
+    },6000);
+    operation.then(result=>{
+      if(startupGestureAttempt.current!==attempt)return;
+      cancelStartupGestureAttempt();if(result==='unavailable')failed();
+    }).catch(()=>{if(startupGestureAttempt.current===attempt){cancelStartupGestureAttempt();failed();}});
+    return true;
+  }
+
   useEffect(()=>{
     applyTheme(theme);
     try {localStorage.setItem(THEME_KEY,theme);} catch {}
@@ -455,26 +490,31 @@ function AppContent() {
   useEffect(()=>{const sync=e=>{if(e.key===THEME_KEY)setTheme(readTheme());};window.addEventListener('storage',sync);return ()=>window.removeEventListener('storage',sync);},[]);
   useEffect(()=>{
     const player=sound.current||createStartupSound({base:APP_BASE});sound.current=player;setStartupReady(true);
-    // Aucun son automatique : seul le bouton de bienvenue appelle play().
+    // Aucun son automatique : le lecteur n'est déclenché que par un geste.
     const sync=e=>{
-      if(e.key===SOUND_KEY){const enabled=readSoundEnabled();soundEnabledRef.current=enabled;setSoundEnabled(enabled);player.setEnabled(enabled);clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}
+      if(e.key===SOUND_KEY){const enabled=readSoundEnabled();soundEnabledRef.current=enabled;setSoundEnabled(enabled);if(!enabled)cancelStartupGestureAttempt();player.setEnabled(enabled);clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}
       if(e.key===STARTUP_SOUND_KEY&&e.newValue==='done') {
         // Une autre fenêtre peut terminer le premier lancement, mais celle-ci
         // doit quand même attendre son propre appui avant d'afficher la page.
         const pressedHere=startupInFlight.current;
-        startupAttempt.current++;startupInFlight.current=false;clearTimeout(startupTimer.current);player.stop();
+        cancelStartupGestureAttempt();startupAttempt.current++;startupInFlight.current=false;clearTimeout(startupTimer.current);player.stop();
         if(pressedHere)setStartupGate(false);else setStartupStatus('ready');
       }
     };
-    const displayChanged=()=>{if(needsStartupTouch({standalone:isStandalone()}))setStartupGate(true);};
-    // Après l'écran de lancement, préparer le même lecteur au premier geste,
-    // sans rejouer le MP3 lorsque le premier lancement PWA est déjà terminé.
-    const prepare=event=>{if(event.isTrusted!==false&&!startupGateRef.current)player.prepareFromGesture();};
-    const visibility=()=>{if(document.visibilityState==='hidden')player.stop();};
+    const displayChanged=()=>{if(!sessionRef.current&&needsStartupTouch({standalone:isStandalone()}))setStartupGate(true);};
+    // La première interaction sur l'accueil remplace l'ancien bouton d'accès
+    // pour la lecture initiale. Une préférence « son coupé » reste respectée.
+    const prepare=event=>{
+      if(event.isTrusted===false||startupGateRef.current)return;
+      // Ne pas faire retentir la signature au moment où l'on coupe le son.
+      if(event.target?.closest?.('.sound-trigger')){player.prepareFromGesture();return;}
+      if(!playStartupSoundNonBlocking())player.prepareFromGesture();
+    };
+    const visibility=()=>{if(document.visibilityState==='hidden'){cancelStartupGestureAttempt();player.stop();}};
     const media=window.matchMedia?.('(display-mode: standalone)');
     window.addEventListener('storage',sync);media?.addEventListener?.('change',displayChanged);
     document.addEventListener('pointerdown',prepare,true);document.addEventListener('click',prepare,true);document.addEventListener('keydown',prepare,true);document.addEventListener('visibilitychange',visibility);
-    return ()=>{window.removeEventListener('storage',sync);media?.removeEventListener?.('change',displayChanged);document.removeEventListener('pointerdown',prepare,true);document.removeEventListener('click',prepare,true);document.removeEventListener('keydown',prepare,true);document.removeEventListener('visibilitychange',visibility);startupAttempt.current++;startupInFlight.current=false;clearTimeout(startupTimer.current);player.dispose();if(sound.current===player)sound.current=null;};
+    return ()=>{window.removeEventListener('storage',sync);media?.removeEventListener?.('change',displayChanged);document.removeEventListener('pointerdown',prepare,true);document.removeEventListener('click',prepare,true);document.removeEventListener('keydown',prepare,true);document.removeEventListener('visibilitychange',visibility);cancelStartupGestureAttempt();startupAttempt.current++;startupInFlight.current=false;clearTimeout(startupTimer.current);player.dispose();if(sound.current===player)sound.current=null;};
   },[]);
   useEffect(()=>{
     if(!isStandalone())return;
@@ -489,12 +529,28 @@ function AppContent() {
     return ()=>{cancelled=true;locationRequest.current++;locationInFlight.current=false;clearTimeout(locationTimer.current);};
   },[]);
   useEffect(()=>{
-    // Ne pas fermer avant d'avoir proposé le profil. Avec une session, seule
-    // une souscription confirmée (et non la simple permission) termine l'étape.
-    if(startupPermissionsOpen&&!startupGate&&authReady&&session&&locationStatus==='granted'&&displayedEnabled===true&&!notificationBusy){
+    if(!sessionConnected){
+      // Après une déconnexion, ne pas transformer l'invitation facultative du
+      // tableau de bord en une modale qui cacherait le formulaire de profil.
+      if(hadSession.current){hadSession.current=false;setStartupPermissionsOpen(false);setStartupPermissionsReview(false);}
+      return;
+    }
+    hadSession.current=true;
+    // Ne pas présenter de modale automatique par-dessus l'accueil connecté.
+    // L'installation et les autorisations restent accessibles à la demande.
+    notificationPrompted.current=true;
+    setStartupGate(false);
+    setStartupPermissionsReview(false);
+    setInstallModal(value=>value==='automatic'?false:value);
+  },[sessionConnected]);
+  useEffect(()=>{
+    // Seule une souscription confirmée, et non la simple permission, termine
+    // la proposition automatique. Une configuration ouverte volontairement
+    // reste visible jusqu'à sa fermeture par l'utilisateur.
+    if(startupPermissionsOpen&&!startupPermissionsReview&&!startupGateActive&&sessionConnected&&locationStatus==='granted'&&displayedEnabled===true&&!notificationBusy){
       notificationPrompted.current=true;setStartupPermissionsOpen(false);
     }
-  },[startupPermissionsOpen,startupGate,authReady,session,locationStatus,displayedEnabled,notificationBusy]);
+  },[startupPermissionsOpen,startupPermissionsReview,startupGateActive,sessionConnected,locationStatus,displayedEnabled,notificationBusy]);
   useEffect(()=>{
     let timer,permissionStatus,cancelled=false;
     const sync=()=>{
@@ -662,7 +718,7 @@ function AppContent() {
     if('serviceWorker' in navigator) navigator.serviceWorker.register(`${APP_BASE}sw.js`, {scope:APP_BASE}).catch(()=>{});
     const promptReady=()=>setInstallPrompt(window.__fnacInstallPrompt||null);
     const onInstalled=()=>{setInstalled(true);setInstallPrompt(null);setInstallError('');setInstallModal(false);};
-    const displayChanged=()=>{if(isStandalone())onInstalled();};
+    const displayChanged=()=>{if(isStandalone()){onInstalled();setStartupPermissionsOpen(true);}};
     const media=['standalone','fullscreen','minimal-ui','window-controls-overlay'].map(mode=>window.matchMedia?.(`(display-mode: ${mode})`)).filter(Boolean);
     window.addEventListener('fnac-install-ready',promptReady);window.addEventListener('appinstalled',onInstalled);
     for(const item of media){if(item.addEventListener)item.addEventListener('change',displayChanged);else item.addListener?.(displayChanged);}
@@ -700,12 +756,15 @@ function AppContent() {
   useEffect(()=>{
     // Une permission système ne peut pas être demandée sans geste utilisateur.
     // L'installation et l'activation ne doivent jamais ouvrir deux modales ensemble.
-    if(!data||!session||!authReady||installModal||startupGate||startupPermissionsOpen||sessionModal||adminModal||themeModal||goalModal||notificationsModal||notificationBusy||notificationCheckedKey!==notificationKey||notificationsEnabled!==false||notificationPrompted.current)return;
+    if(!data||!session||!authReady||installOpen||startupGateActive||startupPermissionsOpen||sessionModal||adminModal||themeModal||goalModal||notificationsModal||notificationBusy||notificationCheckedKey!==notificationKey||notificationsEnabled!==false||notificationPrompted.current)return;
     if(platform.os==='ios'&&!installed)return;
     notificationPrompted.current=true;setNotificationsModal(true);
-  },[data,session,authReady,installModal,startupGate,startupPermissionsOpen,sessionModal,adminModal,themeModal,goalModal,notificationsModal,notificationBusy,notificationsEnabled,notificationCheckedKey,notificationKey,platform,installed,pushAvailable]);
+  },[data,session,authReady,installOpen,startupGateActive,startupPermissionsOpen,sessionModal,adminModal,themeModal,goalModal,notificationsModal,notificationBusy,notificationsEnabled,notificationCheckedKey,notificationKey,platform,installed,pushAvailable]);
 
   async function selectSession(next,pin,setup=null){
+    // Le formulaire est encore dans le geste de soumission : ne pas attendre
+    // l'authentification ou le réseau avant l'éventuelle lecture iOS.
+    if(setup?.gesture&&startupGateRef.current)playStartupSoundNonBlocking();
     if(!await autoSave.flush())return;
     let authenticated;
     if(CLOUD) {
@@ -719,8 +778,9 @@ function AppContent() {
       authenticated={...next,sellerId:result.sellerId};
     } else authenticated=next;
     localStorage.setItem(SESSION_KEY,JSON.stringify(authenticated));
+    notificationPrompted.current=true;
     setData(d=>d?{...d,stats:null}:d);setSession(authenticated);setSessionModal(false);setActiveNav('today');
-    if(!startupGateRef.current)window.scrollTo({top:0,behavior:'smooth'});
+    window.scrollTo({top:0,behavior:startupGateRef.current?'auto':'smooth'});
     const person=data?.sellers.find(s=>s.id===authenticated.sellerId),name=person?.name||setup?.name;
     flash(`Bienvenue${name?`, ${name}`:''} ! Votre espace est prêt.`);
   }
@@ -739,7 +799,7 @@ function AppContent() {
   function changeSession(){if(session)setSessionModal(true);else {document.getElementById('selection')?.scrollIntoView({behavior:'smooth',block:'center'});document.querySelector('[aria-label="Votre magasin Fnac"]')?.focus();}}
   function navigate(id){setActiveNav(id);if(id==='objectifs'&&!session){changeSession();return;}document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});}
   function toggleSound(){
-    const next=!soundEnabledRef.current;soundEnabledRef.current=next;saveSound(next);setSoundEnabled(next);sound.current?.setEnabled(next);
+    const next=!soundEnabledRef.current;soundEnabledRef.current=next;saveSound(next);setSoundEnabled(next);if(!next)cancelStartupGestureAttempt();sound.current?.setEnabled(next);
     if(next&&!startupGateRef.current)sound.current?.prepareFromGesture();
     if(!startupGateRef.current){
       // Un message séparé ne doit pas effacer l'action « Annuler » d'une vente.
@@ -784,12 +844,16 @@ function AppContent() {
       },fail,{enableHighAccuracy:false,timeout:12000,maximumAge:300000});
     } catch(error) {fail(error);}
   }
-  function closeStartupPermissions(){notificationPrompted.current=true;setStartupPermissionsOpen(false);}
+  function closeStartupPermissions(){notificationPrompted.current=true;setStartupPermissionsOpen(false);setStartupPermissionsReview(false);}
+  function reviewStartupPermissions(){setStartupPermissionsOpen(true);setStartupPermissionsReview(true);}
   function enterStartup(){
     if(!startupReady||startupInFlight.current)return;
     // Un onglet ne doit jamais lancer le son, même après installation.
     if(!isStandalone()){setStartupGate(false);return;}
     const player=sound.current||createStartupSound({base:APP_BASE});sound.current=player;
+    // Une ancienne tentative lancée lors d'une connexion ratée ne doit pas
+    // rendre inerte le geste explicite « Plus tard ».
+    if(startupGestureTimer.current){cancelStartupGestureAttempt();player.stop();}
     const attempt=++startupAttempt.current;startupInFlight.current=true;
     // playFromGesture appelle audio.play() directement dans ce geste, avant
     // toute attente réseau, promesse, temporisation ou mise à jour d'interface.
@@ -971,7 +1035,7 @@ function AppContent() {
   }
   function openNotifications(){notificationPrompted.current=true;setNotificationsModal(true);}
   function retryNotifications(){setNotificationError('');setNotificationCheck(n=>n+1);}
-  function openInstall(){setInstallError('');setNotificationsModal(false);setInstallModal(true);}
+  function openInstall(){setInstallError('');setNotificationsModal(false);setInstallModal('manual');}
   async function installApp(){
     const prompt=installPrompt;if(!prompt)return;
     setInstallPrompt(null);setInstallError('');
@@ -983,7 +1047,7 @@ function AppContent() {
       else if(choice?.outcome==='dismissed')setInstallError('Installation annulée. Vous pouvez aussi utiliser le menu du navigateur.');
     } catch {setInstallError('Le navigateur n’a pas ouvert l’installation. Utilisez le menu indiqué ci-dessus.');}
   }
-  const installationDialog=installModal&&<InstallDialog platform={platform} base={APP_BASE} promptAvailable={!!installPrompt} installError={installError} onInstall={installApp} onClose={()=>setInstallModal(false)}/>;
+  const installationDialog=installOpen&&<InstallDialog platform={platform} base={APP_BASE} promptAvailable={!!installPrompt} installError={installError} onInstall={installApp} onClose={()=>setInstallModal(false)}/>;
   const profileContent=data?<SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'startup-new'} data={data} initialProfile={deviceProfile} startupLocation={startupLocation} modal startup onSubmit={selectSession} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>:loadFailed?<><VisibleFeedback message="Profil indisponible. Vérifiez votre connexion." tone="error" actionLabel="Réessayer" onAction={refresh}/><div className="startup-profile-status" role="alert">Profil indisponible. Vérifiez votre connexion. <button type="button" className="text-button" onClick={refresh}>Réessayer</button></div></>:<p className="startup-profile-status" role="status">Chargement des magasins et des profils…</p>;
   // L'administration reçoit toujours le vrai catalogue : un catalogue vide
   // temporaire effacerait à tort le magasin d'administration mémorisé.
@@ -991,21 +1055,26 @@ function AppContent() {
   const sessionDialog=sessionModal&&data&&<Modal title={CLOUD?'Mon profil':'Changer d’espace'} subtitle={CLOUD?'Votre espace sur cet appareil.':'Sélectionnez votre magasin, votre département et votre profil vendeur.'} onClose={()=>setSessionModal(false)}>
     {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button></>:<><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/><p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></>}
   </Modal>;
+  const startupPermissionsDialog=<StartupPermissionsDialog platform={platform} permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} authReady={authReady} profileName={seller?.name} profileContent={profileContent} locationStatus={locationStatus} locationFeedback={locationFeedback} onNotification={requestStartupNotifications} onLocation={()=>requestStartupLocation(true)} onClose={closeStartupPermissions}/>;
   const toastItems=(toast||soundNotice)?<>
     {toast&&<Toast key={`toast-${toast.sequence}`} notice={toast} onClose={()=>{clearTimeout(toastTimer.current);setToast(null);}}/>}
     {soundNotice&&<Toast key={`sound-${soundNotice.sequence}`} notice={soundNotice} icon={soundEnabled?Volume2:VolumeX} onClose={()=>{clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}}/>}
   </>:null;
   const withToasts=children=><AppToastProvider items={toastItems}>{children}</AppToastProvider>;
-  if(startupGate)return withToasts(<><StartupGate base={APP_BASE} ready={startupReady} status={startupStatus} authReady={authReady} hasSession={!!session} profileName={seller?.name} profileContext={[store&&displayStoreName(store),department?.name].filter(Boolean).join(' · ')} profileContent={profileContent} onChangeProfile={()=>setSessionModal(true)} onAdmin={()=>setAdminModal(true)} adminAvailable={!!data} adminPending={adminModal} adminError={loadFailed} onRetry={refresh} onStart={enterStartup} onContinue={continueWithoutStartupSound}/>{sessionDialog}{adminDialog}</>);
-  if(startupPermissionsOpen)return withToasts(<><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div>{adminDialog||<StartupPermissionsDialog platform={platform} permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} authReady={authReady} profileName={seller?.name} profileContent={profileContent} locationStatus={locationStatus} locationFeedback={locationFeedback} onNotification={requestStartupNotifications} onLocation={()=>requestStartupLocation(true)} onClose={closeStartupPermissions}/>}</>);
+  // Attendre le résultat d'Auth avant de choisir l'écran : une session déjà
+  // présente ne doit pas faire clignoter la page de bienvenue entre-temps.
+  if(startupGateActive&&!authReady)return withToasts(<div className="app-loading" aria-live="polite"><Brand/><p>Vérification de votre session…</p>{adminModal&&<p>Ouverture de l’administration après le chargement des magasins…</p>}{startupStatus==='unavailable'&&<p>Le son n’a pas pu être lu. Vous pouvez réessayer ou continuer sans son.</p>}<button type="button" className="outline-button startup-wait-continue" onClick={enterStartup} disabled={!startupReady||startupStatus==='starting'}>{startupStatus==='starting'?'Ouverture…':startupStatus==='unavailable'?'Réessayer':'Continuer sans attendre'}</button>{startupStatus==='unavailable'&&<button type="button" className="startup-continue" onClick={continueWithoutStartupSound}>Continuer sans son</button>}</div>);
+  if(startupGateActive)return withToasts(<><StartupGate base={APP_BASE} ready={startupReady} status={startupStatus} authReady={authReady} hasSession={!!session} profileName={seller?.name} profileContext={[store&&displayStoreName(store),department?.name].filter(Boolean).join(' · ')} profileContent={profileContent} onChangeProfile={()=>setSessionModal(true)} onAdmin={()=>setAdminModal(true)} adminAvailable={!!data} adminPending={adminModal} adminError={loadFailed} onRetry={refresh} onStart={enterStartup} onContinue={continueWithoutStartupSound}/>{sessionDialog}{adminDialog}</>);
+  if(startupPermissionsOpen&&!sessionConnected&&!startupPermissionsReview&&!hadSession.current)return withToasts(<><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div>{adminDialog||startupPermissionsDialog}</>);
   if(!data)return withToasts(<><div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>{!adminModal&&installationDialog}</>);
+  const showPermissionInvitation=startupPermissionsOpen&&sessionConnected&&!startupPermissionsReview;
   const stats=projectedStats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
   return withToasts(<><div className="app-shell">
     <Sidebar onNavigate={navigate} onAdmin={()=>setAdminModal(true)} onSession={changeSession} onInstall={openInstall} showInstall={!installed} activeNav={activeNav}/>
     <div className="main-shell"><Header session={session} seller={seller} store={store} connected={connection} notificationsEnabled={displayedEnabled} notificationError={displayedError} notificationUnconfirmed={displayedUnconfirmed} notificationPendingProfile={notificationPendingProfile} notificationPendingError={notificationPendingProfile&&!!startupNotificationError} soundEnabled={soundEnabled} onBell={openNotifications} onSound={toggleSound} onSession={changeSession} onAdmin={()=>setAdminModal(true)} onTheme={()=>setThemeModal(true)} onInstall={openInstall} showInstall={!installed}/>
       <main className="content" id="overview">
         {connection==='offline'&&session&&<div className="offline-banner"><WifiOff size={16}/><div><strong>Connexion interrompue.</strong> Les dernières données restent visibles, mais la saisie est suspendue jusqu’au retour de la connexion.</div><button onClick={refresh}>Réessayer</button></div>}
-        {notificationNotice&&<section className="notification-card notification-prompt" aria-label="Activation des notifications"><span className="notification-icon"><BellOff size={18}/></span><div><strong>{notificationNotice.title||'Restez informés'}</strong><p>{notificationNotice.message}</p></div><button onClick={notificationNotice.action==='install'?openInstall:notificationNotice.action==='retry'?retryNotifications:openNotifications}>{notificationNotice.label} <ArrowRight size={13}/></button></section>}
+        {showPermissionInvitation?<section className="notification-card notification-prompt device-setup-prompt" aria-label="Autorisations de cet appareil"><span className="notification-icon"><Bell size={18}/></span><div><strong>Restez informés</strong><p>{displayedError?'Vérifiez les notifications et choisissez vos autorisations de localisation.':'Notifications de l’équipe et localisation : configurez vos autorisations si vous le souhaitez.'}</p><div className="device-setup-actions"><button type="button" onClick={reviewStartupPermissions}>Configurer <ArrowRight size={13}/></button><button type="button" onClick={closeStartupPermissions}>Plus tard</button></div></div></section>:notificationNotice&&<section className="notification-card notification-prompt" aria-label="Activation des notifications"><span className="notification-icon"><BellOff size={18}/></span><div><strong>{notificationNotice.title||'Restez informés'}</strong><p>{notificationNotice.message}</p></div><button onClick={notificationNotice.action==='install'?openInstall:notificationNotice.action==='retry'?retryNotifications:openNotifications}>{notificationNotice.label} <ArrowRight size={13}/></button></section>}
         <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><DateChip today={cloudDay}/></div>
         {!session&&<WelcomePanel data={data} onSubmit={selectSession} deviceProfile={deviceProfile} startupLocation={startupLocation} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>}
         <TodayOverview stats={stats} hasSession={!!session} onShow={setTodayDetail}/>
@@ -1015,7 +1084,7 @@ function AppContent() {
           {session&&<GoalsPanel services={data.services} goals={currentGoals} workdays={goalState.workdays} stats={stats} date={data.today} feedbackScope={owner} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
           <Summary stats={stats} hasSession={!!session} storeId={session?.storeId} departments={departments} goals={currentSummary} goalsLoading={summaryState.key===summaryKey&&summaryState.loading} goalsError={summaryState.key===summaryKey?summaryState.error:''} onRetry={loadSummaryGoals}/>
         </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/></div></div>
-        <footer className="page-footer">La vente, c’est notre rayon. Les services aussi. 😉</footer>
+        <footer className="page-footer"><span>La vente, c’est notre rayon. Les services aussi. 😉</span>{installed&&<button type="button" className="permissions-link" onClick={reviewStartupPermissions}>Autorisations de l’appareil</button>}</footer>
       </main>
     </div>
     <MobileNav onNavigate={navigate} active={activeNav}/>
@@ -1023,6 +1092,7 @@ function AppContent() {
     {todayDetail&&session&&stats&&<TodayDetails scope={todayDetail} stats={stats} services={data.services} date={data.today} department={department} offline={connection==='offline'} onClose={()=>setTodayDetail(null)}/>}
     {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={closeGoalModal}><GoalForm services={data.services} goals={currentGoals} workdays={goalState.workdays} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={closeGoalModal} disabled={connection==='offline'}/></Modal>}
     {adminDialog}
+    {startupPermissionsOpen&&startupPermissionsReview&&!adminModal&&startupPermissionsDialog}
     {notificationsModal&&<NotificationsDialog permission={notificationPermission} enabled={displayedEnabled} checkError={displayedError} unconfirmed={displayedUnconfirmed} pushAvailable={pushAvailable} platform={platform} installed={installed} hasSession={!!session} pendingProfile={notificationPendingProfile} pendingError={!!startupNotificationError} busy={notificationBusy} onClose={()=>setNotificationsModal(false)} onEnable={enableNotifications} onDisable={disableNotifications} onRetry={retryNotifications} onInstall={openInstall} onSelectProfile={()=>{setNotificationsModal(false);changeSession();}}/>}
     {themeModal&&<Modal title="Apparence" subtitle="Vos préférences sur cet appareil." onClose={()=>setThemeModal(false)}>
       <div className="theme-options" role="radiogroup" aria-label="Thème de l’application">

@@ -313,6 +313,11 @@ p,h1,h2,h3 { margin:0; }
 .notification-card p { color:#a19d8e; font-size:10px; line-height:1.4; margin-top:4px; }
 .notification-card button { display:flex; align-items:center; gap:3px; color:#876700; font-weight:750; font-size:10px; background:none; padding:3px 0; }
 .notification-prompt { margin-bottom:23px; }
+/* L'invitation aux autorisations ne bloque plus l'accueil d'un vendeur. */
+.device-setup-prompt p { color:#62685c; }
+[data-theme='dark'] .notification-card.device-setup-prompt p { color:#c9cec2; }
+.device-setup-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.notification-card .device-setup-actions button { min-height:44px; }
 .notification-later { width:100%; min-height:42px; margin-top:7px; background:transparent; color:#777a6e; font-size:11px; font-weight:700; }
 .summary-panel { padding:22px; }
 .summary-heading { align-items:center; }
@@ -350,7 +355,9 @@ p,h1,h2,h3 { margin:0; }
 .summary-empty-icon { width:40px; height:40px; display:grid; place-items:center; border-radius:8px; background:#f7f8f5; color:#b5b8ad; }
 .summary-empty strong { font-size:11px; color:#72746b; }
 .summary-empty p { font-size:10px; line-height:1.5; color:#aeb0a7; margin-top:4px; }
-.page-footer { display:flex; justify-content:center; margin-top:24px; padding:16px; border:1px solid #e5e9df; border-radius:14px; background:#f2f4ef; color:#666d60; font-size:12px; line-height:1.5; font-weight:650; text-align:center; }
+.page-footer { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; margin-top:24px; padding:16px; border:1px solid #e5e9df; border-radius:14px; background:#f2f4ef; color:#666d60; font-size:12px; line-height:1.5; font-weight:650; text-align:center; }
+.permissions-link { min-height:44px; padding:6px 11px; border:1px solid var(--button-border); border-radius:7px; background:var(--button-face); color:var(--button-ink); box-shadow:var(--button-shadow); font-size:11px; font-weight:750; }
+.startup-wait-continue { min-height:44px; }
 .offline-banner { display:flex; gap:10px; align-items:center; padding:12px 14px; border:1px solid #eedaa6; border-radius:8px; background:#fff8e7; color:#8b7333; margin-bottom:20px; font-size:11px; line-height:1.4; }
 .offline-banner svg { flex:0 0 auto; }
 .offline-banner button { background:none; color:#8d6b00; margin-left:auto; font-size:10px; font-weight:750; }
@@ -480,6 +487,14 @@ p,h1,h2,h3 { margin:0; }
 .toast-action:hover { background:#465143; }
 .toast-close { width:44px; height:44px; flex:0 0 44px; display:grid; place-items:center; color:inherit; background:transparent; border-radius:8px; }
 .toast-close:hover { background:#465143; }
+@media (max-width:420px) {
+  /* Ne pas réduire le texte du réessai sonore à une colonne étroite. */
+  .toast-sound-error { display:grid; grid-template-columns:28px minmax(0,1fr) 44px; gap:6px 9px; }
+  .toast-sound-error .toast-icon { grid-column:1; grid-row:1; align-self:start; }
+  .toast-sound-error .toast-message { grid-column:2; grid-row:1; align-self:center; }
+  .toast-sound-error .toast-close { grid-column:3; grid-row:1; align-self:start; }
+  .toast-sound-error .toast-action { grid-column:2 / 4; grid-row:2; justify-self:start; }
+}
 @keyframes toast-appear { from { opacity:.65; } to { opacity:1; } }
 @media (prefers-reduced-motion:reduce) { .toast { animation:none; } }
 @media (max-width: 1270px) {
