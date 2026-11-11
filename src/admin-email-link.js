@@ -6,7 +6,11 @@ function extractFirebaseActionCode(input,config,mode,message) {
   let url;try {url=new URL(input.trim());}catch{return invalid();}
   const hosts=[config?.authDomain,config?.projectId?`${config.projectId}.web.app`:null].filter(Boolean);
   const firebaseLink=hosts.includes(url.hostname)&&url.pathname==='/__/auth/action';
-  const pulseLink=config?.projectId==='fnac-pulse'&&url.hostname==='hypernovax31.github.io'&&url.pathname==='/FNAC-Pulse/';
+  // Les liens déjà envoyés pointent vers l'ancien site GitHub Pages, les
+  // prochains vers le domaine personnalisé : accepter les deux pages.
+  const pulseLink=config?.projectId==='fnac-pulse'&&(
+    (url.hostname==='hypernovax31.github.io'&&url.pathname==='/FNAC-Pulse/')||
+    (url.hostname==='pulse.ayme.cc'&&url.pathname==='/'));
   if(url.protocol!=='https:'||url.username||url.password||url.port||(!firebaseLink&&!pulseLink))return invalid();
   const one=name=>url.searchParams.getAll(name).length===1?url.searchParams.get(name):null;
   const code=one('oobCode'),keys=url.searchParams.getAll('apiKey');

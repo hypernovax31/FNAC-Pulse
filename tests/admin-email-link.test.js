@@ -11,10 +11,13 @@ test('Lien de changement d’e-mail : seules les origines Firebase du projet et 
   assert.equal(extractAdminEmailChangeCode(link().replace(`&apiKey=${firebaseConfig.apiKey}`,''),firebaseConfig),code);
   assert.equal(extractAdminEmailChangeCode(`  ${link(`https://${firebaseConfig.projectId}.web.app`)}  `,firebaseConfig),code);
   assert.equal(extractAdminEmailChangeCode(link('https://hypernovax31.github.io').replace('/__/auth/action','/FNAC-Pulse/'),firebaseConfig),code);
+  assert.equal(extractAdminEmailChangeCode(link('https://pulse.ayme.cc').replace('/__/auth/action','/'),firebaseConfig),code);
   const wrong=[
     link().replace('https:','http:'),
     link('https://attaquant.example'),
     link(`https://${firebaseConfig.authDomain}.attaquant.example`),
+    link('https://pulse.ayme.cc.attaquant.example').replace('/__/auth/action','/'),
+    link('https://pulse.ayme.cc').replace('/__/auth/action','/autre/'),
     link().replace('verifyAndChangeEmail','recoverEmail'),
     link().replace(firebaseConfig.apiKey,'cle-autre-projet'),
     link().replace('oobCode=', 'oobCode=AAA&oobCode='),
@@ -34,6 +37,9 @@ test('Lien de choix du mot de passe : action, projet et paramètres stricts, auc
   assert.equal(extractAdminPasswordResetCode(appLink,firebaseConfig),code);
   assert.equal(extractAdminPasswordResetCode(appLink.replace(`&apiKey=${firebaseConfig.apiKey}`,''),firebaseConfig),code);
   assert.throws(()=>extractAdminPasswordResetCode(appLink.replace('/FNAC-Pulse/','/autre/'),firebaseConfig));
+  const customLink=reset.replace(`https://${firebaseConfig.authDomain}/__/auth/action`,'https://pulse.ayme.cc/');
+  assert.equal(extractAdminPasswordResetCode(customLink,firebaseConfig),code);
+  assert.throws(()=>extractAdminPasswordResetCode(customLink.replace('pulse.ayme.cc/','pulse.ayme.cc/api/'),firebaseConfig));
   const wrong=[link(),reset.replace('https:','http:'),reset.replace(firebaseConfig.authDomain,'ailleurs.test'),
     reset.replace(firebaseConfig.apiKey,'autre-cle'),reset.replace(firebaseConfig.apiKey,''),
     reset.replace('mode=','mode=verifyEmail&mode='),reset.replace('oobCode=','oobCode=DOUBLE&oobCode='),

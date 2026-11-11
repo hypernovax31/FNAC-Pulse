@@ -5,8 +5,8 @@ workers_dev = true
 
 [vars]
 FIREBASE_PROJECT_ID = "fnac-pulse"
-APP_URL = "https://hypernovax31.github.io/FNAC-Pulse/"
-ALLOWED_ORIGIN = "https://hypernovax31.github.io"
+APP_URL = "https://pulse.ayme.cc/"
+ALLOWED_ORIGIN = "https://pulse.ayme.cc"
 
 # Renseigner GOOGLE_SERVICE_ACCOUNT, PIN_PEPPER et ADMIN_UID comme secrets
 # Cloudflare, jamais dans ce fichier ni dans Git.
