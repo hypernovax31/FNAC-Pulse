@@ -357,7 +357,6 @@ p,h1,h2,h3 { margin:0; }
 .summary-empty p { font-size:10px; line-height:1.5; color:#aeb0a7; margin-top:4px; }
 .page-footer { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; margin-top:24px; padding:16px; border:1px solid #e5e9df; border-radius:14px; background:#f2f4ef; color:#666d60; font-size:12px; line-height:1.5; font-weight:650; text-align:center; }
 .permissions-link { min-height:44px; padding:6px 11px; border:1px solid var(--button-border); border-radius:7px; background:var(--button-face); color:var(--button-ink); box-shadow:var(--button-shadow); font-size:11px; font-weight:750; }
-.startup-wait-continue { min-height:44px; }
 .offline-banner { display:flex; gap:10px; align-items:center; padding:12px 14px; border:1px solid #eedaa6; border-radius:8px; background:#fff8e7; color:#8b7333; margin-bottom:20px; font-size:11px; line-height:1.4; }
 .offline-banner svg { flex:0 0 auto; }
 .offline-banner button { background:none; color:#8d6b00; margin-left:auto; font-size:10px; font-weight:750; }

@@ -90,10 +90,10 @@ function action(tree,name){return section(tree,name).findByType('button');}
 function button(tree,name){return tree.root.findAllByType('button').find(item=>text(item).includes(name));}
 async function mount({stayAtLaunch=false}={}){
   let tree;await act(async()=>{tree=TestRenderer.create(React.createElement(React.StrictMode,null,React.createElement(App)));await tick();await tick();});
-  // Seuls les parcours sans session franchissent l'écran de bienvenue. Quand
-  // Auth est encore en attente, la sortie explicite reste également testable.
+  // Seuls les parcours sans session franchissent l'écran de bienvenue ; la
+  // vérification de session n'a plus de sortie anticipée et attend Auth.
   if(!stayAtLaunch){
-    const start=tree.root.findAllByProps({className:'startup-start'})[0]||tree.root.findAllByProps({className:'outline-button startup-wait-continue'})[0];
+    const start=tree.root.findAllByProps({className:'startup-start'})[0];
     if(start)await act(async()=>{start.props.onClick();await tick();await tick();});
   }
   return tree;
@@ -103,10 +103,12 @@ async function documentGesture(e,{trusted=true,target={closest:()=>null},type='p
   await act(async()=>{e.gesture=true;try{e.dispatchDocument(type,{isTrusted:trusted,target});}finally{e.gesture=false;}await tick();await tick();});
 }
 
-test('PWA : autorisations dès le démarrage, avant données ou profil, puis rattachement automatique',async()=>{
+test('PWA : autorisations dès le démarrage, avant le profil, puis rattachement automatique',async()=>{
   const e=environment();let tree;
   try {
-    tree=await mount();assert.match(text(tree.toJSON()),/Bien démarrer/);assert.equal(e.requests.some(x=>x.path.startsWith('/api/bootstrap')),false);
+    tree=await mount();assert.match(text(tree.toJSON()),/Vérification de votre session/);
+    await e.authAs(null);await e.press(button(tree,'Plus tard · Accéder aux services'));
+    assert.match(text(tree.toJSON()),/Bien démarrer/);assert.equal(e.sellerCalls.length,0,'les autorisations précèdent le choix du profil');
     assert.equal(e.notifications.length,0);assert.equal(e.locations.length,0);
     await e.press(action(tree,'Notifications d’équipe'));
     assert.deepEqual(e.notifications,[{gesture:true}]);assert.equal(e.prepares,1);assert.equal(e.subscriptions,0);assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),'1');
@@ -685,7 +687,8 @@ test('Lancement : chargement et panne actionnables, sans effacer le magasin admi
     e.failBootstrap=true;tree=await mount({stayAtLaunch:true});
     assert.match(text(tree.toJSON()),/Vérification de votre session/);
     assert.doesNotMatch(text(tree.toJSON()),/Bienvenue sur|VOTRE TABLEAU DE BORD/);
-    assert(button(tree,'Continuer sans attendre'));
+    assert.equal(button(tree,'Continuer sans attendre'),undefined,'aucune sortie anticipée pendant la vérification de session');
+    assert.equal(tree.root.findAllByType('button').length,0,'page de chargement sans action');
     assert.equal(e.adminValues.get('pulse-admin-managed-store-v1'),'far');
     await e.authAs(null);
     assert.match(text(tree.toJSON()),/Profil indisponible/);assert.match(text(tree.toJSON()),/Administration indisponible/);
@@ -705,8 +708,8 @@ test('Invitation directe : administration avant l’accueil, y compris pendant l
       tree=await mount({stayAtLaunch:true});
       assert.match(text(tree.toJSON()),/Ouverture de l’administration après le chargement/);
       assert.equal(e.adminValues.get('pulse-admin-managed-store-v1'),'far');
-      if(leaveBeforeData){await e.press(button(tree,'Continuer sans attendre'));assert.match(text(tree.toJSON()),/Bien démarrer/);}
       await e.authAs(null);
+      if(leaveBeforeData)await e.press(button(tree,'Plus tard · Accéder aux services'));
       const dialog=tree.root.findByProps({role:'dialog','aria-label':'Administration'});
       assert.match(text(dialog),/Magasin sélectionné : Fnac Loin/);
       assert.equal(e.adminValues.get('pulse-admin-managed-store-v1'),'far');
@@ -834,7 +837,7 @@ test('Plus tard dans un navigateur : accès à l’accueil sans profil ni lectur
 test('Invitation directe dans un navigateur : pas de modale d’installation au-dessus de l’administration',async()=>{
   const e=environment({standalone:false,auth:'manual',directInvitation:true});let tree;
   try {
-    tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Continuer sans attendre'));await e.authAs(null);
+    tree=await mount({stayAtLaunch:true});await e.authAs(null);await e.press(button(tree,'Plus tard · Accéder aux services'));
     assert(tree.root.findByProps({role:'dialog','aria-label':'Espace administrateur'}));
     assert.equal(tree.root.findAllByProps({role:'dialog'}).length,1,'une seule modale visible');
     await e.press(tree.root.findByProps({role:'dialog','aria-label':'Espace administrateur'}).findByProps({'aria-label':'Fermer'}));
