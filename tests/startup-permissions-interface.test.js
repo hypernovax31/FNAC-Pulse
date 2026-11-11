@@ -701,6 +701,20 @@ test('Lancement : chargement et panne actionnables, sans effacer le magasin admi
   } finally {await finish(tree,e);}
 });
 
+test('Navigation mobile : l’ordre des boutons suit l’ordre des blocs affichés',async()=>{
+  const e=environment({standalone:false});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});await e.authAs(null);
+    await e.press(button(tree,'Plus tard · Accéder aux services'));
+    const blocks=tree.root.findAllByType('section').map(node=>node.props.id).filter(id=>['today','services','objectifs','summary','ranking'].includes(id));
+    assert.deepEqual(blocks,['today','services','summary','ranking'],'blocs visibles sans session, dans l’ordre de la page');
+    const labels=tree.root.findByProps({className:'mobile-nav'}).findAllByType('button').map(item=>text(item));
+    assert.deepEqual(labels,['Aujourd’hui','Services','Objectifs','Bilan','Classement'],'barre mobile alignée sur les blocs');
+    const navOrder=labels.map(label=>({'Aujourd’hui':'today',Services:'services',Objectifs:'objectifs',Bilan:'summary',Classement:'ranking'})[label]);
+    assert.deepEqual(navOrder.filter(id=>blocks.includes(id)),blocks,'tout bouton pointe vers un bloc positionné au même rang');
+  } finally {await finish(tree,e);}
+});
+
 test('Invitation directe : administration avant l’accueil, y compris pendant les permissions',async()=>{
   for(const leaveBeforeData of [false,true]) {
     const e=environment({auth:'manual',directInvitation:true,adminValues:{'pulse-admin-token':'admin','pulse-admin-managed-store-v1':'far'}});let tree;

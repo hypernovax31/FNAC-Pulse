@@ -226,7 +226,10 @@ function WelcomePanel({data,onSubmit,deviceProfile,startupLocation,onForgetProfi
     <SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'nouvel-appareil'} data={data} initialProfile={deviceProfile} startupLocation={startupLocation} onSubmit={onSubmit} onForgetProfile={onForgetProfile} onRefreshProfile={onRefreshProfile}/>
   </section>;
 }
-const NAV_ITEMS=[['today',CalendarDays,'Aujourd’hui'],['objectifs',Target,'Objectifs'],['services',Zap,'Services'],['ranking',Trophy,'Classement'],['summary',ChartNoAxesCombined,'Bilan']];
+// L'ordre des ancres suit celui des blocs de la page principale : Aujourd'hui,
+// puis Ajouter un service, Mes objectifs, Le récap' des services et le Top de
+// l'équipe. La barre mobile et la colonne latérale partagent cette liste.
+const NAV_ITEMS=[['today',CalendarDays,'Aujourd’hui'],['services',Zap,'Services'],['objectifs',Target,'Objectifs'],['summary',ChartNoAxesCombined,'Bilan'],['ranking',Trophy,'Classement']];
 function Sidebar({onNavigate,onAdmin,onSession,onInstall,showInstall,activeNav}) {
   return <aside className="sidebar">
     <div className="sidebar-brand"><Brand/></div>

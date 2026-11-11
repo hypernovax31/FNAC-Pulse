@@ -12,6 +12,15 @@ const module={exports:{}};new Function('module','exports','require',bundled.outp
 const {Header,Sidebar,DateChip,ActivityCard,Summary,MobileNav,TodayOverview,TodayDetails,ServiceCard,Toast,default:App}=module.exports;
 const render=(component,props={})=>renderToStaticMarkup(React.createElement(component,props));
 
+test('Navigation : l’ordre des boutons suit l’ordre des blocs de la page principale',()=>{
+  // Blocs de la page, dans l'ordre d'affichage : Aujourd'hui, Ajouter un
+  // service, Mes objectifs, Le récap' des services, puis Top de l'équipe.
+  const attendu=['Aujourd’hui','Services','Objectifs','Bilan','Classement'];
+  const extraire=(html,nav)=>[...(html.match(new RegExp(`<nav class="${nav}"[^]*?</nav>`))?.[0].matchAll(/<span>([^<]+)<\/span>/g)||[])].map(m=>m[1]).filter(x=>attendu.includes(x));
+  assert.deepEqual(extraire(render(MobileNav,{active:'today'}),'mobile-nav'),attendu);
+  assert.deepEqual(extraire(render(Sidebar,{activeNav:'today'}),'side-nav'),attendu);
+});
+
 test('En-tête : son séparé, cloche barrée et aucun point vert de direct',()=>{
   const off=render(Header,{connected:'live',notificationsEnabled:false,soundEnabled:false});
   assert.match(off,/aria-label="Activer le son Fnac"/);assert.match(off,/lucide-volume-x/);
@@ -84,7 +93,7 @@ test('Services : la grande zone ajoute, le retrait est distinct et les états re
 
 test('Navigation mobile et PC : les cinq intitulés et leur ordre sont identiques',()=>{
   const nav=render(MobileNav,{active:'today',onNavigate:()=>{}}),sidebar=render(Sidebar,{activeNav:'today',onNavigate:()=>{}});
-  const labels=['Aujourd’hui','Objectifs','Services','Classement','Bilan'];
+  const labels=['Aujourd’hui','Services','Objectifs','Bilan','Classement'];
   assert.deepEqual([...nav.matchAll(/<span>([^<]+)<\/span>/g)].map(match=>match[1]),labels);
   const principal=sidebar.match(/<nav class="side-nav" aria-label="Navigation principale">([\s\S]*?)<\/nav>/)[1];
   assert.deepEqual([...principal.matchAll(/<span>([^<]+)<\/span>/g)].map(match=>match[1]),labels);
@@ -145,7 +154,7 @@ test('Navigation mobile : les cinq boutons pointent vers leurs sections',async()
     await act(async()=>{tree=TestRenderer.create(React.createElement(MobileNav,{active:'today',onNavigate:id=>selected.push(id)}));});
     const buttons=tree.root.findAllByType('button');assert.equal(buttons.length,5);
     for(const button of buttons)await act(async()=>button.props.onClick());
-    assert.deepEqual(selected,['today','objectifs','services','ranking','summary']);
+    assert.deepEqual(selected,['today','services','objectifs','summary','ranking']);
     assert.equal(buttons[0].props['aria-current'],'location');
   } finally {if(tree)await act(async()=>tree.unmount());}
 });
