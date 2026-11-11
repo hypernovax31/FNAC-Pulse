@@ -36,6 +36,21 @@ test('Accueil tactile : porte de sortie seulement après erreur de lecture',()=>
   const preparing=render({ready:false});assert.match(preparing,/Préparation…/);assert.match(preparing,/disabled=""/);
 });
 
+test('Accueil tactile : « Plus tard » disparaît dès le début de la saisie du profil',()=>{
+  const base={base:'./',ready:true,status:'ready'};
+  const untouched=render(base);
+  assert.match(untouched,/Plus tard · Accéder aux services/);assert.match(untouched,/startup-skip-hint/);
+  const edited=render({...base,skipHidden:true});
+  assert.doesNotMatch(edited,/Plus tard · Accéder aux services/);assert.doesNotMatch(edited,/startup-skip-hint/);
+  assert.doesNotMatch(edited,/class="startup-start"/);
+  // Les autres états conservent leur bouton et leur libellé.
+  assert.match(render({...base,skipHidden:true,status:'starting'}),/Ouverture…/);
+  assert.match(render({ready:false,status:'ready',skipHidden:true}),/Préparation…/);
+  assert.match(render({...base,skipHidden:true,status:'unavailable'}),/Réessayer/);
+  const connected=render({...base,skipHidden:true,authReady:true,hasSession:true,profileName:'Morgan'});
+  assert.match(connected,/Accéder aux services/);assert.doesNotMatch(connected,/Plus tard/);
+});
+
 test('Accueil tactile : geste d’accès et sortie après erreur',async()=>{
   const calls=[],{act}=TestRenderer;let tree;
   const props={base:'./',ready:true,status:'ready',onStart:()=>calls.push('accès'),onContinue:()=>calls.push('sans son')};

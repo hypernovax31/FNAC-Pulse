@@ -56,6 +56,23 @@ test('Mention régionale : avertissement et accord explicite avant création seu
   } finally {if(tree)await act(async()=>tree.unmount());restore();}
 });
 
+test('Panneau de lancement : onUserEdit est signalé dès la première saisie, pas à l’ouverture',async()=>{
+  const touched=[],restore=apiMock(async()=>({needsPin:true}));let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(SessionForm,{data,startupLocation:null,onUserEdit:()=>touched.push('saisie'),onSubmit:async()=>{}}));await tick();});
+    assert.equal(touched.length,0,'l’ouverture du panneau seul ne signale rien');
+    await change(tree,'Votre magasin Fnac','Fnac');
+    assert(touched.length>0,'la recherche de magasin signale le début de saisie');
+    const afterSearch=touched.length;
+    await act(async()=>{tree.root.findByProps({role:'option'}).props.onClick();await tick();});
+    await change(tree,'Votre département','tech');
+    await change(tree,'Votre prénom','Alice');
+    await change(tree,'Votre nouveau code PIN','4829');
+    await change(tree,'Confirmer votre code PIN','4829');
+    assert(touched.length>afterSearch,'chaque champ rempli signale la saisie');
+  } finally {if(tree)await act(async()=>tree.unmount());restore();}
+});
+
 test('Inscription : prénom libre puis deux PIN à 4 chiffres avant création',async()=>{
   const requests=[],submissions=[],restore=apiMock(async(...args)=>{requests.push(args);return {needsPin:true};});let tree;
   try {

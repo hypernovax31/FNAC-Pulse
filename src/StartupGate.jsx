@@ -3,9 +3,13 @@ import { VisibleFeedback } from './VisibleFeedback';
 import { ArrowRight, Check, Settings2, UserRound } from 'lucide-react';
 
 // Sans session, proposer le profil et l'administration avant l'accueil. Le
-// bouton « Plus tard » conserve le geste sonore sur la PWA installée.
-export function StartupGate({base='/',ready=true,status='ready',authReady=false,hasSession=false,profileName='',profileContext='',profileContent,onChangeProfile,onAdmin,adminAvailable=false,adminPending=false,adminError=false,onRetry,onStart,onContinue}) {
+// bouton « Plus tard » conserve le geste sonore sur la PWA installée. Dès
+// que le panneau de profil est commencé, ce bouton de contournement est
+// retiré (skipHidden) ; les états « Préparation », « Réessayer » et la
+// session connectée restent inchangés.
+export function StartupGate({base='/',ready=true,status='ready',authReady=false,hasSession=false,profileName='',profileContext='',profileContent,onChangeProfile,onAdmin,adminAvailable=false,adminPending=false,adminError=false,onRetry,onStart,onContinue,skipHidden=false}) {
   const busy=!ready||status==='starting',failed=status==='unavailable';
+  const skipping=ready&&status==='ready'&&!hasSession,hideSkip=skipHidden&&skipping;
   return <main className="startup-screen" aria-labelledby="startup-title">
     <VisibleFeedback message={failed?'Le son n’a pas pu être lu. Vérifiez le volume et le mode silencieux, puis réessayez ou continuez sans son.':''} tone="error" actionLabel="Réessayer" onAction={onStart}/>
     <VisibleFeedback message={adminError&&!adminAvailable?'Administration indisponible. Vérifiez votre connexion.':''} tone="error" actionLabel="Réessayer" onAction={onRetry}/>
@@ -30,10 +34,10 @@ export function StartupGate({base='/',ready=true,status='ready',authReady=false,
             {!authReady?<p className="startup-profile-status" role="status">Vérification de votre session…</p>:hasSession?<div className="startup-active-profile" role="status"><span className="startup-active-check"><Check size={16} aria-hidden="true"/></span><div><strong>{profileName||'Profil connecté'}</strong><small>{profileContext||'Votre profil est connecté.'}</small></div><button type="button" onClick={onChangeProfile} disabled={!adminAvailable}>Gérer</button></div>:profileContent}
           </section>
           {failed&&<p className="startup-error" role="alert">Le son n’a pas pu être lu. Vérifiez le volume et le mode silencieux, puis réessayez ou continuez sans son.</p>}
-          <button type="button" className="startup-start" onClick={onStart} disabled={busy} aria-busy={busy}>
+          {!hideSkip&&<button type="button" className="startup-start" onClick={onStart} disabled={busy} aria-busy={busy}>
             {!ready?'Préparation…':busy?'Ouverture…':failed?'Réessayer':hasSession?'Accéder aux services':'Plus tard · Accéder aux services'} <ArrowRight size={18} aria-hidden="true"/>
-          </button>
-          {!hasSession&&!failed&&<p className="startup-skip-hint">Le choix du profil reste possible plus tard.</p>}
+          </button>}
+          {!hasSession&&!failed&&!hideSkip&&<p className="startup-skip-hint">Le choix du profil reste possible plus tard.</p>}
           {failed&&<button type="button" className="startup-continue" onClick={onContinue}>Continuer sans son</button>}
         </div>
       </section>
