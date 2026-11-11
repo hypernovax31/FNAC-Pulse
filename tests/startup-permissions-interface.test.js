@@ -707,11 +707,11 @@ test('Navigation mobile : l’ordre des boutons suit l’ordre des blocs affich�
     tree=await mount({stayAtLaunch:true});await e.authAs(null);
     await e.press(button(tree,'Plus tard · Accéder aux services'));
     const blocks=tree.root.findAllByType('section').map(node=>node.props.id).filter(id=>['today','services','objectifs','summary','ranking'].includes(id));
-    assert.deepEqual(blocks,['today','services','summary','ranking'],'blocs visibles sans session, dans l’ordre de la page');
+    assert.deepEqual(blocks,['today','services','summary','ranking'],'tous les blocs visibles sans session sont ancrés');
     const labels=tree.root.findByProps({className:'mobile-nav'}).findAllByType('button').map(item=>text(item));
-    assert.deepEqual(labels,['Aujourd’hui','Services','Objectifs','Bilan','Classement'],'barre mobile alignée sur les blocs');
-    const navOrder=labels.map(label=>({'Aujourd’hui':'today',Services:'services',Objectifs:'objectifs',Bilan:'summary',Classement:'ranking'})[label]);
-    assert.deepEqual(navOrder.filter(id=>blocks.includes(id)),blocks,'tout bouton pointe vers un bloc positionné au même rang');
+    assert.deepEqual(labels,['Aujourd’hui','Services','Objectifs','Classement','Bilan'],'barre mobile alignée sur l’ordre visuel des blocs');
+    const navOrder=labels.map(label=>({'Aujourd’hui':'today',Services:'services',Objectifs:'objectifs',Classement:'ranking',Bilan:'summary'})[label]);
+    for(const id of navOrder)assert(id==='objectifs'||blocks.includes(id),'chaque bouton pointe vers un bloc affiché (objectifs exigent une session)');
   } finally {await finish(tree,e);}
 });
 

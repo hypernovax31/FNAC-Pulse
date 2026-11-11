@@ -12,13 +12,22 @@ const module={exports:{}};new Function('module','exports','require',bundled.outp
 const {Header,Sidebar,DateChip,ActivityCard,Summary,MobileNav,TodayOverview,TodayDetails,ServiceCard,Toast,default:App}=module.exports;
 const render=(component,props={})=>renderToStaticMarkup(React.createElement(component,props));
 
-test('Navigation : l’ordre des boutons suit l’ordre des blocs de la page principale',()=>{
-  // Blocs de la page, dans l'ordre d'affichage : Aujourd'hui, Ajouter un
-  // service, Mes objectifs, Le récap' des services, puis Top de l'équipe.
-  const attendu=['Aujourd’hui','Services','Objectifs','Bilan','Classement'];
+test('Navigation : l’ordre des boutons suit l’ordre des blocs de la page principale',async()=>{
+  // Affichage mobile de la page : Aujourd'hui, Ajouter un service, Mes
+  // objectifs, Top de l'équipe, Le récap' des services (règles « order »).
+  const attendu=['Aujourd’hui','Services','Objectifs','Classement','Bilan'];
   const extraire=(html,nav)=>[...(html.match(new RegExp(`<nav class="${nav}"[^]*?</nav>`))?.[0].matchAll(/<span>([^<]+)<\/span>/g)||[])].map(m=>m[1]).filter(x=>attendu.includes(x));
   assert.deepEqual(extraire(render(MobileNav,{active:'today'}),'mobile-nav'),attendu);
   assert.deepEqual(extraire(render(Sidebar,{activeNav:'today'}),'side-nav'),attendu);
+  // L'ordre visuel mobile vient des règles « order » : il doit rester aligné.
+  const css=await (await import('node:fs/promises')).readFile('src/styles.css','utf8');
+  const ordre=Object.fromEntries([...css.matchAll(/\.(services-panel|goals-panel|ranking-panel|summary-panel)\s*\{\s*order:(\d+)/g)].map(m=>[m[1],Number(m[2])]));
+  const parBloc={services:'services-panel',objectifs:'goals-panel',ranking:'ranking-panel',summary:'summary-panel'};
+  const visuel=['services','objectifs','summary','ranking'].sort((a,b)=>(ordre[parBloc[a]]??0)-(ordre[parBloc[b]]??0));
+  const versId={'Aujourd’hui':'today',Services:'services',Objectifs:'objectifs',Classement:'ranking',Bilan:'summary'};
+  const navIds=extraire(render(MobileNav,{active:'today'}),'mobile-nav').map(label=>versId[label]);
+  assert.deepEqual(visuel,['services','objectifs','ranking','summary'],'ordre visuel mobile : podium avant le récap');
+  assert.deepEqual(navIds.filter(id=>visuel.includes(id)),visuel,'barre alignée sur l’ordre visuel mobile');
 });
 
 test('En-tête : son séparé, cloche barrée et aucun point vert de direct',()=>{
@@ -93,7 +102,7 @@ test('Services : la grande zone ajoute, le retrait est distinct et les états re
 
 test('Navigation mobile et PC : les cinq intitulés et leur ordre sont identiques',()=>{
   const nav=render(MobileNav,{active:'today',onNavigate:()=>{}}),sidebar=render(Sidebar,{activeNav:'today',onNavigate:()=>{}});
-  const labels=['Aujourd’hui','Services','Objectifs','Bilan','Classement'];
+  const labels=['Aujourd’hui','Services','Objectifs','Classement','Bilan'];
   assert.deepEqual([...nav.matchAll(/<span>([^<]+)<\/span>/g)].map(match=>match[1]),labels);
   const principal=sidebar.match(/<nav class="side-nav" aria-label="Navigation principale">([\s\S]*?)<\/nav>/)[1];
   assert.deepEqual([...principal.matchAll(/<span>([^<]+)<\/span>/g)].map(match=>match[1]),labels);
@@ -154,7 +163,7 @@ test('Navigation mobile : les cinq boutons pointent vers leurs sections',async()
     await act(async()=>{tree=TestRenderer.create(React.createElement(MobileNav,{active:'today',onNavigate:id=>selected.push(id)}));});
     const buttons=tree.root.findAllByType('button');assert.equal(buttons.length,5);
     for(const button of buttons)await act(async()=>button.props.onClick());
-    assert.deepEqual(selected,['today','services','objectifs','summary','ranking']);
+    assert.deepEqual(selected,['today','services','objectifs','ranking','summary']);
     assert.equal(buttons[0].props['aria-current'],'location');
   } finally {if(tree)await act(async()=>tree.unmount());}
 });
