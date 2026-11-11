@@ -6,9 +6,9 @@ import {build} from 'esbuild';
 // Utiliser le véritable SDK Firebase embarqué, sans réseau ni appareil réel.
 // Cela vérifie que le message d'arrière-plan conserve les options Web Push et
 // qu'un second gestionnaire de notification n'a pas été ajouté par erreur.
-test('Service worker cloud : une notification par push, motif FCM transmis au système',async()=>{
+for(const scope of ['https://example.test/','https://example.test/FNAC-Pulse/'])test(`Service worker cloud ${new URL(scope).pathname} : une notification par push, motif FCM transmis au système`,async()=>{
   const result=await build({entryPoints:['src/sw-cloud.js'],bundle:true,format:'iife',platform:'browser',target:'es2020',write:false,logLevel:'silent',define:{'process.env.NODE_ENV':'"production"'}});
-  const handlers=new Map(),shown=[],scope='https://example.test/FNAC-Pulse/';let networkCalls=0;
+  const handlers=new Map(),shown=[];let networkCalls=0;
   const noNetwork=async()=>{networkCalls++;throw Error('Réseau interdit dans ce test');};
   const worker={
     location:new URL(`${scope}sw.js`),

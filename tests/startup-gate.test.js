@@ -9,12 +9,12 @@ const require=createRequire(import.meta.url);
 const bundled=await build({entryPoints:['src/StartupGate.jsx'],bundle:true,platform:'node',format:'cjs',external:['react','lucide-react'],write:false,logLevel:'silent'});
 const module={exports:{}};new Function('module','exports','require',bundled.outputFiles[0].text)(module,module.exports,require);
 const {StartupGate}=module.exports;
-const render=props=>renderToStaticMarkup(React.createElement(StartupGate,{base:'/FNAC-Pulse/',...props}));
+const render=props=>renderToStaticMarkup(React.createElement(StartupGate,{base:'./',...props}));
 
 test('Accueil tactile : profil, administration et accès, sans bouton son ni texte supprimé',()=>{
   const html=render({status:'ready'});
   assert.match(html,/<main[^>]*aria-labelledby="startup-title"/);
-  assert.match(html,/FNAC-Pulse\/icons\/icon-192-v3\.png/);
+  assert.match(html,/\.\/icons\/icon-192-v3\.png/);
   assert.match(html,/<h1 id="startup-title">Bienvenue sur<br\/><span>Fnac Pulse/);
   assert.match(html,/<div class="startup-kicker">L’APPLICATION DES SERVICES<\/div>/);
   assert(html.indexOf('id="startup-title"')<html.indexOf('class="startup-kicker"'),'la bienvenue précède la signature');
@@ -38,7 +38,7 @@ test('Accueil tactile : porte de sortie seulement après erreur de lecture',()=>
 
 test('Accueil tactile : geste d’accès et sortie après erreur',async()=>{
   const calls=[],{act}=TestRenderer;let tree;
-  const props={base:'/FNAC-Pulse/',ready:true,status:'ready',onStart:()=>calls.push('accès'),onContinue:()=>calls.push('sans son')};
+  const props={base:'./',ready:true,status:'ready',onStart:()=>calls.push('accès'),onContinue:()=>calls.push('sans son')};
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(StartupGate,props));});
     const header=tree.root.findByType('header'),start=tree.root.findByProps({className:'startup-start'});

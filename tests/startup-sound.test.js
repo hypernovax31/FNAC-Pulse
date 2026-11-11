@@ -18,7 +18,7 @@ function environment({blocked=false}={}) {
   const press=fn=>{inGesture=true;try{return fn();}finally{inGesture=false;}};
   return {storage,AudioMock,instances,played,loaded,press,allow:()=>{reject=false;}};
 }
-const player=e=>createStartupSound({base:'/FNAC-Pulse/',AudioClass:e.AudioMock,storage:e.storage});
+const player=e=>createStartupSound({base:'./',AudioClass:e.AudioMock,storage:e.storage});
 const options={standalone:true,visible:true};
 
 test('Premier lancement : écran requis en PWA, jamais dans un onglet, aucun autoplay',async()=>{
@@ -36,7 +36,7 @@ test('L’appui lance audio.play synchroniquement, une seule fois, puis ouvre la
   const e=environment(),p=player(e);
   const result=e.press(()=>p.playFromGesture(options));
   // La lecture a déjà été appelée, avant même l'attente de la promesse.
-  assert.deepEqual(e.played,[{src:'/FNAC-Pulse/FNAC%20-%20SIGNATURE.mp3',inGesture:true}]);
+  assert.deepEqual(e.played,[{src:'./FNAC%20-%20SIGNATURE.mp3',inGesture:true}]);
   assert.equal(await result,'played');assert.equal(e.storage.getItem(STARTUP_SOUND_KEY),'done');
   assert.equal(needsStartupTouch({standalone:true,storage:e.storage}),false);
   assert.equal(await e.press(()=>p.playFromGesture(options)),'done');p.dispose();
@@ -92,7 +92,7 @@ test('Stockage et lecteur indisponibles : aucun crash, accès possible après le
 test('Alertes au premier plan : le même MP3, préparé depuis un geste et rejoué pour chaque vente',async()=>{
   const e=environment(),p=player(e);
   assert.equal(e.press(()=>p.prepareFromGesture()),true);assert.equal(e.press(()=>p.prepareFromGesture()),false);
-  assert.equal(e.instances.length,1);assert.deepEqual(e.loaded,[{src:'/FNAC-Pulse/FNAC%20-%20SIGNATURE.mp3',inGesture:true}]);assert.equal(e.played.length,0);
+  assert.equal(e.instances.length,1);assert.deepEqual(e.loaded,[{src:'./FNAC%20-%20SIGNATURE.mp3',inGesture:true}]);assert.equal(e.played.length,0);
   assert.equal(await p.playNotification({visible:false,notificationsEnabled:true}),'ignored');
   assert.equal(await p.playNotification({visible:true,notificationsEnabled:false}),'ignored');
   assert.equal(await p.playNotification({visible:true,notificationsEnabled:true,stillAllowed:()=>false}),'ignored');

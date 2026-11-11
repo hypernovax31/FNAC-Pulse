@@ -32,6 +32,15 @@ test('Action e-mail : configuration publique synchronisée et liens du projet un
   assert.equal(parseActionLink(app+'&continueUrl='+encodeURIComponent('https://hypernovax31.github.io/FNAC-Pulse/?suite=1')).continueUrl,'https://hypernovax31.github.io/FNAC-Pulse/?suite=1');
 });
 
+test('Action e-mail : la page à la racine accepte son domaine sans modifier les liens Firebase historiques',()=>{
+  const appUrl='https://pulse.ayme.cc/';
+  const root=`${appUrl}?mode=resetPassword&oobCode=${code}`;
+  assert.equal(parseActionLink(root,{appUrl}).code,code);
+  assert.equal(parseActionLink(old,{appUrl}).code,code);
+  assert.throws(()=>parseActionLink(root.replace('pulse.ayme.cc','autre.test'),{appUrl}),e=>e.code==='INVALID_LINK');
+  assert.equal(parseActionLink(root+'&continueUrl='+encodeURIComponent(`${appUrl}?administration=invitation`),{appUrl}).continueUrl,`${appUrl}?administration=invitation`);
+});
+
 test('Action e-mail : enveloppes Hosting du projet uniquement, sans redirection externe',()=>{
   const link=old.replace('mode=resetPassword','mode=signIn');
   const wrapper=`https://${ACTION_PROJECT.authDomain}/__/auth/links?link=${encodeURIComponent(link)}`;

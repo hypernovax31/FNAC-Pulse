@@ -27,10 +27,10 @@ test('Installation : instructions adaptées à iPhone, iPad, Android et navigate
   assert.equal(installPlatform({userAgent:'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)',platform:'MacIntel',maxTouchPoints:5}).os,'ios');
   assert.equal(installPlatform({userAgent:'Mozilla/5.0 (Macintosh)',platform:'MacIntel',maxTouchPoints:0}).os,'desktop');
   assert.deepEqual(installPlatform({userAgent:'Mozilla/5.0 (Linux; Android 14; wv) Instagram'}),{os:'android',inApp:true});
-  const props={base:'/FNAC-Pulse/',onClose(){},onInstall(){},installError:''};
+  const props={base:'./',onClose(){},onInstall(){},installError:''};
   const ios=render(InstallDialog,{...props,platform:{os:'ios',inApp:false},promptAvailable:false});
   assert.match(ios,/Safari/);assert.match(ios,/Partager/);assert.match(ios,/Sur l’écran d’accueil/);assert.match(ios,/Ouvrir comme app/);
-  assert.match(ios,/iOS\/iPadOS 16\.4/);assert.match(ios,/FNAC-Pulse\/icons\/icon-192-v3\.png/);
+  assert.match(ios,/iOS\/iPadOS 16\.4/);assert.match(ios,/\.\/icons\/icon-192-v3\.png/);
   const android=render(InstallDialog,{...props,platform:{os:'android',inApp:false},promptAvailable:true});
   assert.match(android,/>Installer l’application /);assert.match(android,/>Plus tard</);
   const fallback=render(InstallDialog,{...props,platform:{os:'android',inApp:false},promptAvailable:false});

@@ -10,7 +10,7 @@ const fixtures={
  'firebase/messaging':messagingNames.map(name=>`export const ${name}=(...a)=>globalThis.__inviteFake.${name}?.(...a);`).join(''),
 };
 const plugin={name:'firebase-fake',setup(b){for(const name of Object.keys(fixtures)){b.onResolve({filter:new RegExp('^'+name.replaceAll('/','\\/')+'$')},()=>({path:name,namespace:'fake'}));}b.onLoad({filter:/.*/,namespace:'fake'},args=>({contents:fixtures[args.path],loader:'js'}));}};
-async function cloud(){const output=await build({entryPoints:['src/cloud.js'],bundle:true,platform:'node',format:'cjs',write:false,plugins:[plugin],logLevel:'silent',define:{'import.meta.env.VITE_BACKEND':'"cloud"','import.meta.env.VITE_WORKER_URL':'"https://worker.test"','import.meta.env.VITE_FIREBASE_VAPID_KEY':'""','import.meta.env.BASE_URL':'"/FNAC-Pulse/"'}});const module={exports:{}};new Function('module','exports','require',output.outputFiles[0].text)(module,module.exports,require);return module.exports;}
+async function cloud(base='/FNAC-Pulse/'){const output=await build({entryPoints:['src/cloud.js'],bundle:true,platform:'node',format:'cjs',write:false,plugins:[plugin],logLevel:'silent',define:{'import.meta.env.VITE_BACKEND':'"cloud"','import.meta.env.VITE_WORKER_URL':'"https://worker.test"','import.meta.env.VITE_FIREBASE_VAPID_KEY':'""','import.meta.env.BASE_URL':JSON.stringify(base)}});const module={exports:{}};new Function('module','exports','require',output.outputFiles[0].text)(module,module.exports,require);return module.exports;}
 
 test('Nouveaux administrateurs : e-mail de connexion sans création préalable ni changement de session',async()=>{
  const previous={window:globalThis.window,__inviteFake:globalThis.__inviteFake};const events=[];let sendError=null,registered=0;
@@ -35,6 +35,20 @@ test('Nouveaux administrateurs : e-mail de connexion sans création préalable n
   await assert.rejects(inviteAdministrator(api,{email:'autre@example.test',requestId:'request-client-002'}),e=>/connexion par lien n’est pas activée/.test(e.message));
   const before=events.filter(e=>e[0]==='send').length;await inviteAdministrator(async()=>({status:'accepted'}),{email:'ancien@example.test',requestId:'request-client-003'});assert.equal(events.filter(e=>e[0]==='send').length,before,'pas de second envoi pour un accès déjà accepté');
  }finally{if(previous.window===undefined)delete globalThis.window;else globalThis.window=previous.window;if(previous.__inviteFake===undefined)delete globalThis.__inviteFake;else globalThis.__inviteFake=previous.__inviteFake;}
+});
+
+test('Invitation : la base relative produit une continuation à la racine du domaine',async()=>{
+ const previous={window:globalThis.window,__inviteFake:globalThis.__inviteFake};let sent;
+ globalThis.window={location:{origin:'https://pulse.ayme.cc'}};
+ globalThis.__inviteFake={
+  initializeApp:(_cfg,name)=>({name:name||'default'}),deleteApp:async()=>{},getAuth:app=>({app}),getFirestore:()=>({}),
+  setPersistence:async()=>{},signOut:async()=>{},sendSignInLinkToEmail:async(_auth,email,settings)=>{sent={email,settings};},
+ };
+ try {
+  const {inviteAdministrator}=await cloud('./');
+  await inviteAdministrator(async()=>({status:'pending'}),{email:'nouveau@example.test',requestId:'request-client-003'});
+  assert.deepEqual(sent,{email:'nouveau@example.test',settings:{url:'https://pulse.ayme.cc/?administration=invitation',handleCodeInApp:true}});
+ } finally {if(previous.window===undefined)delete globalThis.window;else globalThis.window=previous.window;if(previous.__inviteFake===undefined)delete globalThis.__inviteFake;else globalThis.__inviteFake=previous.__inviteFake;}
 });
 
 test('Mot de passe oublié : demande Firebase uniquement, réponse discrète et sessions préservées',async()=>{

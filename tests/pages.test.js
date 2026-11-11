@@ -13,7 +13,7 @@ function serviceWorker(scope, windows = [], fetchImpl = fetch) {
     async addAll(urls) { added.push([...urls]); },
     async match(url) {
       if (url !== base) return undefined;
-      return new Response(`<html><script src="${base}assets/app.js"></script><link href="${base}assets/app.css"/><script src="https://elsewhere.invalid/assets/other.js"></script></html>`);
+      return new Response('<html><script src="./assets/app.js"></script><link href="./assets/app.css"/><script src="https://elsewhere.invalid/assets/other.js"></script></html>');
     },
     async put(...args) { stored.push(args); },
   };
