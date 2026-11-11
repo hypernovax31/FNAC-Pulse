@@ -1928,7 +1928,11 @@ export function createWorker(deps={}) {
           a?.active&&a.version===t.data.accessVersion&&a.storeId===item.data.storeId&&recipient&&validStore(c.data,item.data.storeId)&&
           sellerDepartmentId(recipient)===saleDepartmentId(item.data);
       });
-      for(let i=0;i<eligible.length;i+=100)await env.PULSE_QUEUE.sendBatch(eligible.slice(i,i+100).map(t=>({body:{saleId:id,tokenId:t.id,storeId:item.data.storeId}})));
+      // Délai minimal avant tout envoi push : la fenêtre « Annuler » de la
+      // PWA peut retirer une vente avant que les collègues ne soient notifiés
+      // (le consommateur revérifie la vente juste avant l'appel à FCM).
+      const NOTIFY_DELAY_SECONDS=6;
+      for(let i=0;i<eligible.length;i+=100)await env.PULSE_QUEUE.sendBatch(eligible.slice(i,i+100).map(t=>({body:{saleId:id,tokenId:t.id,storeId:item.data.storeId},delaySeconds:NOTIFY_DELAY_SECONDS})));
       const current=await db.get(path);
       if(current?.data.status==='dispatching')await db.commit([db.write(path,{...current.data,status:'queued',leaseUntil:0},precondition(current))]);
     } catch(e) {

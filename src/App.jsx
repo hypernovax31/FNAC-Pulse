@@ -929,10 +929,12 @@ function AppContent() {
       if(CLOUD&&latest?.owner===targetOwner&&latest.live&&latest.sales.some(s=>s.id===requestId&&s.deletedAt)){
         flash('Cette vente a déjà été retirée. Vérifiez le bilan.',{tone:'warning'});return;
       }
+      // Le toast n'attend rien et ne bloque pas l'interface ; sa durée suit la
+      // fenêtre garantie avant notification des collègues (délai file ≥ 5 s).
       flash('Vente enregistrée.',{tone:'success',actionLabel:'Annuler',action:async()=>{
         try {await api(`/api/sales/${id}`,{method:'DELETE',body:session});setOptimisticSales(items=>items.filter(item=>item.sale.id!==requestId));if(!CLOUD)void refresh();if(ownerRef.current===targetOwner)flash('Vente annulée.');}
         catch(e){if(ownerRef.current===targetOwner)flash(e.message,{tone:'warning'});}
-      },duration:8000});
+      },duration:5000});
     };
     try {
       const result=await api('/api/sales',{method:'POST',body});

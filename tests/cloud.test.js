@@ -119,10 +119,10 @@ test('Cloud : PIN, isolation, corrections, administration et notifications en fi
 });
 
 test('Notifications : auteur exclu sur tous appareils, anciens messages et changement de profil',async()=>{
-  const db=new MemoryDb(),queued=[],sent=[],waits=[],store=LEGACY_STORE_ID;
+  const db=new MemoryDb(),queued=[],sent=[],waits=[],envelopes=[],store=LEGACY_STORE_ID;
   const claims={role:'seller',sub:'author',storeId:store,sellerId:1,accessVersion:'v1'};
   const worker=createWorker({createDb:()=>db,verifyIdToken:async()=>claims,sendFcm:async(_env,token)=>sent.push(token)});
-  const env={FIREBASE_PROJECT_ID:'demo-fnac',PULSE_QUEUE:{async sendBatch(messages){queued.push(...messages.map(x=>x.body));}}};
+  const env={FIREBASE_PROJECT_ID:'demo-fnac',PULSE_QUEUE:{async sendBatch(messages){for(const m of messages)envelopes.push(m);queued.push(...messages.map(x=>x.body));}}};
   const ctx={waitUntil(p){waits.push(p)}};
   const base=await (await worker.fetch(new Request('https://worker.test/api/bootstrap'),env,ctx)).json();
   const other=base.stores.find(s=>s.name==='Fnac Bordeaux').id;
@@ -144,6 +144,7 @@ test('Notifications : auteur exclu sur tous appareils, anciens messages et chang
   }
   const saleId='notify-author-00001';await add(saleId,ids.phone);
   assert.deepEqual(queued.map(m=>m.tokenId).sort(),[ids.peer1,ids.peer2].sort());
+  assert(envelopes.length>0&&envelopes.every(m=>m.delaySeconds>=5),'chaque notification attend au moins cinq secondes avant envoi');
   const consume=async body=>{const m=makeMessage(body);await worker.queue({messages:[m]},env);assert(m.acked);return m;};
   // Un ancien message déjà en file pour un autre appareil de l'auteur est ignoré.
   await consume({saleId,tokenId:ids.tablet,storeId:store});assert.deepEqual(sent,[]);
