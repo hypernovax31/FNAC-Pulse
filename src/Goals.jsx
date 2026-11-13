@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { VisibleFeedback, useRetryFeedback } from './VisibleFeedback';
 import { AutoSaveStatus, useAutomaticSave } from './AutoSave';
-import { ArrowRight, Check, Pencil, Plus, Target } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, Pencil, Plus, Target } from 'lucide-react';
 import { GOAL_LABELS, GOAL_LIMIT, GOAL_PERIODS, WORKDAY_NAMES, WORKDAY_ORDER, goalReference, goalTargets, hasGoal, parseGoalInputs, normalizeWorkdays, validWorkdays, workdaysLabel } from './goals.js';
 import { validGoalDate, personalGoalCards, personalGoalMetric } from './goal-display.js';
 import { goalMinimum } from './goal-policy.js';
@@ -91,7 +91,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
       </select></label>
       <label><span className="form-label">{admin?'CIBLE MINIMALE':'CIBLE'}</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min={!admin&&minimum?minimum.amount:0} max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={disabled||!service} onChange={e=>{const value=e.target.value;editor.change({period:editor.current().period,amount:value});}} onBlur={()=>{if(!admin&&minimum&&(editor.current().amount===''||Number(editor.current().amount)<minimum.amount))editor.change({period:minimum.period,amount:String(minimum.amount)});}} required/></label>
     </div>
-    {admin?<details className="admin-minimum-equivalents"><summary>Voir les équivalences du minimum</summary>{minimumPreview}</details>:minimumPreview}
+    {admin?<details className="admin-minimum-equivalents"><summary><span><strong>Objectifs calculés à partir du minimum</strong><small>Jour · Semaine · Mois</small></span><ChevronDown size={18} aria-hidden="true"/></summary>{minimumPreview}</details>:minimumPreview}
     <AutoSaveStatus showRecovery={admin||!minimum} editor={editor} saved="Objectifs enregistrés automatiquement." conflict="Cet objectif a été modifié ailleurs. Votre saisie n’a pas été enregistrée."/>
     </section>
     {showPlanning&&<details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Modifiez ces jours dans la fiche du vendeur, onglet Vendeurs. Les cibles par semaine ou par mois sont réparties en entiers : samedi 6 parts, lundi et vendredi 5, les autres jours travaillés 4. Une cible par jour travaillé reste identique chaque jour. Les jours fériés sont inclus et certains jours peuvent recevoir 0. Changer de période remplace la référence et son éventuelle hausse personnelle.</p></details>}

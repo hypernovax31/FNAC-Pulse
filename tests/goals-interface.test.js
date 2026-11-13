@@ -149,7 +149,7 @@ test('Formulaire admin : minimum distinct de la cible personnelle et changement 
   const p={services:props.services,goals,workdays:props.workdays,date:props.date,initialServiceId:1,admin:true,showPlanning:true};
   const html=render(GoalForm,{...p,onSave:()=>{}});
   assert.match(html,/CIBLE MINIMALE/);assert.match(html,/OBJECTIF ACTUEL DU VENDEUR :/);assert.doesNotMatch(html,/Cible personnelle actuelle/);assert.match(html,/aria-label="Cible de référence"[^>]+value="20"/);
-  assert.match(html,/samedi 6 parts, lundi et vendredi 5/);assert.match(html,/Une cible par jour travaillé reste identique/);
+  assert.match(html,/samedi 6 parts, lundi et vendredi 5/);assert.doesNotMatch(html,/<details[^>]*class="goal-form-details"[^>]*open/);assert.match(html,/Une cible par jour travaillé reste identique/);
   const old=Object.getOwnPropertyDescriptor(globalThis,'window');let tree,confirmed=false;const saves=[];
   Object.defineProperty(globalThis,'window',{configurable:true,value:{confirm:()=>confirmed}});
   try {
@@ -193,6 +193,8 @@ test('Admin simplifié : objectif en lecture seule, minimum séparé, équivalen
     assert.match(nodeText(tree.root.findByProps({className:'admin-goal-minimum-editor'})),/Minimum administrateur/);
     assert.equal(tree.root.findByProps({'aria-label':'Cible de référence'}).props.value,'20');
     assert.equal(tree.root.findByProps({className:'admin-minimum-equivalents'}).props.open,undefined);
+    assert.match(nodeText(tree.root.findByProps({className:'admin-minimum-equivalents'})),/Objectifs calculés à partir du minimum/);
+    assert.doesNotMatch(nodeText(tree.toJSON()),/Voir les équivalences du minimum/);
     assert.equal(tree.root.findAllByProps({className:'goal-form-intro'}).length,0);
     assert.match(nodeText(tree.toJSON()),/Le vendeur peut l’augmenter, mais pas descendre en dessous/);
   } finally {if(tree)await act(async()=>tree.unmount());}

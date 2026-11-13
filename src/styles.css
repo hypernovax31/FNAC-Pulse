@@ -1848,3 +1848,20 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .admin-goal-minimum-heading p,[data-theme='dark'] .admin-minimum-equivalents summary { color:#bec3b6; }
 [data-theme='dark'] .admin-goals-reset > summary { color:#e0a299; }
 @media(max-width:480px) { .admin-goal-minimum-editor,.admin-goal-form .admin-seller-target { padding:14px; } .admin-target-title strong { font-size:18px; } }
+
+/* Hiérarchie des explications : répartition visible, détails techniques en retrait. */
+.admin-goal-form .admin-minimum-equivalents { border:1px solid #dec36b; border-radius:10px; background:#fff9e8; overflow:hidden; }
+.admin-goal-form .admin-minimum-equivalents > summary { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:62px; padding:13px 14px; color:#55471c; list-style:none; }
+.admin-goal-form .admin-minimum-equivalents > summary::-webkit-details-marker { display:none; }
+.admin-minimum-equivalents > summary strong { display:block; font-size:13px; line-height:1.4; font-weight:750; }
+.admin-minimum-equivalents > summary small { display:block; margin-top:4px; font-size:11px; font-weight:400; }
+.admin-minimum-equivalents > summary svg { flex-shrink:0; }
+.admin-minimum-equivalents[open] > summary svg { transform:rotate(180deg); }
+.admin-minimum-equivalents > summary:focus-visible { outline:2px solid #99790a; outline-offset:-3px; }
+.admin-minimum-equivalents .goal-preview { margin:0 10px 10px; }
+.admin-goal-form .goal-form-details { margin-top:-4px; }
+.admin-goal-form .goal-form-details > summary { min-height:44px; padding:10px 0; border:0; border-radius:0; background:transparent; box-shadow:none; color:#777d71; font-size:11px; font-weight:400; }
+.admin-goal-form .goal-form-details > .goal-form-hint { font-size:10px; }
+[data-theme='dark'] .admin-goal-form .admin-minimum-equivalents { border-color:#8c783e; background:#342f20; }
+[data-theme='dark'] .admin-goal-form .admin-minimum-equivalents > summary { color:#efdea6; }
+[data-theme='dark'] .admin-goal-form .goal-form-details > summary { border:0; background:transparent; box-shadow:none; color:#aeb4a6; }
