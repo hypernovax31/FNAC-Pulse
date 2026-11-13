@@ -128,7 +128,7 @@ test('Un nom existant saisi par l’administrateur reste utilisable même avec u
   } finally {if(tree)await act(async()=>tree.unmount());restore();}
 });
 
-test('Recherche sans sélection : aide hors de la rangée et géolocalisation toujours utilisable',async()=>{
+test('Recherche sans sélection : aide hors de la rangée et géolocalisation silencieuse toujours utilisable',async()=>{
   const prior=Object.getOwnPropertyDescriptor(globalThis,'navigator'),restore=apiMock(async()=>({needsPin:true}));let tree;
   Object.defineProperty(globalThis,'navigator',{configurable:true,value:{geolocation:{getCurrentPosition(ok){ok({coords:{latitude:43,longitude:1}});}}}});
   const located={...data,stores:data.stores.map(store=>({...store,lat:43,lon:1}))};
@@ -141,7 +141,8 @@ test('Recherche sans sélection : aide hors de la rangée et géolocalisation to
     await act(async()=>{field(tree,'Trouver un magasin proche').props.onClick();await tick();});
     assert.equal(field(tree,'Votre magasin Fnac').props.value,'Fnac Test');
     assert.equal(field(tree,'Votre département').props.disabled,false);
-    assert.match(text(tree.toJSON()),/Fnac Test proposé/);
+    const rendered=text(tree.toJSON());
+    assert.doesNotMatch(rendered,/proposé · à environ|pas de coordonnées|geo-message|Géolocalisation refusée|Position indisponible/,'aucune surcouche de géolocalisation');
   } finally {if(tree)await act(async()=>tree.unmount());restore();if(prior)Object.defineProperty(globalThis,'navigator',prior);else delete globalThis.navigator;}
 });
 

@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  Target, Zap, Trophy, ChartNoAxesCombined, Settings2, MapPin, ChevronDown, ChevronRight, ArrowRight,
+  Target, Zap, Trophy, ChartNoAxesCombined, Settings2, MapPin, ChevronDown, ChevronRight, ChevronLeft, ArrowRight, BellRing,
   Activity, Bell, BellOff, Plus, Minus, UserRound, UsersRound, Sparkles, Crosshair, CalendarDays,
   Check, MoreHorizontal, Play, Smartphone, MonitorSmartphone, Shield, ShieldCheck, HardHat, IdCard, DollarSign, PackageCheck, BadgePlus,
   Repeat2, RefreshCw, Tv, Wifi, Clock3, X, Download, WifiOff, Info, CircleCheck, ArrowUpRight, SunMoon, Sun, Moon, Monitor, Volume2, VolumeX
 } from 'lucide-react';
 import Admin, { Modal } from './Admin';
+
 import { AppToastProvider } from './AppToasts';
 import { VisibleFeedback, restoreDialogFocus, useFeedbackState, useRetryFeedback } from './VisibleFeedback';
 import { api, uid, dateLabel, timeLabel, kmBetween } from './api';
@@ -21,7 +22,6 @@ import { serviceIconKey } from './service-icons';
 import { THEME_KEY, readTheme, applyTheme } from './theme';
 import { createStartupSound, soundEnabled as readSoundEnabled, saveSound, needsStartupTouch, SOUND_KEY, STARTUP_SOUND_KEY } from './startup-sound';
 import { StartupGate } from './StartupGate';
-import { StartupPermissionsDialog } from './StartupPermissions';
 import { readLocationPermission, startupPushPending, setStartupPushPending } from './startup-permissions.js';
 import { isOtherSellerSale } from './live-sales.js';
 import { readPushOrigin } from './push-origin.js';
@@ -85,7 +85,9 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
   const [store,setStore]=useState(startStore);
   const [department,setDepartment]=useState(initialPerson?sellerDepartmentId(initialPerson):start?.departmentId||'');
   const [name,setName]=useState(initialPerson?.name||'');
-  const [geoText,setGeoText]=useState(''),[geoBusy,setGeoBusy]=useState(false);
+  const [geoBusy,setGeoBusy]=useState(false);
+  // Parcours de lancement (« startup ») : une seule question par écran.
+  const [step,setStep]=useState('store');
   const [unselectedStore,setUnselectedStore]=useState(false),[regionalConsent,setRegionalConsent]=useState(false);
   const [pinMode,setPinMode]=useState(CLOUD?'idle':'local'),[pinSalt,setPinSalt]=useState(''),[statusError,setStatusError]=useState(''),[statusRetry,setStatusRetry]=useState(0);
   const [pin,setPin]=useState(''),[newPin,setNewPin]=useState(''),[confirmPin,setConfirmPin]=useState('');
@@ -122,16 +124,17 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
     check();return ()=>{cancelled=true;clearTimeout(timer);controller.abort();};
   },[store,department,seller,registerable,statusRetry,unavailable]);
   function clearSecrets(){setPin('');setNewPin('');setConfirmPin('');setFormError('');}
-  function cancelLocate(){geoTouched.current=true;geoRequest.current++;setGeoBusy(false);setGeoText('');}
+  function cancelLocate(){geoTouched.current=true;geoRequest.current++;setGeoBusy(false);}
   const changeStore=value=>{if(value!==store){setDepartment('');setName('');setRegionalConsent(false);clearSecrets();}setStore(value);};
   const changeDepartment=value=>{if(value!==department){setName('');clearSecrets();}setDepartment(value);};
   useEffect(()=>{if(!fixed&&store&&!isSelectableStore(data.stores.find(s=>s.id===store)))changeStore('');},[fixed,store,data.stores]);
+  // Géolocalisation silencieuse : le magasin le plus proche est présélectionné,
+  // sans message de distance ni avertissement sur les magasins sans coordonnées.
   function suggestNearby(coords) {
     const located=storeGroups.all.filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon)).map(s=>({...s,distance:kmBetween(coords.latitude,coords.longitude,s.lat,s.lon)})).sort((a,b)=>a.distance-b.distance);
     setGeoBusy(false);
-    if(!located.length){setGeoText('Aucun magasin géolocalisé dans la liste.');return;}
-    const nearest=located[0];changeStore(nearest.id);
-    setGeoText(`${nearest.name} proposé · à environ ${nearest.distance<1?`${Math.round(nearest.distance*1000)} m`:`${nearest.distance.toFixed(1).replace('.',',')} km`}. Certains magasins n’ont pas de coordonnées.`);
+    if(!located.length)return;
+    changeStore(located[0].id);
   }
   useEffect(()=>{
     // Ne jamais remplacer une sélection, un profil mémorisé ou une recherche
@@ -139,18 +142,20 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
     if(!startupLocation||fixed||unavailable||store||unselectedStore||geoTouched.current)return;
     geoTouched.current=true;geoRequest.current++;suggestNearby(startupLocation);
   },[startupLocation,fixed,unavailable,store,unselectedStore,data.stores]);
+  const geoAvailable=typeof navigator!=='undefined'&&typeof navigator.geolocation?.getCurrentPosition==='function';
   const locate=()=>{
     geoTouched.current=true;
-    if(!navigator.geolocation){setGeoText('La géolocalisation n’est pas disponible sur cet appareil.');return;}
+    if(!geoAvailable)return;
     const request=++geoRequest.current;
-    setGeoBusy(true);setGeoText('Recherche du magasin le plus proche…');
+    setGeoBusy(true);
     navigator.geolocation.getCurrentPosition(({coords})=>{
       if(request!==geoRequest.current)return;suggestNearby(coords);
-    },err=>{if(request!==geoRequest.current)return;setGeoBusy(false);setGeoText(err.code===1?'Géolocalisation refusée. Vous pouvez choisir votre magasin dans la liste.':'Position indisponible. Choisissez votre magasin dans la liste.');},
+    },()=>{if(request!==geoRequest.current)return;setGeoBusy(false);},
     {enableHighAccuracy:false,timeout:12000,maximumAge:300000});
   };
   async function submit(event) {
     event.preventDefault();if(!store||!department||(!seller&&!registerable)||formBusy)return;
+    if(startup&&!fixed&&step!=='pin')return; // pas de validation avant la dernière question
     cancelLocate();const mode=CLOUD?pinMode:registerable?'register':'local';
     if(!['register','setup','migrate','login','local'].includes(mode))return;
     if(mode==='register'&&needsRegionalConsent&&!regionalConsent){setFormError('Confirmez avoir compris le partage des bilans et notifications pour cet espace régional.');return;}
@@ -182,20 +187,38 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
   if(unavailable)return <><VisibleFeedback message="Le profil enregistré sur cet appareil n’est plus disponible. Contactez votre responsable." tone="error"/><div className="profile-unavailable" role="alert"><p>Le profil enregistré sur cet appareil n’est plus disponible. Contactez votre responsable.</p><button type="button" className="outline-button" onClick={onForgetProfile}>Retirer le profil de cet appareil</button></div></>;
   const mode=CLOUD?pinMode:registerable?'register':'local',setup=['register','setup','migrate'].includes(mode);
   const nameId=`seller-name-${modal?'dialog':'welcome'}`;
-  return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={submit}>
+  // Champs partagés entre le formulaire classique et le parcours pas à pas.
+  const rememberedCard=fixed&&<div className="remembered-profile"><Avatar name={rememberedPerson.name} id={rememberedPerson.id}/><div><span>VOTRE PROFIL SUR CET APPAREIL</span><strong>{rememberedPerson.name}</strong><small>{displayStoreName(rememberedStore)} · {departments.find(d=>d.id===department)?.name||'Votre département'}</small></div></div>;
+  const storeField=<div className="session-field store-field"><label htmlFor={`store-search-${modal?'dialog':'welcome'}`}>VOTRE MAGASIN</label><StoreSearch id={`store-search-${modal?'dialog':'welcome'}`} stores={storeGroups.all} value={store} onUnselectedChange={setUnselectedStore} onEdit={()=>{cancelLocate();onUserEdit?.();}} onChange={value=>{cancelLocate();changeStore(value);onUserEdit?.();}} disabled={formBusy}/></div>;
+  const locateButton=geoAvailable&&<button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver un magasin proche" title="Trouver un magasin proche parmi ceux géolocalisés" disabled={geoBusy||formBusy}><Crosshair size={17}/></button>;
+  const departmentField=<label className="session-field department-field"><span>VOTRE DÉPARTEMENT</span><div className="select-wrap"><UsersRound size={16}/><select aria-label="Votre département" className={department?'':'is-placeholder'} value={department} onChange={e=>{cancelLocate();changeDepartment(e.target.value);onUserEdit?.();}} disabled={formBusy||!store||!departments.length} required><option value="">Choisir un département</option>{departments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>;
+  const nameField=<NameSuggestions key={`${store}:${department}`} id={nameId} sellers={storeSellers} value={name} onChange={value=>{cancelLocate();setName(value);clearSecrets();onUserEdit?.();}} disabled={formBusy||!department}/>;
+  const pinLoginField=CLOUD&&mode==='login'&&<label className="session-field pin-field"><span>CODE PIN PERSONNEL</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{4}" maxLength={4} value={pin} onChange={e=>{setPin(e.target.value.replace(/\D/g,''));onUserEdit?.();}} placeholder="4 chiffres" disabled={formBusy} required/></label>;
+  const sessionSubmit=(mode==='local'||mode==='login')&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==4)}>{formBusy?'Connexion…':modal&&!startup?'Utiliser ce profil':'Se connecter'} <ArrowRight size={16}/></button>;
+  const statusViews=<>
+    {CLOUD&&mode==='loading'&&<p className="pin-status" role="status">Vérification de votre profil…</p>}
+    {CLOUD&&mode==='error'&&<div className="profile-status-error" role="alert"><span>{statusError}</span><button type="button" className="text-button" onClick={()=>{clearSecrets();onRefreshProfile?.();setStatusRetry(x=>x+1);}}>Vérifier à nouveau</button></div>}
+  </>;
+  const setupBlock=setup&&<div className="pin-setup">
+    <div className="pin-setup-intro"><ShieldCheck size={19}/><div><strong>{mode==='migrate'?'Passez à un PIN de 4 chiffres':mode==='register'?'Créez votre profil':'Première connexion : choisissez votre PIN'}</strong><p>{mode==='migrate'?'Saisissez votre ancien PIN à 8 chiffres, puis choisissez votre nouveau code à 4 chiffres. Vos données restent intactes.':mode==='register'?'Votre prénom sera enregistré dans le magasin et le département choisis. Vérifiez votre département : il ne pourra plus être modifié après la création. Choisissez un PIN personnel de 4 chiffres.':'Choisissez un code personnel de 4 chiffres. Il sera demandé après une déconnexion.'}</p></div></div>
+    {mode==='migrate'&&<label className="pin-setup-code"><span className="form-label">ANCIEN PIN À 8 CHIFFRES</span><input className="text-input" aria-label="Ancien code PIN à 8 chiffres" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={pin} onChange={e=>{setPin(e.target.value.replace(/\D/g,''));onUserEdit?.();}} disabled={formBusy} required/></label>}
+    <div className="pin-setup-fields"><label><span className="form-label">VOTRE PIN À 4 CHIFFRES</span><input className="text-input" aria-label="Votre nouveau code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4}" maxLength={4} placeholder="4 chiffres" value={newPin} onChange={e=>{setNewPin(e.target.value.replace(/\D/g,''));onUserEdit?.();}} disabled={formBusy} required/></label><label><span className="form-label">CONFIRMER LE PIN</span><input className="text-input" aria-label="Confirmer votre code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4}" maxLength={4} placeholder="4 chiffres" value={confirmPin} onChange={e=>{setConfirmPin(e.target.value.replace(/\D/g,''));onUserEdit?.();}} disabled={formBusy} required/></label></div>
+    {mode==='register'&&needsRegionalConsent&&<label className="regional-consent"><input type="checkbox" checked={regionalConsent} onChange={e=>{setRegionalConsent(e.target.checked);onUserEdit?.();}} disabled={formBusy}/><span>Je comprends que les bilans et notifications peuvent être partagés avec d’autres points de cette région.</span></label>}
+    <div className="pin-setup-actions"><button className="primary-button" type="submit" disabled={!store||!department||(!seller&&!registerable)||formBusy||newPin.length!==4||confirmPin.length!==4||(mode==='migrate'&&pin.length!==8)||(mode==='register'&&needsRegionalConsent&&!regionalConsent)}>{formBusy?'Enregistrement…':mode==='register'?'Créer mon profil':'Enregistrer mon PIN'} <ArrowRight size={15}/></button></div>
+  </div>;
+  const pinHelp=CLOUD&&['login','migrate'].includes(mode)&&<p className="pin-help">PIN oublié ? Demandez à votre responsable de réinitialiser votre accès.</p>;
+  const switchButton=fixed&&<button type="button" className="profile-switch" disabled={formBusy} onClick={()=>{if(window.confirm('Changer de profil sur cet appareil ? Le profil mémorisé sera retiré de cet appareil.'))onForgetProfile?.();}}>Changer de profil sur cet appareil</button>;
+  const statusFeedbacks=<>
     <VisibleFeedback message={formError} tone="error" revision={formErrorRevision}/>
     <VisibleFeedback message={mode==='error'?statusError:''} tone="error" revision={statusRetry} actionLabel="Vérifier" onAction={()=>{clearSecrets();onRefreshProfile?.();setStatusRetry(x=>x+1);}}/>
-    <VisibleFeedback message={!geoBusy?geoText:''} tone={/refusée|indisponible|pas disponible|Aucun magasin/.test(geoText)?'error':'success'}/>
-    {fixed&&<div className="remembered-profile"><Avatar name={rememberedPerson.name} id={rememberedPerson.id}/><div><span>VOTRE PROFIL SUR CET APPAREIL</span><strong>{rememberedPerson.name}</strong><small>{displayStoreName(rememberedStore)} · {departments.find(d=>d.id===department)?.name||'Votre département'}</small></div></div>}
+  </>;
+  if(!startup)return <form className={`session-form ${modal?'session-form-modal':''}`} onSubmit={submit}>
+    {statusFeedbacks}
+    {rememberedCard}
     <div className="session-fields">
-      {!fixed&&<>
-        <div className="session-field store-field"><label htmlFor={`store-search-${modal?'dialog':'welcome'}`}>VOTRE MAGASIN</label><StoreSearch id={`store-search-${modal?'dialog':'welcome'}`} stores={storeGroups.all} value={store} onUnselectedChange={setUnselectedStore} onEdit={()=>{cancelLocate();onUserEdit?.();}} onChange={value=>{cancelLocate();changeStore(value);onUserEdit?.();}} disabled={formBusy}/></div>
-        <button type="button" className={`locate-button ${geoBusy?'locating':''}`} onClick={locate} aria-label="Trouver un magasin proche" title="Trouver un magasin proche parmi ceux géolocalisés" disabled={geoBusy||formBusy}><Crosshair size={17}/></button>
-        <label className="session-field department-field"><span>VOTRE DÉPARTEMENT</span><div className="select-wrap"><UsersRound size={16}/><select aria-label="Votre département" className={department?'':'is-placeholder'} value={department} onChange={e=>{cancelLocate();changeDepartment(e.target.value);onUserEdit?.();}} disabled={formBusy||!store||!departments.length} required><option value="">Choisir un département</option>{departments.map(d=><option value={d.id} key={d.id}>{d.name}</option>)}</select><ChevronDown size={15} className="select-chevron"/></div></label>
-        <NameSuggestions key={`${store}:${department}`} id={nameId} sellers={storeSellers} value={name} onChange={value=>{cancelLocate();setName(value);clearSecrets();onUserEdit?.();}} disabled={formBusy||!department}/>
-      </>}
-      {CLOUD&&mode==='login'&&<label className="session-field pin-field"><span>CODE PIN PERSONNEL</span><input className="text-input pin-input" aria-label="Code PIN personnel" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{4}" maxLength={4} value={pin} onChange={e=>{setPin(e.target.value.replace(/\D/g,''));onUserEdit?.();}} placeholder="4 chiffres" disabled={formBusy} required/></label>}
-      {(mode==='local'||mode==='login')&&<button className="primary-button session-submit" type="submit" disabled={!store||!department||!seller||formBusy||(CLOUD&&pin.length!==4)}>{formBusy?'Connexion…':modal&&!startup?'Utiliser ce profil':'Se connecter'} <ArrowRight size={16}/></button>}
+      {!fixed&&<>{storeField}{locateButton}{departmentField}{nameField}</>}
+      {pinLoginField}
+      {sessionSubmit}
     </div>
     {!fixed&&!store&&unselectedStore&&<p id={`store-search-${modal?'dialog':'welcome'}-hint`} className="store-search-hint">Choisissez un magasin dans les résultats.</p>}
     {regionalChoice&&<div className="regional-choice-notice" role="status"><Info size={16} aria-hidden="true"/><span>Cette mention régionale ne désigne pas un magasin précis. Les bilans sont communs à cet espace et les notifications partagées entre vendeurs d’un même département. Pour séparer des points de vente, demandez à un administrateur d’ajouter leurs noms précis.</span></div>}
@@ -205,19 +228,57 @@ export function SessionForm({data,initialSession,initialProfile,startupLocation,
       return target?<button type="button" className="text-button" key={person.id} onClick={()=>{setDepartment(target.id);setName(person.name);clearSecrets();}}>Utiliser le profil {person.name} · {target.name}</button>:null;
     })}</div>}
     {typed&&!validSellerName(typed)&&!fixed&&!matched&&!otherDepartment&&<p className="profile-status-error" role="alert">Saisissez un prénom valide (lettres, espaces ou traits d’union).</p>}
-    {CLOUD&&mode==='loading'&&<p className="pin-status" role="status">Vérification de votre profil…</p>}
-    {CLOUD&&mode==='error'&&<div className="profile-status-error" role="alert"><span>{statusError}</span><button type="button" className="text-button" onClick={()=>{clearSecrets();onRefreshProfile?.();setStatusRetry(x=>x+1);}}>Vérifier à nouveau</button></div>}
-    {setup&&<div className="pin-setup">
-      <div className="pin-setup-intro"><ShieldCheck size={19}/><div><strong>{mode==='migrate'?'Passez à un PIN de 4 chiffres':mode==='register'?'Créez votre profil':'Première connexion : choisissez votre PIN'}</strong><p>{mode==='migrate'?'Saisissez votre ancien PIN à 8 chiffres, puis choisissez votre nouveau code à 4 chiffres. Vos données restent intactes.':mode==='register'?'Votre prénom sera enregistré dans le magasin et le département choisis. Vérifiez votre département : il ne pourra plus être modifié après la création. Choisissez un PIN personnel de 4 chiffres.':'Choisissez un code personnel de 4 chiffres. Il sera demandé après une déconnexion.'}</p></div></div>
-      {mode==='migrate'&&<label className="pin-setup-code"><span className="form-label">ANCIEN PIN À 8 CHIFFRES</span><input className="text-input" aria-label="Ancien code PIN à 8 chiffres" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" maxLength={8} placeholder="8 chiffres" value={pin} onChange={e=>{setPin(e.target.value.replace(/\D/g,''));onUserEdit?.();}} disabled={formBusy} required/></label>}
-      <div className="pin-setup-fields"><label><span className="form-label">VOTRE PIN À 4 CHIFFRES</span><input className="text-input" aria-label="Votre nouveau code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4}" maxLength={4} placeholder="4 chiffres" value={newPin} onChange={e=>{setNewPin(e.target.value.replace(/\D/g,''));onUserEdit?.();}} disabled={formBusy} required/></label><label><span className="form-label">CONFIRMER LE PIN</span><input className="text-input" aria-label="Confirmer votre code PIN" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4}" maxLength={4} placeholder="4 chiffres" value={confirmPin} onChange={e=>{setConfirmPin(e.target.value.replace(/\D/g,''));onUserEdit?.();}} disabled={formBusy} required/></label></div>
-      {mode==='register'&&needsRegionalConsent&&<label className="regional-consent"><input type="checkbox" checked={regionalConsent} onChange={e=>{setRegionalConsent(e.target.checked);onUserEdit?.();}} disabled={formBusy}/><span>Je comprends que les bilans et notifications peuvent être partagés avec d’autres points de cette région.</span></label>}
-      <div className="pin-setup-actions"><button className="primary-button" type="submit" disabled={!store||!department||(!seller&&!registerable)||formBusy||newPin.length!==4||confirmPin.length!==4||(mode==='migrate'&&pin.length!==8)||(mode==='register'&&needsRegionalConsent&&!regionalConsent)}>{formBusy?'Enregistrement…':mode==='register'?'Créer mon profil':'Enregistrer mon PIN'} <ArrowRight size={15}/></button></div>
-    </div>}
-    {CLOUD&&['login','migrate'].includes(mode)&&<p className="pin-help">PIN oublié ? Demandez à votre responsable de réinitialiser votre accès.</p>}
-    {fixed&&<button type="button" className="profile-switch" disabled={formBusy} onClick={()=>{if(window.confirm('Changer de profil sur cet appareil ? Le profil mémorisé sera retiré de cet appareil.'))onForgetProfile?.();}}>Changer de profil sur cet appareil</button>}
+    {statusViews}
+    {setupBlock}
+    {pinHelp}
+    {switchButton}
     {formError&&<div className="form-error session-error" role="alert">{formError}</div>}
-    {geoText&&<div className="geo-message" role="status"><MapPin size={13}/>{geoText}</div>}
+  </form>;
+  // ——— Parcours de lancement : une seule question par écran, sans superposition. ———
+  const currentStep=fixed?'pin':step,at=['store','department','name','pin'].indexOf(currentStep);
+  const progress=!fixed&&<div className="session-steps-progress" aria-hidden="true">{['store','department','name','pin'].map((id,index)=><span key={id} className={`session-steps-dot${index<at?' is-done':''}${index===at?' is-current':''}`}/>)}</div>;
+  const backButton=(label,target)=><button type="button" className="session-step-back" onClick={()=>setStep(target)} disabled={formBusy}><ChevronLeft size={14} aria-hidden="true"/> {label}</button>;
+  const nextButton=(target,disabled)=><div className="session-step-actions"><button type="button" className="primary-button session-step-next" onClick={()=>{cancelLocate();setStep(target);}} disabled={disabled||formBusy}>Continuer <ArrowRight size={16}/></button></div>;
+  return <form className={`session-form ${modal?'session-form-modal':''} session-form-steps`} onSubmit={submit}>
+    {statusFeedbacks}
+    {fixed?rememberedCard:progress}
+    {currentStep==='store'&&!fixed&&<div className="session-step">
+      <h3 className="session-step-title">Quel est votre magasin ?</h3>
+      <div className="session-fields">{storeField}{locateButton}</div>
+      {!store&&unselectedStore&&<p id={`store-search-${modal?'dialog':'welcome'}-hint`} className="store-search-hint">Choisissez un magasin dans les résultats.</p>}
+      {regionalChoice&&<div className="regional-choice-notice" role="status"><Info size={16} aria-hidden="true"/><span>Cette mention régionale ne désigne pas un magasin précis. Les bilans sont communs à cet espace et les notifications partagées entre vendeurs d’un même département. Pour séparer des points de vente, demandez à un administrateur d’ajouter leurs noms précis.</span></div>}
+      {nextButton('department',!store)}
+    </div>}
+    {currentStep==='department'&&!fixed&&<div className="session-step">
+      {backButton('Magasin','store')}
+      <h3 className="session-step-title">Quel est votre département ?</h3>
+      <div className="session-fields">{departmentField}</div>
+      {nextButton('name',!department)}
+    </div>}
+    {currentStep==='name'&&!fixed&&<div className="session-step">
+      {backButton('Département','department')}
+      <h3 className="session-step-title">Quel est votre prénom ?</h3>
+      <div className="session-fields">{nameField}</div>
+      {matched&&<p className="pin-status">Profil existant : {matched.name}. Votre historique est conservé.</p>}
+      {otherDepartment&&<div className="profile-status-error" role="alert"><span>Ce prénom existe déjà dans un autre département de ce magasin. Vérifiez le département ou contactez votre responsable.</span>{matches.map(person=>{
+        const target=departments.find(d=>d.id===sellerDepartmentId(person));
+        return target?<button type="button" className="text-button" key={person.id} onClick={()=>{setDepartment(target.id);setName(person.name);clearSecrets();setStep('pin');}}>Utiliser le profil {person.name} · {target.name}</button>:null;
+      })}</div>}
+      {typed&&!validSellerName(typed)&&!matched&&!otherDepartment&&<p className="profile-status-error" role="alert">Saisissez un prénom valide (lettres, espaces ou traits d’union).</p>}
+      {nextButton('pin',!(matched||registerable))}
+    </div>}
+    {currentStep==='pin'&&<div className="session-step">
+      {!fixed&&backButton('Prénom','name')}
+      {mode==='login'&&<h3 className="session-step-title">Votre code PIN</h3>}
+      {mode==='local'&&<h3 className="session-step-title">Votre profil est prêt</h3>}
+      {statusViews}
+      {pinLoginField}
+      {setupBlock}
+      {sessionSubmit}
+      {pinHelp}
+      {switchButton}
+    </div>}
+    {formError&&<div className="form-error session-error" role="alert">{formError}</div>}
   </form>;
 }
 function WelcomePanel({data,onSubmit,deviceProfile,startupLocation,onForgetProfile,onRefreshProfile}) {
@@ -400,10 +461,10 @@ function AppContent() {
   const [startupEdited,setStartupEdited]=useState(false);
   const [startupReady,setStartupReady]=useState(false);
   const [startupStatus,setStartupStatus]=useState('ready');
-  const [startupPermissionsOpen,setStartupPermissionsOpen]=useState(isStandalone);
-  const [startupPermissionsReview,setStartupPermissionsReview]=useState(false);
+  // Parcours de lancement pas à pas : profil, puis notifications, puis position.
+  const [startupStep,setStartupStep]=useState('profile');
+  const [startupStepNote,setStartupStepNote]=useState('');
   const [locationStatus,setLocationStatus]=useState('checking');
-  const [locationFeedback,setLocationFeedback]=useState(null);
   const [startupLocation,setStartupLocation]=useState(null);
   const [startupNotificationPending,setStartupNotificationPending]=useState(startupPushPending);
   const [startupNotificationError,setStartupNotificationError]=useState('');
@@ -421,7 +482,8 @@ function AppContent() {
   const [toast,setToast]=useState(null);
   const [soundNotice,setSoundNotice]=useState(null);
   const toastSequence=useRef(0),soundNoticeSequence=useRef(0);
-  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), soundNoticeTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), startupGestureAttempted=useRef(false), startupGestureAttempt=useRef(0), startupGestureTimer=useRef(null), notificationPrompted=useRef(false), notificationAbort=useRef(null), notificationStartInFlight=useRef(false), locationRequest=useRef(0), locationAttempt=useRef(0), locationInFlight=useRef(false), locationTimer=useRef(null);
+  const locationStepAnswered=useRef(false);
+  const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), soundNoticeTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), startupGestureAttempted=useRef(false), startupGestureAttempt=useRef(0), startupGestureTimer=useRef(null), notificationPrompted=useRef(false), notificationAbort=useRef(null), notificationStartInFlight=useRef(false), locationRequest=useRef(0), locationInFlight=useRef(false), locationTimer=useRef(null);
   const pushAvailable=typeof window!=='undefined'&&!(platform.os==='ios'&&!installed)&&window.isSecureContext&&'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
   const notificationKey=JSON.stringify([session?.storeId,session?.sellerId,session?.uid,session?.accessVersion,authReady,notificationPermission,pushAvailable,notificationCheck]);
   const checkingCurrent=notificationCheckedKey!==notificationKey;
@@ -430,12 +492,15 @@ function AppContent() {
   const notificationNotice=notificationBanner({permission:notificationPermission,enabled:displayedEnabled,hasSession:!!session,platform,installed,error:displayedError,unconfirmed:displayedUnconfirmed,pushAvailable,pendingProfile:notificationPendingProfile,pendingError:!!startupNotificationError});
   const sessionConnected=authReady&&!!session,hadSession=useRef(false);
   const startupGateActive=startupGate&&!sessionConnected;
-  const permissionsBlocking=startupPermissionsOpen&&(startupPermissionsReview||(!sessionConnected&&!hadSession.current));
+  // Étapes facultatives du parcours, affichées après la création de la session.
+  const startupWizardActive=startupGate&&sessionConnected&&startupEdited;
+  const wantsNotificationStep=pushAvailable&&notificationPermission==='default';
+  const wantsLocationStep=locationStatus==='prompt'||locationStatus==='checking';
   const installOpen=!!installModal&&(installModal!=='automatic'||!sessionConnected);
   const startupGateRef=useRef(startupGateActive),sessionRef=useRef(session),soundEnabledRef=useRef(soundEnabled),alertSoundReady=useRef(false);
   startupGateRef.current=startupGateActive;sessionRef.current=session;soundEnabledRef.current=soundEnabled;
-  alertSoundReady.current=displayedEnabled===true&&!notificationBusy&&notificationPermission==='granted'&&!startupGateActive&&!permissionsBlocking;
-  const startupNotificationReady=pushAvailable&&notificationPermission==='granted'&&!notificationError&&!startupNotificationError&&(notificationsEnabled===true||(CLOUD&&notificationsWanted())||(!session&&startupNotificationPending));
+  // Aucun son tant que le parcours de lancement n'est pas entièrement terminé.
+  alertSoundReady.current=displayedEnabled===true&&!notificationBusy&&notificationPermission==='granted'&&!startupGate;
   const store=data?.stores?.find(s=>s.id===session?.storeId), seller=data?.sellers?.find(s=>s.id===session?.sellerId&&sellerStoreId(s)===session?.storeId);
   const activeDepartmentId=seller?sellerDepartmentId(seller):'';
   const departments=session?departmentsForStore(data||{},session.storeId,{activeOnly:false}):[];
@@ -507,7 +572,7 @@ function AppContent() {
         if(pressedHere)setStartupGate(false);else setStartupStatus('ready');
       }
     };
-    const displayChanged=()=>{if(!sessionRef.current&&needsStartupTouch({standalone:isStandalone()})){setStartupEdited(false);setStartupGate(true);}};
+    const displayChanged=()=>{if(!sessionRef.current&&needsStartupTouch({standalone:isStandalone()})){setStartupEdited(false);setStartupStep('profile');setStartupGate(true);}};
     // La première interaction sur l'accueil remplace l'ancien bouton d'accès
     // pour la lecture initiale. Une préférence « son coupé » reste respectée.
     const prepare=event=>{
@@ -536,27 +601,25 @@ function AppContent() {
   },[]);
   useEffect(()=>{
     if(!sessionConnected){
-      // Après une déconnexion, ne pas transformer l'invitation facultative du
-      // tableau de bord en une modale qui cacherait le formulaire de profil.
-      if(hadSession.current){hadSession.current=false;setStartupPermissionsOpen(false);setStartupPermissionsReview(false);}
+      // Après une déconnexion, le parcours de lancement repart du profil.
+      if(hadSession.current){hadSession.current=false;setStartupStep('profile');}
       return;
     }
     hadSession.current=true;
-    // Ne pas présenter de modale automatique par-dessus l'accueil connecté.
-    // L'installation et les autorisations restent accessibles à la demande.
+    // Ne pas présenter d'écran intermédiaire par-dessus l'accueil connecté :
+    // une session restaurée va directement à l'accueil. Le parcours, lui, a
+    // déjà avancé vers les questions suivantes au moment de la connexion.
     notificationPrompted.current=true;
-    setStartupGate(false);
-    setStartupPermissionsReview(false);
+    if(!startupWizardActive)setStartupGate(false);
     setInstallModal(value=>value==='automatic'?false:value);
-  },[sessionConnected]);
+  },[sessionConnected,startupWizardActive]);
   useEffect(()=>{
-    // Seule une souscription confirmée, et non la simple permission, termine
-    // la proposition automatique. Une configuration ouverte volontairement
-    // reste visible jusqu'à sa fermeture par l'utilisateur.
-    if(startupPermissionsOpen&&!startupPermissionsReview&&!startupGateActive&&sessionConnected&&locationStatus==='granted'&&displayedEnabled===true&&!notificationBusy){
-      notificationPrompted.current=true;setStartupPermissionsOpen(false);
-    }
-  },[startupPermissionsOpen,startupPermissionsReview,startupGateActive,sessionConnected,locationStatus,displayedEnabled,notificationBusy]);
+    // Une étape peut devenir inutile pendant son affichage (permission réglée
+    // depuis une autre fenêtre ou par le système) : passer à la suite.
+    if(!startupGate||startupStep==='profile')return;
+    if(startupStep==='notifications'&&!wantsNotificationStep)advanceStartup('notifications');
+    else if(startupStep==='location'&&locationStatus!=='locating'&&!wantsLocationStep&&(!locationStepAnswered.current||locationStatus==='granted'))advanceStartup('location');
+  },[startupGate,startupStep,wantsNotificationStep,wantsLocationStep]);
   useEffect(()=>{
     let timer,permissionStatus,cancelled=false;
     const sync=()=>{
@@ -724,7 +787,7 @@ function AppContent() {
     if('serviceWorker' in navigator) navigator.serviceWorker.register(`${APP_BASE}sw.js`, {scope:APP_BASE}).catch(()=>{});
     const promptReady=()=>setInstallPrompt(window.__fnacInstallPrompt||null);
     const onInstalled=()=>{setInstalled(true);setInstallPrompt(null);setInstallError('');setInstallModal(false);};
-    const displayChanged=()=>{if(isStandalone()){onInstalled();setStartupPermissionsOpen(true);}};
+    const displayChanged=()=>{if(isStandalone())onInstalled();};
     const media=['standalone','fullscreen','minimal-ui','window-controls-overlay'].map(mode=>window.matchMedia?.(`(display-mode: ${mode})`)).filter(Boolean);
     window.addEventListener('fnac-install-ready',promptReady);window.addEventListener('appinstalled',onInstalled);
     for(const item of media){if(item.addEventListener)item.addEventListener('change',displayChanged);else item.addListener?.(displayChanged);}
@@ -759,18 +822,13 @@ function AppContent() {
       .finally(()=>clearTimeout(timer));
     return ()=>{cancelled=true;controller.abort();if(notificationAbort.current===controller)notificationAbort.current=null;clearTimeout(timer);};
   },[session,authReady,pushAvailable,notificationPermission,notificationBusy,notificationCheck,notificationKey,startupNotificationPending,data?.pushPublicKey]);
-  useEffect(()=>{
-    // Une permission système ne peut pas être demandée sans geste utilisateur.
-    // L'installation et l'activation ne doivent jamais ouvrir deux modales ensemble.
-    if(!data||!session||!authReady||installOpen||startupGateActive||startupPermissionsOpen||sessionModal||adminModal||themeModal||goalModal||notificationsModal||notificationBusy||notificationCheckedKey!==notificationKey||notificationsEnabled!==false||notificationPrompted.current)return;
-    if(platform.os==='ios'&&!installed)return;
-    notificationPrompted.current=true;setNotificationsModal(true);
-  },[data,session,authReady,installOpen,startupGateActive,startupPermissionsOpen,sessionModal,adminModal,themeModal,goalModal,notificationsModal,notificationBusy,notificationsEnabled,notificationCheckedKey,notificationKey,platform,installed,pushAvailable]);
-
   async function selectSession(next,pin,setup=null){
     // Le formulaire est encore dans le geste de soumission : ne pas attendre
     // l'authentification ou le réseau avant l'éventuelle lecture iOS.
     if(setup?.gesture&&startupGateRef.current)playStartupSoundNonBlocking();
+    // Le passage de session refait basculer startupGateActive avant la suite :
+    // mémoriser l'état de la porte tant qu'elle n'a pas changé de valeur.
+    const launchInProgress=startupGateRef.current;
     if(!await autoSave.flush())return;
     let authenticated;
     if(CLOUD) {
@@ -786,6 +844,9 @@ function AppContent() {
     localStorage.setItem(SESSION_KEY,JSON.stringify(authenticated));
     notificationPrompted.current=true;
     setData(d=>d?{...d,stats:null}:d);setSession(authenticated);setSessionModal(false);setActiveNav('today');
+    // Le parcours de lancement continue question par question (notifications,
+    // position) tant que rien n'est tranché ; sinon l'accueil s'ouvre aussitôt.
+    if(launchInProgress)advanceStartup('profile');
     window.scrollTo({top:0,behavior:startupGateRef.current?'auto':'smooth'});
     const person=data?.sellers.find(s=>s.id===authenticated.sellerId),name=person?.name||setup?.name;
     flash(`Bienvenue${name?`, ${name}`:''} ! Votre espace est prêt.`);
@@ -815,14 +876,20 @@ function AppContent() {
     }
     if(startupStatus==='unavailable')setStartupStatus('ready');
   }
-  function requestStartupLocation(interactive=false){
-    if(locationInFlight.current)return;
-    const attempt=interactive?++locationAttempt.current:0;
-    if(interactive)setLocationFeedback({attempt,result:'checking'});
+  // À la fin du profil, les questions facultatives suivent : notifications
+  // puis position. Sinon, l'accueil s'ouvre directement.
+  function advanceStartup(from='profile'){
+    locationStepAnswered.current=false;
+    if(from==='profile'&&wantsNotificationStep){setStartupStepNote('');setStartupStep('notifications');return;}
+    if(from!=='location'&&wantsLocationStep){setStartupStepNote('');setStartupStep('location');return;}
+    setStartupGate(false);
+  }
+  function requestStartupLocation(interactive=false,done){
+    if(locationInFlight.current){done?.('busy');return;}
     const geolocation=typeof navigator==='undefined'?null:navigator.geolocation;
     if(typeof geolocation?.getCurrentPosition!=='function'){
       setLocationStatus('unsupported');
-      if(interactive)setLocationFeedback({attempt,result:'unsupported'});
+      done?.('unsupported');
       return;
     }
     const request=++locationRequest.current;locationInFlight.current=true;setLocationStatus('locating');
@@ -831,9 +898,7 @@ function AppContent() {
       locationRequest.current++;clearTimeout(locationTimer.current);locationInFlight.current=false;setStartupLocation(null);
       const result=error?.code===1?'denied':error?.code===3?'timeout':'unavailable';
       setLocationStatus(result==='denied'?'denied':'unavailable');
-      // Un refus peut être immédiat : le statut seul resterait inchangé et le
-      // bouton semblerait inactif. Chaque essai a donc un résultat visible.
-      if(interactive)setLocationFeedback({attempt,result});
+      done?.(result);
     };
     // Certains appareils ne rappellent jamais l'API si les services de
     // localisation sont inaccessibles ; ne pas laisser les boutons bloqués.
@@ -846,16 +911,32 @@ function AppContent() {
         const latitude=coords?.latitude,longitude=coords?.longitude;
         if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||Math.abs(latitude)>90||Math.abs(longitude)>180){fail();return;}
         locationRequest.current++;clearTimeout(locationTimer.current);locationInFlight.current=false;setStartupLocation({latitude,longitude});setLocationStatus('granted');
-        if(interactive)setLocationFeedback({attempt,result:'granted'});
+        done?.('granted');
       },fail,{enableHighAccuracy:false,timeout:12000,maximumAge:300000});
     } catch(error) {fail(error);}
   }
-  function closeStartupPermissions(){notificationPrompted.current=true;setStartupPermissionsOpen(false);setStartupPermissionsReview(false);}
-  function reviewStartupPermissions(){setStartupPermissionsOpen(true);setStartupPermissionsReview(true);}
+  async function answerStartupNotifications(){
+    setStartupStepNote('');
+    await requestStartupNotifications();
+    const result=readNotificationPermission();
+    setNotificationPermission(result);
+    if(result==='granted'||result==='denied')advanceStartup('notifications');
+    else setStartupStepNote('Activation impossible pour le moment. Réessayez, ou continuez sans.');
+  }
+  function answerStartupLocation(){
+    setStartupStepNote('');
+    requestStartupLocation(true,result=>{
+      if(result==='granted')advanceStartup('location');
+      else if(result!=='busy'){locationStepAnswered.current=true;setStartupStepNote(result==='denied'?'L’appareil a refusé l’accès à la position. Vérifiez ses réglages, ou continuez sans.':'Position indisponible pour le moment. Réessayez, ou continuez sans.');}
+    });
+  }
+  function continueWithoutStartupSound(){
+    startupAttempt.current++;startupInFlight.current=false;clearTimeout(startupTimer.current);sound.current?.dismiss();advanceStartup('profile');
+  }
   function enterStartup(){
     if(!startupReady||startupInFlight.current)return;
     // Un onglet ne doit jamais lancer le son, même après installation.
-    if(!isStandalone()){setStartupGate(false);return;}
+    if(!isStandalone()){advanceStartup('profile');return;}
     const player=sound.current||createStartupSound({base:APP_BASE});sound.current=player;
     // Une ancienne tentative lancée lors d'une connexion ratée ne doit pas
     // rendre inerte le geste explicite « Plus tard ».
@@ -872,12 +953,9 @@ function AppContent() {
     operation.then(result=>{
       if(startupAttempt.current!==attempt)return;
       startupInFlight.current=false;clearTimeout(startupTimer.current);
-      if(result==='played'||result==='muted'||result==='done')setStartupGate(false);
+      if(result==='played'||result==='muted'||result==='done')advanceStartup('profile');
       else setStartupStatus('unavailable');
     });
-  }
-  function continueWithoutStartupSound(){
-    startupAttempt.current++;startupInFlight.current=false;clearTimeout(startupTimer.current);sound.current?.dismiss();setStartupGate(false);
   }
   async function savePersonalGoals(body){
     if(!session||connection==='offline')throw new Error('Connexion interrompue. Réessayez en ligne.');
@@ -1024,7 +1102,9 @@ function AppContent() {
     if(!window.isSecureContext||!('serviceWorker' in navigator)||!('PushManager' in window)||!('Notification' in window)) {flash('Notifications indisponibles ici : utilisez une connexion HTTPS et un navigateur compatible.',{tone:'warning',duration:8000});return;}
     notificationAbort.current?.abort();setNotificationBusy(true);
     try {
+      notificationAbort.current=new AbortController();
       const permission=await Notification.requestPermission();
+      if(notificationAbort.current.signal.aborted||!sessionRef.current)return; // déconnecté entre-temps
       setNotificationPermission(permission);
       if(permission!=='granted')throw new Error(permission==='denied'?'Notifications bloquées. Autorisez-les dans les réglages de l’appareil ou du navigateur.':'Autorisation de notification non accordée.');
       if(CLOUD)await subscribeFcm(api);
@@ -1032,7 +1112,11 @@ function AppContent() {
         let subscription=await registration.pushManager.getSubscription();
         if(!subscription)subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(data.pushPublicKey)});
         await api('/api/push/subscribe',{method:'POST',body:{storeId:session.storeId,sellerId:session.sellerId,subscription:subscription.toJSON()}});}
-      setStartupPushPending(false);setStartupNotificationPending(false);setStartupNotificationError('');setNotificationsEnabled(true);setNotificationsModal(false);flash('Notifications activées sur cet appareil.',{tone:'success'});
+      setStartupPushPending(false);setStartupNotificationPending(false);setStartupNotificationError('');setNotificationsEnabled(true);
+      // L’état est désormais valide pour la permission qui vient d’être accordée :
+      // le contrôle automatique ne doit pas re-souscrire au changement de clé.
+      setNotificationCheckedKey(JSON.stringify([session.storeId,session.sellerId,session.uid,session.accessVersion,authReady,permission,pushAvailable,notificationCheck]));
+      setNotificationsModal(false);flash('Notifications activées sur cet appareil.',{tone:'success'});
     } catch(e){flash(e.message||'Impossible d’activer les notifications sur cet appareil.',{tone:'warning',duration:8000});}
     finally{setNotificationBusy(false);}
   }
@@ -1061,9 +1145,18 @@ function AppContent() {
   // temporaire effacerait à tort le magasin d'administration mémorisé.
   const adminDialog=adminModal&&data&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>;
   const sessionDialog=sessionModal&&data&&<Modal title={CLOUD?'Mon profil':'Changer d’espace'} subtitle={CLOUD?'Votre espace sur cet appareil.':'Sélectionnez votre magasin, votre département et votre profil vendeur.'} onClose={()=>setSessionModal(false)}>
-    {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button></>:<><SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/><p className="modal-hint"><MapPin size={14}/> La position est utilisée uniquement pour proposer le magasin le plus proche parmi ceux référencés.</p></>}
+    {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button></>:<SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/>}
   </Modal>;
-  const startupPermissionsDialog=<StartupPermissionsDialog platform={platform} permission={notificationPermission} pushAvailable={pushAvailable} notificationReady={startupNotificationReady} notificationsEnabled={displayedEnabled} notificationBusy={notificationBusy} notificationError={startupNotificationError||displayedError} hasSession={!!session} authReady={authReady} profileName={seller?.name} profileContent={profileContent} locationStatus={locationStatus} locationFeedback={locationFeedback} onNotification={requestStartupNotifications} onLocation={()=>requestStartupLocation(true)} onClose={closeStartupPermissions}/>;
+  // Questions facultatives du parcours de lancement : une seule par écran.
+  const permissionsStep=startupStep==='notifications'?<div className="startup-step">
+    <div className="startup-step-actions"><button type="button" className="primary-button full-button" onClick={answerStartupNotifications} disabled={notificationBusy} aria-busy={notificationBusy}>{notificationBusy?'Activation…':'Activer les notifications'} <ArrowRight size={16} aria-hidden="true"/></button>
+    <button type="button" className="startup-step-later" onClick={()=>advanceStartup('notifications')}>Plus tard</button></div>
+    {startupStepNote&&<p className="form-error session-error" role="alert">{startupStepNote}</p>}
+  </div>:startupStep==='location'?<div className="startup-step">
+    <div className="startup-step-actions"><button type="button" className="primary-button full-button" onClick={answerStartupLocation} disabled={locationStatus==='locating'} aria-busy={locationStatus==='locating'}>{locationStatus==='locating'?'Un instant…':'Partager la position'} <ArrowRight size={16} aria-hidden="true"/></button>
+    <button type="button" className="startup-step-later" onClick={()=>advanceStartup('location')} disabled={locationStatus==='locating'}>Plus tard</button></div>
+    {startupStepNote&&<p className="form-error session-error" role="alert">{startupStepNote}</p>}
+  </div>:null;
   const toastItems=(toast||soundNotice)?<>
     {toast&&<Toast key={`toast-${toast.sequence}`} notice={toast} onClose={()=>{clearTimeout(toastTimer.current);setToast(null);}}/>}
     {soundNotice&&<Toast key={`sound-${soundNotice.sequence}`} notice={soundNotice} icon={soundEnabled?Volume2:VolumeX} onClose={()=>{clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}}/>}
@@ -1074,17 +1167,17 @@ function AppContent() {
   // Aucune sortie anticipée n'est proposée ici : l'observateur Auth répond
   // immédiatement, même hors ligne, et la franchir recréerait ce clignotement.
   if(startupGateActive&&!authReady)return withToasts(<div className="app-loading" aria-live="polite"><Brand/><p>Vérification de votre session…</p>{adminModal&&<p>Ouverture de l’administration après le chargement des magasins…</p>}</div>);
-  if(startupGateActive)return withToasts(<><StartupGate base={APP_BASE} ready={startupReady} status={startupStatus} authReady={authReady} hasSession={!!session} profileName={seller?.name} profileContext={[store&&displayStoreName(store),department?.name].filter(Boolean).join(' · ')} profileContent={profileContent} onChangeProfile={()=>setSessionModal(true)} onAdmin={()=>setAdminModal(true)} adminAvailable={!!data} adminPending={adminModal} adminError={loadFailed} onRetry={refresh} onStart={enterStartup} onContinue={continueWithoutStartupSound} skipHidden={startupEdited}/>{sessionDialog}{adminDialog}</>);
-  if(startupPermissionsOpen&&!sessionConnected&&!startupPermissionsReview&&!hadSession.current)return withToasts(<><div className="app-loading"><Brand/><p>Préparation de votre espace…</p></div>{adminDialog||startupPermissionsDialog}</>);
+  // Le parcours reste affiché tant que les questions ne sont pas terminées,
+  // y compris juste après la création de la session (notifications, position).
+  if(startupGateActive||startupWizardActive)return withToasts(<><StartupGate base={APP_BASE} ready={startupReady} status={startupStatus} authReady={authReady} workspaceTitle={startupStep==='notifications'?'Activer les notifications ?':startupStep==='location'?'Partager la position ?':''} workspaceHint="" workspaceIcon={startupStep==='notifications'?<BellRing size={19} aria-hidden="true"/>:startupStep==='location'?<MapPin size={19} aria-hidden="true"/>:null} profileContent={startupStep==='profile'?profileContent:permissionsStep} onAdmin={()=>setAdminModal(true)} adminAvailable={!!data} adminPending={adminModal} adminError={loadFailed} onRetry={refresh} onStart={startupStep==='profile'?enterStartup:undefined} onContinue={startupStep==='profile'?continueWithoutStartupSound:undefined} skipHidden={startupEdited||startupStep!=='profile'}/>{sessionDialog}{adminDialog}</>);
   if(!data)return withToasts(<><div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>{!adminModal&&installationDialog}</>);
-  const showPermissionInvitation=startupPermissionsOpen&&sessionConnected&&!startupPermissionsReview;
   const stats=projectedStats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
   return withToasts(<><div className="app-shell">
     <Sidebar onNavigate={navigate} onAdmin={()=>setAdminModal(true)} onSession={changeSession} onInstall={openInstall} showInstall={!installed} activeNav={activeNav}/>
     <div className="main-shell"><Header session={session} seller={seller} store={store} connected={connection} notificationsEnabled={displayedEnabled} notificationError={displayedError} notificationUnconfirmed={displayedUnconfirmed} notificationPendingProfile={notificationPendingProfile} notificationPendingError={notificationPendingProfile&&!!startupNotificationError} soundEnabled={soundEnabled} onBell={openNotifications} onSound={toggleSound} onSession={changeSession} onAdmin={()=>setAdminModal(true)} onTheme={()=>setThemeModal(true)} onInstall={openInstall} showInstall={!installed}/>
       <main className="content" id="overview">
         {connection==='offline'&&session&&<div className="offline-banner"><WifiOff size={16}/><div><strong>Connexion interrompue.</strong> Les dernières données restent visibles, mais la saisie est suspendue jusqu’au retour de la connexion.</div><button onClick={refresh}>Réessayer</button></div>}
-        {showPermissionInvitation?<section className="notification-card notification-prompt device-setup-prompt" aria-label="Autorisations de cet appareil"><span className="notification-icon"><Bell size={18}/></span><div><strong>Restez informés</strong><p>{displayedError?'Vérifiez les notifications et choisissez vos autorisations de localisation.':'Notifications de l’équipe et localisation : configurez vos autorisations si vous le souhaitez.'}</p><div className="device-setup-actions"><button type="button" onClick={reviewStartupPermissions}>Configurer <ArrowRight size={13}/></button><button type="button" onClick={closeStartupPermissions}>Plus tard</button></div></div></section>:notificationNotice&&<section className="notification-card notification-prompt" aria-label="Activation des notifications"><span className="notification-icon"><BellOff size={18}/></span><div><strong>{notificationNotice.title||'Restez informés'}</strong><p>{notificationNotice.message}</p></div><button onClick={notificationNotice.action==='install'?openInstall:notificationNotice.action==='retry'?retryNotifications:openNotifications}>{notificationNotice.label} <ArrowRight size={13}/></button></section>}
+        {notificationNotice&&<section className="notification-card notification-prompt" aria-label="Activation des notifications"><span className="notification-icon"><BellOff size={18}/></span><div><strong>{notificationNotice.title||'Restez informés'}</strong><p>{notificationNotice.message}</p></div><button onClick={notificationNotice.action==='install'?openInstall:notificationNotice.action==='retry'?retryNotifications:openNotifications}>{notificationNotice.label} <ArrowRight size={13}/></button></section>}
         <div className="page-intro"><div><div className="eyebrow"><span/> VOTRE TABLEAU DE BORD</div><h1>Bonjour{seller?`, ${seller.name}`:', l’équipe'}<span className="hello-dot">.</span></h1><p>Ensemble, faisons de chaque service une réussite.</p></div><DateChip today={cloudDay}/></div>
         {!session&&<WelcomePanel data={data} onSubmit={selectSession} deviceProfile={deviceProfile} startupLocation={startupLocation} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>}
         <TodayOverview stats={stats} hasSession={!!session} onShow={setTodayDetail}/>
@@ -1094,7 +1187,7 @@ function AppContent() {
           {session&&<GoalsPanel services={data.services} goals={currentGoals} workdays={goalState.workdays} stats={stats} date={data.today} feedbackScope={owner} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
           <Summary stats={stats} hasSession={!!session} storeId={session?.storeId} departments={departments} goals={currentSummary} goalsLoading={summaryState.key===summaryKey&&summaryState.loading} goalsError={summaryState.key===summaryKey?summaryState.error:''} onRetry={loadSummaryGoals}/>
         </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/></div></div>
-        <footer className="page-footer"><span>La vente, c’est notre rayon. Les services aussi. 😉</span>{installed&&<button type="button" className="permissions-link" onClick={reviewStartupPermissions}>Autorisations de l’appareil</button>}</footer>
+        <footer className="page-footer"><span>La vente, c’est notre rayon. Les services aussi. 😉</span></footer>
       </main>
     </div>
     <MobileNav onNavigate={navigate} active={activeNav}/>
@@ -1102,7 +1195,6 @@ function AppContent() {
     {todayDetail&&session&&stats&&<TodayDetails scope={todayDetail} stats={stats} services={data.services} date={data.today} department={department} offline={connection==='offline'} onClose={()=>setTodayDetail(null)}/>}
     {goalModal&&session&&currentGoals&&<Modal title="Mes objectifs" subtitle="Choisissez un service et sa cible de référence." onClose={closeGoalModal}><GoalForm services={data.services} goals={currentGoals} workdays={goalState.workdays} date={data.today} initialServiceId={goalModal.serviceId} onSave={savePersonalGoals} onCancel={closeGoalModal} disabled={connection==='offline'}/></Modal>}
     {adminDialog}
-    {startupPermissionsOpen&&startupPermissionsReview&&!adminModal&&startupPermissionsDialog}
     {notificationsModal&&<NotificationsDialog permission={notificationPermission} enabled={displayedEnabled} checkError={displayedError} unconfirmed={displayedUnconfirmed} pushAvailable={pushAvailable} platform={platform} installed={installed} hasSession={!!session} pendingProfile={notificationPendingProfile} pendingError={!!startupNotificationError} busy={notificationBusy} onClose={()=>setNotificationsModal(false)} onEnable={enableNotifications} onDisable={disableNotifications} onRetry={retryNotifications} onInstall={openInstall} onSelectProfile={()=>{setNotificationsModal(false);changeSession();}}/>}
     {themeModal&&<Modal title="Apparence" subtitle="Vos préférences sur cet appareil." onClose={()=>setThemeModal(false)}>
       <div className="theme-options" role="radiogroup" aria-label="Thème de l’application">

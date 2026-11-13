@@ -161,6 +161,30 @@ p,h1,h2,h3 { margin:0; }
 .welcome-copy h2 { font-size:15px; letter-spacing:-.3px; }
 .welcome-copy p { font-size:11px; color:#969487; margin-top:4px; line-height:1.35; }
 .session-form { flex:1; min-width:0; }
+.startup-profile-status { margin-top:4px; color:#777b70; font-size:11px; line-height:1.5; }
+[data-theme='dark'] .startup-profile-status { color:#bcc3b4; }
+/* Parcours de lancement pas à pas : une seule question par écran. */
+.session-steps-progress { display:flex; gap:6px; margin-bottom:16px; }
+.session-steps-dot { width:24px; height:4px; border-radius:2px; background:#e2e4dc; }
+.session-steps-dot.is-done,.session-steps-dot.is-current { background:var(--yellow); }
+.session-steps-dot.is-current { width:34px; }
+.session-step-title { margin-bottom:14px; color:var(--ink); font-size:17px; font-weight:750; letter-spacing:-.01em; }
+.session-step .session-fields { margin-bottom:8px; }
+.session-step-actions { margin-top:14px; }
+.session-step-next { width:100%; min-height:48px; display:inline-flex; align-items:center; justify-content:center; gap:8px; }
+.session-step-back { min-height:40px; display:inline-flex; align-items:center; gap:4px; margin-bottom:10px; padding:0 4px; background:none; color:#777b70; font-size:12px; font-weight:700; }
+.session-step-back:hover:not(:disabled) { color:var(--ink); }
+[data-theme='dark'] .session-steps-dot { background:#3b4036; }
+[data-theme='dark'] .session-steps-dot.is-done,[data-theme='dark'] .session-steps-dot.is-current { background:var(--yellow); }
+[data-theme='dark'] .session-step-back { color:#bcc3b4; }
+[data-theme='dark'] .session-step-back:hover:not(:disabled) { color:#eeefe7; }
+/* Questions facultatives du lancement (notifications, position). */
+.startup-step-actions { display:grid; gap:8px; }
+.startup-step-actions .full-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; }
+.startup-step-later { min-height:44px; background:none; color:#777b70; font-size:12px; font-weight:700; }
+.startup-step-later:hover:not(:disabled) { color:var(--ink); }
+[data-theme='dark'] .startup-step-later { color:#bcc3b4; }
+
 .session-fields { display:flex; align-items:flex-end; flex-wrap:wrap; gap:8px; }
 .session-field { display:flex; flex-direction:column; min-width:0; gap:7px; }
 .session-field > span,.form-label { color:#898b82; font-size:9px; letter-spacing:.8px; font-weight:800; }
@@ -183,7 +207,6 @@ p,h1,h2,h3 { margin:0; }
 .primary-button:active:not(:disabled) { transform:translateY(1px); }
 .primary-button:disabled { background:#ede5c6; color:#aba693; }
 .session-submit { min-width:108px; }
-.geo-message { margin-top:8px; display:flex; align-items:center; gap:5px; color:#8f814e; font-size:10px; line-height:1.4; }
 .text-button { display:flex; align-items:center; gap:5px; color:#9a7900; font-size:11px; font-weight:750; background:transparent; margin-left:auto; }
 .kicker-line { width:13px; height:3px; border-radius:3px; background:#e7b600; flex:0 0 auto; }
 /* Deux chiffres, deux périmètres clairement identifiés dans un même bloc. */
@@ -314,10 +337,6 @@ p,h1,h2,h3 { margin:0; }
 .notification-card button { display:flex; align-items:center; gap:3px; color:#876700; font-weight:750; font-size:10px; background:none; padding:3px 0; }
 .notification-prompt { margin-bottom:23px; }
 /* L'invitation aux autorisations ne bloque plus l'accueil d'un vendeur. */
-.device-setup-prompt p { color:#62685c; }
-[data-theme='dark'] .notification-card.device-setup-prompt p { color:#c9cec2; }
-.device-setup-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
-.notification-card .device-setup-actions button { min-height:44px; }
 .notification-later { width:100%; min-height:42px; margin-top:7px; background:transparent; color:#777a6e; font-size:11px; font-weight:700; }
 .summary-panel { padding:22px; }
 .summary-heading { align-items:center; }
@@ -356,7 +375,6 @@ p,h1,h2,h3 { margin:0; }
 .summary-empty strong { font-size:11px; color:#72746b; }
 .summary-empty p { font-size:10px; line-height:1.5; color:#aeb0a7; margin-top:4px; }
 .page-footer { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; margin-top:24px; padding:16px; border:1px solid #e5e9df; border-radius:14px; background:#f2f4ef; color:#666d60; font-size:12px; line-height:1.5; font-weight:650; text-align:center; }
-.permissions-link { min-height:44px; padding:6px 11px; border:1px solid var(--button-border); border-radius:7px; background:var(--button-face); color:var(--button-ink); box-shadow:var(--button-shadow); font-size:11px; font-weight:750; }
 .offline-banner { display:flex; gap:10px; align-items:center; padding:12px 14px; border:1px solid #eedaa6; border-radius:8px; background:#fff8e7; color:#8b7333; margin-bottom:20px; font-size:11px; line-height:1.4; }
 .offline-banner svg { flex:0 0 auto; }
 .offline-banner button { background:none; color:#8d6b00; margin-left:auto; font-size:10px; font-weight:750; }
@@ -778,7 +796,6 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .install-app-preview p { color:#b7bcae; }
 [data-theme='dark'] .install-error { color:#ffb7a9; }
 [data-theme='dark'] .no-store-sellers,
-[data-theme='dark'] .geo-message,
 [data-theme='dark'] .text-button { color:#ead080; }
 [data-theme='dark'] .service-count,
 [data-theme='dark'] .activity-empty > span,
@@ -1273,56 +1290,6 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .history-confirm-add p { color:#e4d6a9; }
 
 /* Autorisations présentées dès l'ouverture de la PWA, avant le choix du profil. */
-.startup-permissions-intro { margin:-5px 0 16px; color:#777b70; font-size:12px; line-height:1.55; }
-.startup-permissions-list { display:grid; gap:10px; }
-.startup-permission-card { display:grid; grid-template-columns:38px minmax(0,1fr); gap:5px 12px; padding:14px; border:1px solid #eceee8; border-radius:9px; background:#fafbf9; }
-.startup-permission-icon { grid-row:1 / 3; width:38px; height:38px; display:grid; place-items:center; border-radius:9px; background:#fbf0ca; color:#947414; }
-.startup-permission-icon.location { background:#e9f2ec; color:#547660; }
-.startup-permission-copy { min-width:0; }
-.startup-permission-copy strong { color:var(--ink); font-size:12px; }
-.startup-permission-copy p { margin-top:4px; color:#777b70; font-size:11px; line-height:1.5; }
-.startup-permission-action { justify-self:start; min-height:44px; display:inline-flex; align-items:center; gap:7px; padding:0 12px; border:1px solid #e8d9a5; border-radius:7px; background:#fffaf0; color:#806000; font-size:11px; font-weight:800; }
-.startup-permission-action:disabled { color:#aaa99e; border-color:#e9eae4; background:#f5f6f2; }
-.startup-permission-done { display:inline-flex; align-items:center; gap:5px; margin-top:5px; color:#547b5c; font-size:11px; font-weight:750; }
-.startup-location-result { grid-column:2; margin:3px 0 0; color:#6b5b27; font-size:11px; font-weight:650; line-height:1.5; }
-.startup-location-result:empty { display:none; }
-.startup-location-help { grid-column:1 / -1; margin-top:5px; padding-top:10px; border-top:1px solid #e4e9e1; color:#626a5e; font-size:11px; line-height:1.55; }
-.startup-location-help summary { min-height:34px; color:#486d54; font-weight:750; cursor:pointer; }
-.startup-location-help summary:focus-visible { outline:3px solid rgba(221,169,0,.32); outline-offset:2px; border-radius:3px; }
-.startup-location-help ol { margin:5px 0 10px; padding-left:18px; }
-.startup-location-help li + li { margin-top:8px; }
-.startup-location-help p { color:#777e72; }
-.startup-permissions-privacy { display:flex; gap:8px; margin:16px 0; color:#85897d; font-size:10px; line-height:1.5; }
-.startup-permissions-privacy svg { flex:0 0 auto; margin-top:1px; }
-[data-theme='dark'] .startup-permission-card { background:#292d27; border-color:#41483d; }
-[data-theme='dark'] .startup-permission-copy strong { color:#eeefe7; }
-[data-theme='dark'] .startup-permission-copy p,
-[data-theme='dark'] .startup-permissions-intro,
-[data-theme='dark'] .startup-permissions-privacy { color:#bcc3b4; }
-[data-theme='dark'] .startup-permission-icon { background:#53451c; color:#f2d980; }
-[data-theme='dark'] .startup-permission-icon.location { background:#32463a; color:#b4d5bc; }
-[data-theme='dark'] .startup-permission-action { color:#eed17b; background:#3c3727; border-color:#655b35; }
-[data-theme='dark'] .startup-permission-action:disabled { color:#858a7f; background:#30342e; border-color:#454a40; }
-[data-theme='dark'] .startup-permission-done { color:#aed6b6; }
-[data-theme='dark'] .startup-location-result { color:#e4d29a; }
-[data-theme='dark'] .startup-location-help { color:#c3cbbd; border-color:#41483d; }
-[data-theme='dark'] .startup-location-help summary { color:#b4d5bc; }
-[data-theme='dark'] .startup-location-help p { color:#b6bfb0; }
-
-/* Profil accessible dans la préparation, avant d'afficher le tableau de bord. */
-.startup-profile { margin-top:16px; padding:14px; border:1px solid #eceee8; border-radius:9px; background:#fafbf9; }
-.startup-profile-heading { display:flex; align-items:flex-start; gap:12px; margin-bottom:14px; }
-.startup-profile-icon { flex:0 0 38px; height:38px; display:grid; place-items:center; border-radius:9px; background:#e9eef6; color:#536f91; }
-.startup-profile-heading strong { color:var(--ink); font-size:12px; }
-.startup-profile-heading p,.startup-profile-status,.startup-profile-later { margin-top:4px; color:#777b70; font-size:11px; line-height:1.5; }
-.startup-profile-status .text-button { display:inline-flex; margin:0 0 0 4px; }
-.startup-profile-connected { display:flex; align-items:center; gap:6px; color:#547b5c; font-size:11px; font-weight:750; }
-.startup-profile-later { margin:-5px 0 12px; }
-.startup-profile .session-form-modal .store-search-dropdown { position:static; margin-top:5px; }
-[data-theme='dark'] .startup-profile { background:#292d27; border-color:#41483d; }
-[data-theme='dark'] .startup-profile-icon { background:#303c4a; color:#c1d4ef; }
-[data-theme='dark'] .startup-profile-heading p,[data-theme='dark'] .startup-profile-status,[data-theme='dark'] .startup-profile-later { color:#bcc3b4; }
-[data-theme='dark'] .startup-profile-connected { color:#aed6b6; }
 
 /* Comptes administrateurs : actions séparées et confirmation explicite. */
 .admin-accounts { display:grid; gap:16px; }
@@ -1523,7 +1490,7 @@ p,h1,h2,h3 { margin:0; }
   color:#c0bca8;
 }
 
-:is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-permission-action,.startup-active-profile button) {
+:is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-active-profile button) {
   min-height:44px;
   padding:8px 13px;
   border:1px solid var(--button-border);
@@ -1540,21 +1507,21 @@ p,h1,h2,h3 { margin:0; }
 }
 .small-outline-button { height:auto; }
 :is(.profile-status-error,.startup-profile-status) .text-button { padding:8px 13px; }
-:is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-permission-action,.startup-active-profile button):hover:not(:disabled) {
+:is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-active-profile button):hover:not(:disabled) {
   border-color:#8c9a82;
   background:var(--button-hover);
 }
-:is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-permission-action,.startup-active-profile button):disabled {
+:is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-active-profile button):disabled {
   box-shadow:none;
   opacity:.55;
   cursor:not-allowed;
 }
-[data-theme='dark'] :is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-permission-action,.startup-active-profile button) {
+[data-theme='dark'] :is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-active-profile button) {
   border-color:var(--button-border);
   background:var(--button-face);
   color:var(--button-ink);
 }
-[data-theme='dark'] :is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-permission-action,.startup-active-profile button):hover:not(:disabled) { background:var(--button-hover); }
+[data-theme='dark'] :is(.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-active-profile button):hover:not(:disabled) { background:var(--button-hover); }
 
 /* Petites actions et boutons à icône restent identifiables, y compris dans les cartes. */
 :is(.icon-button,.locate-button,.admin-requests-refresh,.admin-tabs-arrow,.profile-trigger,.minus-button) {
@@ -1693,13 +1660,13 @@ p,h1,h2,h3 { margin:0; }
   text-decoration:none;
 }
 [data-theme='dark'] :is(.startup-admin-status button,.admin-inline-link,.notification-card button,.offline-banner button,.goals-empty button,.goal-sync-warning button,.goal-conflict button,.seller-workdays-error button,.summary-warning button,.history-error button,.sales-reset-error button) { border-color:var(--button-border); background:var(--button-face); color:var(--button-ink); }
-:is(.activity-more summary,.goal-planning summary,.goal-form-details summary,.startup-location-help summary) { min-height:44px; padding:8px 10px; border:1px solid var(--button-border); border-radius:8px; background:var(--button-face); color:var(--button-ink); box-shadow:var(--button-shadow); }
-[data-theme='dark'] :is(.activity-more summary,.goal-planning summary,.goal-form-details summary,.startup-location-help summary) { border-color:var(--button-border); background:var(--button-face); color:var(--button-ink); }
+:is(.activity-more summary,.goal-planning summary,.goal-form-details summary) { min-height:44px; padding:8px 10px; border:1px solid var(--button-border); border-radius:8px; background:var(--button-face); color:var(--button-ink); box-shadow:var(--button-shadow); }
+[data-theme='dark'] :is(.activity-more summary,.goal-planning summary,.goal-form-details summary) { border-color:var(--button-border); background:var(--button-face); color:var(--button-ink); }
 :is(.visible-feedback-action,.visible-feedback-close,.toast-action,.toast-close) { border:1px solid #758171; background:#354032; color:#f5f8ef; box-shadow:none; }
 [data-theme='dark'] :is(.visible-feedback-action,.visible-feedback-close,.toast-action,.toast-close) { border-color:#b9c4b4; background:#eef2eb; color:#293129; box-shadow:none; }
 
 /* Appui et navigation clavier visibles sans mouvement prolongé. */
-:is(.primary-button,.startup-start,.history-add-button,.history-confirm-add-button,.admin-request-review,.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.startup-permission-action,.icon-button,.locate-button,.admin-requests-refresh,.admin-tabs-arrow,.profile-trigger,.minus-button,.sales-reset-button,.history-delete,.goal-remove,.logout-button,.sales-reset-danger,.history-confirm-delete,.goal-card-edit,.seller-workdays-toggle):active:not(:disabled) { transform:translateY(1px); box-shadow:0 1px 0 rgba(42,48,37,.22); }
+:is(.primary-button,.startup-start,.history-add-button,.history-confirm-add-button,.admin-request-review,.outline-button,.small-outline-button,.text-button,.startup-admin,.startup-continue,.notification-later,.profile-switch,.goal-manage,.history-more,.admin-request-cancel,.icon-button,.locate-button,.admin-requests-refresh,.admin-tabs-arrow,.profile-trigger,.minus-button,.sales-reset-button,.history-delete,.goal-remove,.logout-button,.sales-reset-danger,.history-confirm-delete,.goal-card-edit,.seller-workdays-toggle):active:not(:disabled) { transform:translateY(1px); box-shadow:0 1px 0 rgba(42,48,37,.22); }
 :is(button,summary):focus-visible { outline:3px solid #a77c00; outline-offset:2px; }
 [data-theme='dark'] :is(button,summary):focus-visible { outline-color:#f2ce54; }
 @media (prefers-reduced-motion:reduce) {
