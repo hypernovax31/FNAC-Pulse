@@ -3,9 +3,9 @@ import { Bell, BellOff, BellRing, Check, Download, Info } from 'lucide-react';
 import { Modal } from './Admin';
 import { VisibleFeedback } from './VisibleFeedback';
 
-export function InstallDialog({platform,base,promptAvailable,installError,onInstall,onClose}) {
+export function InstallContent({platform,base,promptAvailable,installError,onInstall,onClose,startup=false}) {
   const ios=platform.os==='ios',android=platform.os==='android';
-  return <Modal title="Installer Fnac Pulse" subtitle="Votre espace d’équipe à portée de main." onClose={onClose}>
+  return <>
     <VisibleFeedback message={installError} tone="error"/>
     <div className="install-app-preview"><img src={`${base}icons/icon-192-v3.png`} width="54" height="54" alt=""/><div><strong>Fnac Pulse</strong><p>Retrouvez rapidement votre équipe et vos services.</p></div></div>
     {platform.inApp&&<div className="notification-device-note"><Info size={15}/><span>Ouvrez d’abord ce lien dans {ios?'Safari':'Chrome'} : le navigateur intégré à cette application peut empêcher l’installation.</span></div>}
@@ -22,8 +22,12 @@ export function InstallDialog({platform,base,promptAvailable,installError,onInst
     </div>}
     <p className="modal-hint"><Info size={14}/><span>{ios?'Ouvrez ensuite l’application depuis son icône : c’est nécessaire pour les notifications sur iPhone et iPad (iOS/iPadOS 16.4 ou plus).':'Après l’installation, ouvrez Fnac Pulse depuis son icône et choisissez votre profil pour activer les notifications.'}</span></p>
     {installError&&<div className="install-error" role="alert">{installError}</div>}
-    {promptAvailable&&!platform.inApp&&!ios?<><button type="button" className="primary-button full-button" onClick={onInstall}>Installer l’application <Download size={16}/></button><button type="button" className="notification-later" onClick={onClose}>Plus tard</button></>:<button type="button" className="primary-button full-button" onClick={onClose}>J’ai compris <Check size={16}/></button>}
-  </Modal>;
+    {promptAvailable&&!platform.inApp&&!ios?<><button type="button" className="primary-button full-button" onClick={onInstall}>Installer l’application <Download size={16}/></button><button type="button" className={startup?'startup-step-later':'notification-later'} onClick={onClose}>Plus tard</button></>:<button type="button" className={startup?'startup-step-later':'primary-button full-button'} onClick={onClose}>{startup?'Plus tard':<>J’ai compris <Check size={16}/></>}</button>}
+  </>;
+}
+
+export function InstallDialog(props) {
+  return <Modal title="Installer Fnac Pulse" subtitle="Votre espace d’équipe à portée de main." onClose={props.onClose}><InstallContent {...props}/></Modal>;
 }
 
 export function NotificationsDialog({permission,enabled,checkError,unconfirmed,pushAvailable,platform,installed,hasSession,pendingProfile=false,pendingError=false,busy,onClose,onEnable,onDisable,onRetry,onInstall,onSelectProfile}) {

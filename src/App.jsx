@@ -34,7 +34,7 @@ import { normalizeWorkdays } from './goals.js';
 import { saleMessage } from './sale-message';
 import { readPendingSales, savePendingSales } from './sale-pending.js';
 import { isStandalone, installPlatform, notificationBanner } from './install.js';
-import { InstallDialog, NotificationsDialog } from './PwaDialogs';
+import { InstallContent, InstallDialog, NotificationsDialog } from './PwaDialogs';
 
 const APP_BASE = import.meta.env.BASE_URL;
 const SESSION_KEY = 'fnac-pulse-session-v1';
@@ -461,7 +461,7 @@ function AppContent() {
   const [startupEdited,setStartupEdited]=useState(false);
   const [startupReady,setStartupReady]=useState(false);
   const [startupStatus,setStartupStatus]=useState('ready');
-  // Parcours de lancement pas à pas : profil, puis notifications, puis position.
+  // Parcours de lancement pas à pas : profil, puis notifications, puis installation.
   const [startupStep,setStartupStep]=useState('profile');
   const [startupStepNote,setStartupStepNote]=useState('');
   const [locationStatus,setLocationStatus]=useState('checking');
@@ -482,7 +482,6 @@ function AppContent() {
   const [toast,setToast]=useState(null);
   const [soundNotice,setSoundNotice]=useState(null);
   const toastSequence=useRef(0),soundNoticeSequence=useRef(0);
-  const locationStepAnswered=useRef(false);
   const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), soundNoticeTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), startupGestureAttempted=useRef(false), startupGestureAttempt=useRef(0), startupGestureTimer=useRef(null), notificationPrompted=useRef(false), notificationAbort=useRef(null), notificationStartInFlight=useRef(false), locationRequest=useRef(0), locationInFlight=useRef(false), locationTimer=useRef(null);
   const pushAvailable=typeof window!=='undefined'&&!(platform.os==='ios'&&!installed)&&window.isSecureContext&&'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
   const notificationKey=JSON.stringify([session?.storeId,session?.sellerId,session?.uid,session?.accessVersion,authReady,notificationPermission,pushAvailable,notificationCheck]);
@@ -495,7 +494,6 @@ function AppContent() {
   // Étapes facultatives du parcours, affichées après la création de la session.
   const startupWizardActive=startupGate&&sessionConnected&&startupEdited;
   const wantsNotificationStep=pushAvailable&&notificationPermission==='default';
-  const wantsLocationStep=locationStatus==='prompt'||locationStatus==='checking';
   const installOpen=!!installModal&&(installModal!=='automatic'||!sessionConnected);
   const startupGateRef=useRef(startupGateActive),sessionRef=useRef(session),soundEnabledRef=useRef(soundEnabled),alertSoundReady=useRef(false);
   startupGateRef.current=startupGateActive;sessionRef.current=session;soundEnabledRef.current=soundEnabled;
@@ -618,8 +616,8 @@ function AppContent() {
     // depuis une autre fenêtre ou par le système) : passer à la suite.
     if(!startupGate||startupStep==='profile')return;
     if(startupStep==='notifications'&&!wantsNotificationStep)advanceStartup('notifications');
-    else if(startupStep==='location'&&locationStatus!=='locating'&&!wantsLocationStep&&(!locationStepAnswered.current||locationStatus==='granted'))advanceStartup('location');
-  },[startupGate,startupStep,wantsNotificationStep,wantsLocationStep]);
+    else if(startupStep==='install'&&installed)advanceStartup('install');
+  },[startupGate,startupStep,wantsNotificationStep,installed]);
   useEffect(()=>{
     let timer,permissionStatus,cancelled=false;
     const sync=()=>{
@@ -877,11 +875,11 @@ function AppContent() {
     if(startupStatus==='unavailable')setStartupStatus('ready');
   }
   // À la fin du profil, les questions facultatives suivent : notifications
-  // puis position. Sinon, l'accueil s'ouvre directement.
+  // puis installation. Sinon, l'accueil s'ouvre directement.
   function advanceStartup(from='profile'){
-    locationStepAnswered.current=false;
     if(from==='profile'&&wantsNotificationStep){setStartupStepNote('');setStartupStep('notifications');return;}
-    if(from!=='location'&&wantsLocationStep){setStartupStepNote('');setStartupStep('location');return;}
+    if(from!=='install'&&!installed){setStartupStepNote('');setStartupStep('install');return;}
+    setInstallModal(false);
     setStartupGate(false);
   }
   function requestStartupLocation(interactive=false,done){
@@ -922,13 +920,6 @@ function AppContent() {
     setNotificationPermission(result);
     if(result==='granted'||result==='denied')advanceStartup('notifications');
     else setStartupStepNote('Activation impossible pour le moment. Réessayez, ou continuez sans.');
-  }
-  function answerStartupLocation(){
-    setStartupStepNote('');
-    requestStartupLocation(true,result=>{
-      if(result==='granted')advanceStartup('location');
-      else if(result!=='busy'){locationStepAnswered.current=true;setStartupStepNote(result==='denied'?'L’appareil a refusé l’accès à la position. Vérifiez ses réglages, ou continuez sans.':'Position indisponible pour le moment. Réessayez, ou continuez sans.');}
-    });
   }
   function continueWithoutStartupSound(){
     startupAttempt.current++;startupInFlight.current=false;clearTimeout(startupTimer.current);sound.current?.dismiss();advanceStartup('profile');
@@ -1135,7 +1126,7 @@ function AppContent() {
     try {
       const result=await prompt.prompt();
       const choice=prompt.userChoice?await prompt.userChoice:result;
-      if(choice?.outcome==='accepted')setInstallModal(false);
+      if(choice?.outcome==='accepted'){setInstallModal(false);if(startupGateRef.current&&startupStep==='install')advanceStartup('install');}
       else if(choice?.outcome==='dismissed')setInstallError('Installation annulée. Vous pouvez aussi utiliser le menu du navigateur.');
     } catch {setInstallError('Le navigateur n’a pas ouvert l’installation. Utilisez le menu indiqué ci-dessus.');}
   }
@@ -1152,11 +1143,7 @@ function AppContent() {
     <div className="startup-step-actions"><button type="button" className="primary-button full-button" onClick={answerStartupNotifications} disabled={notificationBusy} aria-busy={notificationBusy}>{notificationBusy?'Activation…':'Activer les notifications'} <ArrowRight size={16} aria-hidden="true"/></button>
     <button type="button" className="startup-step-later" onClick={()=>advanceStartup('notifications')}>Plus tard</button></div>
     {startupStepNote&&<p className="form-error session-error" role="alert">{startupStepNote}</p>}
-  </div>:startupStep==='location'?<div className="startup-step">
-    <div className="startup-step-actions"><button type="button" className="primary-button full-button" onClick={answerStartupLocation} disabled={locationStatus==='locating'} aria-busy={locationStatus==='locating'}>{locationStatus==='locating'?'Un instant…':'Partager la position'} <ArrowRight size={16} aria-hidden="true"/></button>
-    <button type="button" className="startup-step-later" onClick={()=>advanceStartup('location')} disabled={locationStatus==='locating'}>Plus tard</button></div>
-    {startupStepNote&&<p className="form-error session-error" role="alert">{startupStepNote}</p>}
-  </div>:null;
+  </div>:startupStep==='install'?<div className="startup-step"><InstallContent platform={platform} base={APP_BASE} promptAvailable={!!installPrompt} installError={installError} onInstall={installApp} onClose={()=>advanceStartup('install')} startup/></div>:null;
   const toastItems=(toast||soundNotice)?<>
     {toast&&<Toast key={`toast-${toast.sequence}`} notice={toast} onClose={()=>{clearTimeout(toastTimer.current);setToast(null);}}/>}
     {soundNotice&&<Toast key={`sound-${soundNotice.sequence}`} notice={soundNotice} icon={soundEnabled?Volume2:VolumeX} onClose={()=>{clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}}/>}
@@ -1169,7 +1156,7 @@ function AppContent() {
   if(startupGateActive&&!authReady)return withToasts(<div className="app-loading" aria-live="polite"><Brand/><p>Vérification de votre session…</p>{adminModal&&<p>Ouverture de l’administration après le chargement des magasins…</p>}</div>);
   // Le parcours reste affiché tant que les questions ne sont pas terminées,
   // y compris juste après la création de la session (notifications, position).
-  if(startupGateActive||startupWizardActive)return withToasts(<><StartupGate base={APP_BASE} ready={startupReady} status={startupStatus} authReady={authReady} workspaceTitle={startupStep==='notifications'?'Activer les notifications ?':startupStep==='location'?'Partager la position ?':''} workspaceHint="" workspaceIcon={startupStep==='notifications'?<BellRing size={19} aria-hidden="true"/>:startupStep==='location'?<MapPin size={19} aria-hidden="true"/>:null} profileContent={startupStep==='profile'?profileContent:permissionsStep} onAdmin={()=>setAdminModal(true)} adminAvailable={!!data} adminPending={adminModal} adminError={loadFailed} onRetry={refresh} onStart={startupStep==='profile'?enterStartup:undefined} onContinue={startupStep==='profile'?continueWithoutStartupSound:undefined} skipHidden={startupEdited||startupStep!=='profile'}/>{sessionDialog}{adminDialog}</>);
+  if(startupGateActive||startupWizardActive)return withToasts(<><StartupGate base={APP_BASE} ready={startupReady} status={startupStatus} authReady={authReady} workspaceTitle={startupStep==='notifications'?'Activer les notifications ?':startupStep==='install'?'Installer l’application ?':''} workspaceHint="" workspaceIcon={startupStep==='notifications'?<BellRing size={19} aria-hidden="true"/>:startupStep==='install'?<Download size={19} aria-hidden="true"/>:null} profileContent={startupStep==='profile'?profileContent:permissionsStep} onAdmin={()=>setAdminModal(true)} adminAvailable={!!data} adminPending={adminModal} adminError={loadFailed} onRetry={refresh} onStart={startupStep==='profile'?enterStartup:undefined} onContinue={startupStep==='profile'?continueWithoutStartupSound:undefined} skipHidden={startupEdited||startupStep!=='profile'}/>{sessionDialog}{adminDialog}</>);
   if(!data)return withToasts(<><div className="app-loading"><Brand/>{loadFailed?<><p>{loadMessage||'Connexion indisponible. Vérifiez votre réseau pour ouvrir votre espace.'}</p><button className="primary-button" onClick={refresh}>Réessayer</button></>:<p>Préparation de votre espace…</p>}</div>{!adminModal&&installationDialog}</>);
   const stats=projectedStats, counts=Object.fromEntries((stats?.mine||[]).map(c=>[c.serviceId,c.count]));
   return withToasts(<><div className="app-shell">

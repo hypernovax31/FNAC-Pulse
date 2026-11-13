@@ -120,31 +120,17 @@ async function documentGesture(e,{trusted=true,target={closest:()=>null},type='p
   await act(async()=>{e.gesture=true;try{e.dispatchDocument(type,{isTrusted:trusted,target});}finally{e.gesture=false;}await tick();await tick();});
 }
 
-test('PWA : questions pas à pas au lancement — notifications, position, puis accueil et rattachement automatique',async()=>{
+test('PWA installée : notifications puis accueil, sans question de position',async()=>{
   const e=environment();let tree;
   try {
-    tree=await mount({stayAtLaunch:true});assert.match(text(tree.toJSON()),/Vérification de votre session/);
-    await e.authAs(null);
-    assert.match(text(tree.toJSON()),/Quel est votre magasin ?/,'le profil est la première question');
+    tree=await mount({stayAtLaunch:true});await e.authAs(null);
     await e.press(button(tree,'Plus tard · Accéder aux services'));
-    assert(section(tree,'Activer les notifications ?'),'question des notifications, sans pop-up');assert.equal(e.sellerCalls.length,0);
-    assert.equal(e.notifications.length,0);assert.equal(e.locations.length,0);
-    await e.press(button(tree,'Activer les notifications'));await act(async()=>{await tick();await tick();});
-    assert.deepEqual(e.notifications,[{gesture:true}]);assert.equal(e.prepares,1);assert.equal(e.subscriptions,0);assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),'1');
-    assert(section(tree,'Partager la position ?'),'question de la position ensuite');
-    assert.doesNotMatch(text(tree.toJSON()),/Vérification \d+|position obtenue|Bien démarrer/,'aucune surcouche d’information');
-    await e.press(button(tree,'Partager la position'));
-    assert.equal(e.locations.length,1);assert.equal(e.locations[0].gesture,true);assert.equal(e.locations[0].options.enableHighAccuracy,false);
-    await act(async()=>{await tick();await tick();});
-    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/,'accueil après la dernière question');
-    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);
-    assert.equal(tree.root.findAllByProps({'aria-label':'Activation des notifications'}).length,0); // accord déjà donné, profil pas encore choisi
-    assert(tree.root.findByProps({'aria-label':'Notifications autorisées, activation après le choix du profil'}));
-    assert.equal(tree.root.findByProps({'aria-label':'Votre magasin Fnac'}).props.value,'Fnac Près','le magasin proche est présélectionné en silence');
-    assert.equal(e.requests.some(x=>JSON.stringify(x.body||{}).includes('43.61')),false);
-    await e.authAs(session);await act(async()=>{await tick();await tick();});
-    assert.equal(e.subscriptions,1);assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),undefined);assert.equal(e.values.get('fnac-pulse-fcm-enabled'),'1');
-    assert.match(text(tree.toJSON()),/Morgan/);
+    assert(section(tree,'Activer les notifications ?'));
+    await e.press(button(tree,'Activer les notifications'));
+    assert.equal(e.notifications.length,1);assert.equal(e.locations.length,0);
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.doesNotMatch(text(tree.toJSON()),/Partager la position|Installer l’application \?/);
+    await e.authAs(session);assert.equal(e.subscriptions,1);
   } finally {await finish(tree,e);}
 });
 
@@ -170,36 +156,29 @@ test('PWA : refus et notifications coupées ne sont pas activés silencieusement
   } finally {await finish(tree,e);}
 });
 
-test('iPhone : l’état Permissions refusé ne remplace pas une vraie tentative depuis le bouton',async()=>{
-  const e=environment({geoPermission:'denied',geoResult:'success',notificationPermission:'denied',auth:null});let tree;
+test('iPhone : installation sur l’écran d’accueil au lieu de la localisation',async()=>{
+  const e=environment({standalone:false,auth:null});let tree;
   try {
-    tree=await mount({stayAtLaunch:true});await e.authAs(null);
-    assert.equal(e.locations.length,0);
+    tree=await mount({stayAtLaunch:true});
     await e.press(button(tree,'Plus tard · Accéder aux services'));
-    const location=()=>button(tree,'Partager la position');
-    assert(section(tree,'Partager la position ?'));assert.equal(location().props.disabled,false);
-    await e.press(location());
-    assert.equal(e.locations.length,1);assert.equal(e.locations[0].gesture,true);
-    await act(async()=>{await tick();await tick();});
-    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/,'la position accordée termine le parcours');
+    assert(section(tree,'Installer l’application ?'));
+    assert.match(text(tree.toJSON()),/Safari|Sur l’écran d’accueil/);
+    assert.equal(e.locations.length,0);assert.doesNotMatch(text(tree.toJSON()),/Partager la position/);
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);
+    await e.press(tree.root.findByProps({className:'startup-step-later'}));
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);
   } finally {await finish(tree,e);}
 });
 
-test('iPhone : refus immédiat signalé, réessai possible, sans pavé d’aide ni numérotation',async()=>{
-  const e=environment({geoPermission:'denied',geoResult:'denied',notificationPermission:'denied',auth:null});let tree;
+test('Installation : les instructions Android remplacent celles de Safari',async()=>{
+  const e=environment({standalone:false,auth:null});let tree;
   try {
-    tree=await mount({stayAtLaunch:true});await e.authAs(null);
-    await e.press(button(tree,'Plus tard · Accéder aux services'));
-    const location=()=>button(tree,'Partager la position');
-    await e.press(location());
-    assert.match(text(tree.toJSON()),/refusé l’accès à la position/);
-    assert.doesNotMatch(text(tree.toJSON()),/Vérification \d+|Comment autoriser sur iPhone|Sites Safari/,'aide détaillée supprimée');
-    assert.equal(location().props.disabled,false,'réessai toujours possible');
-    await e.press(location());assert.equal(e.locations.length,2);
-    assert(e.locations.every(item=>item.gesture));
-    e.geoResult='success';await e.press(location());await act(async()=>{await tick();await tick();});
-    assert.equal(e.locations.length,3);assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
-    assert.doesNotMatch(text(tree.toJSON()),/position obtenue/);
+    navigator.userAgent='Mozilla/5.0 Android';navigator.platform='Linux';
+    tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Plus tard · Accéder aux services'));await finishNotification();
+    async function finishNotification(){const b=button(tree,'Activer les notifications');if(b)await e.press(tree.root.findByProps({className:'startup-step-later'}));}
+    assert(section(tree,'Installer l’application ?'));assert.match(text(tree.toJSON()),/Chrome/);
+    assert.equal(e.locations.length,0);
   } finally {await finish(tree,e);}
 });
 
@@ -210,59 +189,43 @@ test('Une activation de notifications lente ne bloque pas la suite du parcours',
     await e.press(button(tree,'Plus tard · Accéder aux services'));
     await e.press(button(tree,'Activer les notifications'));
     assert.equal(e.prepares,1);assert.equal(typeof e.resolvePrepare,'function');
-    assert(section(tree,'Partager la position ?'),'la question de la position suit sans attendre le réseau');
-    await e.press(button(tree,'Partager la position'));
-    assert.equal(e.locations.length,1);assert.equal(e.locations[0].gesture,true);
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.equal(e.locations.length,0);
     await act(async()=>{e.resolvePrepare();await tick();await tick();});
     assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),'1');
   } finally {await finish(tree,e);}
 });
 
-test('Deux appuis pendant une recherche ne lancent qu’une demande de position',async()=>{
-  const e=environment({geoDeferred:true,notificationPermission:'denied',auth:null});let tree;
+test('Installation : le bouton ouvre la demande native depuis le geste utilisateur',async()=>{
+  const e=environment({standalone:false,auth:null,notificationPermission:'denied'});let tree,called=0;
   try {
-    tree=await mount({stayAtLaunch:true});await e.authAs(null);
-    await e.press(button(tree,'Plus tard · Accéder aux services'));
-    const location=button(tree,'Partager la position');
-    await act(async()=>{e.gesture=true;try{location.props.onClick();location.props.onClick();}finally{e.gesture=false;}await tick();});
-    assert.equal(e.locations.length,1);assert.equal(e.locations[0].gesture,true);
-    await act(async()=>{e.geoSuccess({coords:{latitude:43.61,longitude:1.42}});await tick();await tick();});
-    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    navigator.userAgent='Desktop';navigator.platform='Linux';
+    window.__fnacInstallPrompt={prompt(){called++;assert(e.gesture);return Promise.resolve({outcome:'accepted'});}};
+    tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Plus tard · Accéder aux services'));
+    assert(section(tree,'Installer l’application ?'));
+    await e.press(button(tree,'Installer l’application'));
+    assert.equal(called,1);assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.equal(e.locations.length,0);
   } finally {await finish(tree,e);}
 });
 
-test('Expiration de la position : réessai possible et résultat tardif abandonné',async()=>{
-  const e=environment({geoDeferred:true,notificationPermission:'denied',auth:null});let tree;
+test('Installation : annulation native conserve les instructions et Plus tard',async()=>{
+  const e=environment({standalone:false,auth:null,notificationPermission:'denied'});let tree;
   try {
-    tree=await mount({stayAtLaunch:true});await e.authAs(null);
-    await e.press(button(tree,'Plus tard · Accéder aux services'));
-    const location=()=>tree.root.findAllByType('button').find(item=>/Partager la position|Un instant/.test(text(item)));
-    await e.press(location());
-    const lateSuccess=e.geoSuccess;assert.equal(location().props.disabled,true);
-    await act(async()=>{e.geoError({code:3});await tick();});
-    assert.match(text(tree.toJSON()),/Position indisponible pour le moment/);
-    assert.equal(location().props.disabled,false);
-    await act(async()=>{lateSuccess({coords:{latitude:43.61,longitude:1.42}});await tick();});
-    assert.match(text(tree.toJSON()),/Position indisponible pour le moment/,'le résultat tardif est abandonné');
-    await e.press(location());
-    await act(async()=>{e.geoSuccess({coords:{latitude:43.61,longitude:1.42}});await tick();await tick();});
-    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    navigator.userAgent='Desktop';navigator.platform='Linux';
+    window.__fnacInstallPrompt={prompt:async()=>({outcome:'dismissed'})};
+    tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Plus tard · Accéder aux services'));
+    await e.press(button(tree,'Installer l’application'));
+    assert.match(text(tree.toJSON()),/Installation annulée/);assert(section(tree,'Installer l’application ?'));
+    await e.press(tree.root.findByProps({className:'startup-step-later'}));assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
   } finally {await finish(tree,e);}
 });
 
-test('Position tardive : une recherche manuelle commencée ne doit jamais être remplacée',async()=>{
-  const e=environment({geoDeferred:true,auth:null});let tree;
+test('Installation : événement appinstalled termine l’étape sans géolocalisation',async()=>{
+  const e=environment({standalone:false,auth:null});let tree;
   try {
-    tree=await mount({stayAtLaunch:true});await e.authAs(null);
-    await e.press(button(tree,'Plus tard · Accéder aux services'));
-    await e.press(button(tree,'Activer les notifications'));
-    await e.press(button(tree,'Partager la position'));assert.equal(e.locations[0].gesture,true);
-    await e.press(tree.root.findAllByProps({className:'startup-step-later'})[0]);
-    const input=()=>tree.root.findByProps({'aria-label':'Votre magasin Fnac'});
-    await act(async()=>{input().props.onChange({target:{value:'Fnac Loin'}});await tick();});
-    await act(async()=>{e.geoSuccess({coords:{latitude:43.61,longitude:1.42}});await tick();await tick();});
-    assert.equal(input().props.value,'Fnac Loin');assert.equal(tree.root.findByProps({'aria-label':'Votre département'}).props.value,'');
-    assert.doesNotMatch(text(tree.toJSON()),/Fnac Près proposé/);
+    tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Plus tard · Accéder aux services'));
+    assert(section(tree,'Installer l’application ?'));
+    await act(async()=>{e.dispatchWindow('appinstalled');await tick();});
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.equal(e.locations.length,0);
   } finally {await finish(tree,e);}
 });
 
@@ -312,7 +275,6 @@ test('Préparation en attente : pas de carte redondante et choix du profil acces
     tree=await mount({stayAtLaunch:true});await e.authAs(null);
     await e.press(button(tree,'Plus tard · Accéder aux services'));
     await e.press(button(tree,'Activer les notifications'));
-    await e.press(tree.root.findAllByProps({className:'startup-step-later'})[0]); // passer la position pendant la préparation
     assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),'1');assert.equal(tree.root.findAllByProps({'aria-label':'Activation des notifications'}).length,0);
     await e.press(tree.root.findByProps({'aria-label':'Notifications autorisées, activation après le choix du profil'}));
     assert.match(text(tree.toJSON()),/Autorisation accordée/);assert.match(text(tree.toJSON()),/Profil à choisir pour terminer l’activation/);
@@ -321,16 +283,12 @@ test('Préparation en attente : pas de carte redondante et choix du profil acces
   } finally {await finish(tree,e);}
 });
 
-test('Position tardive : le profil mémorisé ne change jamais de magasin',async()=>{
-  const e=environment({geoDeferred:true,auth:null});e.values.set('fnac-pulse-device-profile-v1',JSON.stringify({storeId:'near',sellerId:1}));let tree;
+test('Installation : un profil mémorisé reste inchangé après Plus tard',async()=>{
+  const e=environment({standalone:false,auth:null});e.values.set('fnac-pulse-device-profile-v1',JSON.stringify({storeId:'near',sellerId:1}));let tree;
   try {
-    tree=await mount({stayAtLaunch:true});await e.authAs(null);
-    await e.press(button(tree,'Plus tard · Accéder aux services'));
-    await e.press(button(tree,'Activer les notifications'));
-    await e.press(button(tree,'Partager la position'));
-    await e.press(tree.root.findAllByProps({className:'startup-step-later'})[0]); // quitter sans attendre la réponse
-    await act(async()=>{e.geoSuccess({coords:{latitude:48,longitude:2}});await tick();await tick();});
-    assert.match(text(tree.toJSON()),/VOTRE PROFIL SUR CET APPAREIL/);assert.match(text(tree.toJSON()),/Fnac Près/);assert.doesNotMatch(text(tree.toJSON()),/Fnac Loin/);
+    tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Plus tard · Accéder aux services'));
+    await finishWizard(tree,e);
+    assert.match(text(tree.toJSON()),/VOTRE PROFIL SUR CET APPAREIL/);assert.match(text(tree.toJSON()),/Fnac Près/);assert.equal(e.locations.length,0);
   } finally {await finish(tree,e);}
 });
 
@@ -462,13 +420,13 @@ test('Parcours : autorisations avant le profil, rattachement automatique à la c
     tree=await mount({stayAtLaunch:true});await e.authAs(null);
     await e.press(button(tree,'Plus tard · Accéder aux services'));
     await e.press(button(tree,'Activer les notifications'));await act(async()=>{await tick();await tick();});
-    await e.press(button(tree,'Partager la position'));await act(async()=>{await tick();await tick();});
-    assert.equal(e.notifications.length,1);assert.equal(e.locations.length,1);
+    assert.equal(e.notifications.length,1);assert.equal(e.locations.length,0);
     assert.equal(e.values.get(STARTUP_PUSH_PENDING_KEY),'1');assert.equal(e.subscriptions,0,'pas d’abonnement sans profil');
     assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
     // Le profil se choisit ensuite depuis l’accueil, dans le panneau classique.
     const change=async(label,value)=>act(async()=>{tree.root.findByProps({'aria-label':label}).props.onChange({target:{value}});await tick();});
-    assert.equal(tree.root.findByProps({'aria-label':'Votre magasin Fnac'}).props.value,'Fnac Près','magasin proche présélectionné');
+    await change('Votre magasin Fnac','Fnac Près');
+    await e.press(tree.root.findByProps({role:'option'}));
     await change('Votre département','tech');await change('Votre prénom','Morgan');
     await act(async()=>{await tick();await tick();}); // statut du profil
     assert.match(text(tree.toJSON()),/Profil existant : Morgan/);
@@ -506,12 +464,7 @@ test('Parcours : création d’un profil pas à pas puis questions facultatives 
     assert.doesNotMatch(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
     await e.press(button(tree,'Activer les notifications'));await act(async()=>{await tick();await tick();});
     assert.equal(e.notifications.length,1);assert.equal(e.subscriptions,1,'avec profil, l’abonnement est immédiat');
-    assert(section(tree,'Partager la position ?'),'la question de la position suit dans le parcours');
-    assert.doesNotMatch(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
     assert.equal(e.locations.length,0);
-    await e.press(button(tree,'Partager la position'));
-    assert.equal(e.locations.length,1);
-    await act(async()=>{await tick();await tick();});
     assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
     assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);
     assert.equal(tree.root.findAllByProps({'aria-label':'Autorisations de cet appareil'}).length,0,'aucune carte d’autorisations sur la page');
