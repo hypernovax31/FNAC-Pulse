@@ -164,7 +164,10 @@ test('Magasin administré : recherche, historique masqué, mémorisation et déc
     await search('Copie');const option=tree.root.findByProps({role:'option'});assert.match(text(option),/Copie non vérifiée/);
     await act(async()=>{option.props.onClick();await tick();});assert.equal(saved.get('pulse-admin-managed-store-v1'),'manuel');
     assert.equal(seller.storeId,'historique');assert.match(text(tree.toJSON()),/Magasin sélectionné : Fnac Copie Test/);
-    await act(async()=>tree.unmount());await open();assert.equal(tab('Ventes').props['aria-selected'],true);assert.match(text(tree.toJSON()),/Fnac Copie Test/);
+    await act(async()=>tree.unmount());await open();assert.equal(tab('Magasins').props['aria-selected'],true);assert.match(text(tree.toJSON()),/Fnac Copie Test/);
+    await act(async()=>{tab('Vendeurs').props.onClick();await tick();});
+    assert.equal(saved.get('pulse-admin-last-tab-v1'),'sellers');
+    await act(async()=>tree.unmount());await open();assert.equal(tab('Vendeurs').props['aria-selected'],true,'le dernier onglet est restauré');
     await act(async()=>{tab('Magasins').props.onClick();await tick();});
     await search('Labège');assert.match(text(tree.toJSON()),/Magasin toujours géré/);assert.equal(saved.get('pulse-admin-managed-store-v1'),'manuel','une recherche abandonnée ne change pas le magasin');
     await act(async()=>tree.unmount());await open();assert.match(text(tree.toJSON()),/Fnac Copie Test/);
@@ -172,9 +175,9 @@ test('Magasin administré : recherche, historique masqué, mémorisation et déc
     await act(async()=>{tree.root.findByProps({role:'option'}).props.onClick();await tick();});assert.equal(saved.get('pulse-admin-managed-store-v1'),'officiel');
     await act(async()=>{tab('Administrateurs').props.onClick();await tick();});
     await act(async()=>{tree.root.findAllByType('button').find(b=>text(b).includes('Se déconnecter')).props.onClick();await tick();});
-    assert.equal(saved.has('pulse-admin-managed-store-v1'),false);assert.equal(saved.has('pulse-admin-token'),false);assert.deepEqual(seller,{storeId:'historique',sellerId:41});
+    assert.equal(saved.has('pulse-admin-last-tab-v1'),false);assert.equal(saved.has('pulse-admin-managed-store-v1'),false);assert.equal(saved.has('pulse-admin-token'),false);assert.deepEqual(seller,{storeId:'historique',sellerId:41});
     await act(async()=>tree.unmount());
-    saved.set('pulse-admin-token','admin-token');saved.set('pulse-admin-managed-store-v1','historique');await open();
+    saved.set('pulse-admin-token','admin-token');saved.set('pulse-admin-managed-store-v1','historique');saved.set('pulse-admin-last-tab-v1','onglet-invalide');await open();
     assert.equal(saved.has('pulse-admin-managed-store-v1'),false,'une ancienne sélection non éligible est invalidée');assert.equal(tab('Magasins').props['aria-selected'],true);
   } finally {if(tree)await act(async()=>tree.unmount());for(const key of keys){const descriptor=prior.get(key);if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];}}
 });

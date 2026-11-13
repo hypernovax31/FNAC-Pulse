@@ -23,6 +23,10 @@ import { displayStoreName, isSelectableStore, storeSelectionGroups } from './sto
 import { StoreSearch } from './StoreSearch';
 
 const MANAGED_STORE_KEY='pulse-admin-managed-store-v1';
+const ADMIN_TAB_KEY='pulse-admin-last-tab-v1';
+const ADMIN_TAB_IDS=['stores','sellers','goals','sales','services','departments','security'];
+function rememberedTab(){try{const value=sessionStorage.getItem(ADMIN_TAB_KEY);return ADMIN_TAB_IDS.includes(value)?value:'stores';}catch{return 'stores';}}
+function rememberTab(value){try{if(value)sessionStorage.setItem(ADMIN_TAB_KEY,value);else sessionStorage.removeItem(ADMIN_TAB_KEY);}catch{}}
 function rememberedStore() {try{return sessionStorage.getItem(MANAGED_STORE_KEY)||'';}catch{return '';}}
 function rememberStore(id) {try{if(id)sessionStorage.setItem(MANAGED_STORE_KEY,id);else sessionStorage.removeItem(MANAGED_STORE_KEY);}catch{}}
 
@@ -74,7 +78,7 @@ function AdminContent({onClose,data,session,onChanged}) {
     return [saved,fallback].find(id=>id&&isSelectableStore(data.stores.find(s=>s.id===id)))||'';
   });
   const [storeDraft,setStoreDraft]=useState(adminStore),[storeDraftUnselected,setStoreDraftUnselected]=useState(false);
-  const [tab,setTab]=useState(()=>adminStore?'sales':'stores');
+  const [tab,setTab]=useState(()=>token?rememberedTab():'stores');
   const [adminSeller,setAdminSeller]=useState(session?.sellerId&&session.storeId===adminStore?String(session.sellerId):'');
   const [allLoaded,setAllLoaded]=useState(false);
   const [adminGoals,setAdminGoals]=useState(null);
@@ -97,7 +101,7 @@ function AdminContent({onClose,data,session,onChanged}) {
 
   async function loadAll(auth=token) {
     try { const result=await api('/api/admin/all',{token:auth}); setAll(result);setAllLoaded(true); }
-    catch(e) { if (e.status===401||/expirée/.test(e.message)) {setToken('');sessionStorage.removeItem('pulse-admin-token');rememberStore('');setAdminStore('');setStoreDraft('');setAdminSeller('');} setError(e.message); }
+    catch(e) { if (e.status===401||/expirée/.test(e.message)) {setToken('');sessionStorage.removeItem('pulse-admin-token');rememberStore('');rememberTab('');setTab('stores');setAdminStore('');setStoreDraft('');setAdminSeller('');} setError(e.message); }
   }
   useEffect(()=>{if(token) loadAll(token);},[token]);
   useEffect(()=>{if(token&&adminStore)rememberStore(adminStore);},[token,adminStore]);
@@ -282,7 +286,7 @@ function AdminContent({onClose,data,session,onChanged}) {
   async function logout() {
     if(!await autoSave.flush())return;
     try {if(CLOUD)await adminLogout();else await api('/api/admin/logout',{method:'POST',token,body:{}})} catch {}
-    sessionStorage.removeItem('pulse-admin-token');rememberStore('');setAdminStore('');setStoreDraft('');setAdminSeller('');setName('');setNewSellerDepartment('');setNewSellerWorkdays([]);setToken('');setAuthView('login');setNotice('');
+    sessionStorage.removeItem('pulse-admin-token');rememberStore('');rememberTab('');setTab('stores');setAdminStore('');setStoreDraft('');setAdminSeller('');setName('');setNewSellerDepartment('');setNewSellerWorkdays([]);setToken('');setAuthView('login');setNotice('');
   }
   async function run(work, success) {
     if(!await autoSave.flush())return;
@@ -291,7 +295,7 @@ function AdminContent({onClose,data,session,onChanged}) {
     catch(e){setError(e.message);} finally{setBusy(false);}
   }
   async function closeAdministration(){if(await autoSave.flush())onClose();}
-  async function switchTab(next){if(!await autoSave.flush())return;if(next!==tab)setServiceDeleteReady(false);if(next==='stores')setStoreDraft(adminStore);setTab(next);setError('');setNotice('');setEditing(null);setName('');setNewSellerDepartment('');setNewSellerWorkdays([]);setExpandedSeller(null);setServiceDeleteRequest(null);}
+  async function switchTab(next){if(!await autoSave.flush())return;if(next!==tab)setServiceDeleteReady(false);if(next==='stores')setStoreDraft(adminStore);setTab(next);rememberTab(next);setError('');setNotice('');setEditing(null);setName('');setNewSellerDepartment('');setNewSellerWorkdays([]);setExpandedSeller(null);setServiceDeleteRequest(null);}
   async function changeStore(value){
     if(!await autoSave.flush())return;
     if(!isSelectableStore(data.stores.find(s=>s.id===value)))return;
