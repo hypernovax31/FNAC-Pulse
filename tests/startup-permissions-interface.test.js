@@ -482,6 +482,7 @@ test('Parcours : création d’un profil pas à pas puis questions facultatives 
     assert.deepEqual(e.sellerCalls,[{mode:'register',selection:{storeId:'near',departmentId:'tech'},name:'Alice',pin:'7264'}]);
     assert.equal(e.notifications.length,0);assert.equal(e.locations.length,0);assert.equal(e.subscriptions,0);
     assert(section(tree,'Activer les notifications ?'),'question des notifications avant l’accueil');
+    assert.doesNotMatch(text(tree.toJSON()),/Bienvenue, Alice/,'pas de toast avant l’accueil');
     assert.doesNotMatch(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
     await e.press(button(tree,'Activer les notifications'));await act(async()=>{await tick();await tick();});
     assert.equal(e.notifications.length,1);assert.equal(e.subscriptions,1,'avec profil, l’abonnement est immédiat');
@@ -489,6 +490,7 @@ test('Parcours : création d’un profil pas à pas puis questions facultatives 
     assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
     assert.equal(tree.root.findAllByProps({role:'dialog'}).length,0);
     assert.equal(tree.root.findAllByProps({'aria-label':'Autorisations de cet appareil'}).length,0,'aucune carte d’autorisations sur la page');
+    assert.match(text(tree.toJSON()),/Bienvenue, Alice ! Votre espace est prêt/);
     assert.match(e.values.get('fnac-pulse-device-profile-v1'),/"sellerId":2/);
   } finally {await finish(tree,e);}
 });
@@ -1015,4 +1017,20 @@ test('Réponse perdue : reprise du même identifiant après réouverture et rés
     assert.match(text(tree.root.findByProps({id:'service-count-1'})),/^1 aujourd’hui$/);
     assert(!tree.root.findByProps({'aria-label':'Ajouter une vente DMax'}).props.disabled);
   } finally {data.services=previousServices;await finish(tree,e);}
+});
+
+
+test('Bienvenue : PIN validé, aucun toast pendant les étapes, affichage une fois sur l’accueil',async()=>{
+  const e=environment({auth:null});let tree;
+  try {
+    tree=await mount({stayAtLaunch:true});await selectMorganOnLaunch(tree,e);
+    assert(section(tree,'Activer les notifications ?'));
+    assert.doesNotMatch(text(tree.toJSON()),/Bienvenue, Morgan/);
+    await e.press(tree.root.findByProps({className:'startup-step-later'}));
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.match(text(tree.toJSON()),/Bienvenue, Morgan ! Votre espace est prêt/);
+    await e.press(tree.root.findByProps({'aria-label':'Fermer la notification'}));
+    await act(async()=>{await tick();await tick();});
+    assert.doesNotMatch(text(tree.toJSON()),/Bienvenue, Morgan/);
+  } finally {await finish(tree,e);}
 });

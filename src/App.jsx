@@ -484,6 +484,7 @@ function AppContent() {
   const [liveSnapshot,setLiveSnapshot]=useState(null),[optimisticSales,setOptimisticSales]=useState([]);
   const [saleRetries,setSaleRetries]=useState(()=>CLOUD?readPendingSales():[]),saleRetriesRef=useRef(saleRetries),observedSnapshot=useRef(null);
   const [toast,setToast]=useState(null);
+  const [pendingWelcome,setPendingWelcome]=useState(null);
   const [soundNotice,setSoundNotice]=useState(null);
   const toastSequence=useRef(0),soundNoticeSequence=useRef(0);
   const requestNumber=useRef(0), goalRequest=useRef(0), summaryRequest=useRef(0), summaryTimer=useRef(null), pendingRef=useRef(new Set()), clientId=useRef(uid()), toastTimer=useRef(null), soundNoticeTimer=useRef(null), sound=useRef(null), startupAttempt=useRef(0), startupTimer=useRef(null), startupInFlight=useRef(false), startupGestureAttempted=useRef(false), startupGestureAttempt=useRef(0), startupGestureTimer=useRef(null), notificationPrompted=useRef(false), notificationAbort=useRef(null), notificationStartInFlight=useRef(false), locationRequest=useRef(0), locationInFlight=useRef(false), locationTimer=useRef(null);
@@ -645,6 +646,13 @@ function AppContent() {
 
   const flash=useCallback((message,options={})=>{clearTimeout(toastTimer.current);setToast({message,...options,sequence:++toastSequence.current});toastTimer.current=setTimeout(()=>setToast(null),Math.min(options.duration||5000,5000));},[]);
   useEffect(()=>()=>{clearTimeout(toastTimer.current);clearTimeout(soundNoticeTimer.current);},[]);
+  // Le délai du toast commence seulement lorsque l'accueil est réellement rendu.
+  useEffect(()=>{
+    if(!pendingWelcome||!data||!authReady||startupGateActive||startupWizardActive||!session)return;
+    if(pendingWelcome.owner!==goalOwnerKey(session))return;
+    setPendingWelcome(null);
+    flash(pendingWelcome.message);
+  },[pendingWelcome,data,authReady,startupGateActive,startupWizardActive,session,flash]);
   const announceSale=useCallback(sale=>{
     flash(saleMessage(sale.serviceName,sale.sellerName),{tone:'celebrate'});
     // Les notifications système gardent leur son propre en arrière-plan. Le
@@ -846,19 +854,20 @@ function AppContent() {
       const result=await api('/api/auth/register',{method:'POST',body:{storeId:next.storeId,departmentId:next.departmentId,name:setup.name,...(setup.regionalConsent?{regionalConsent:true}:{})}});
       authenticated={...next,sellerId:result.sellerId};
     } else authenticated=next;
+    const person=data?.sellers.find(s=>s.id===authenticated.sellerId),name=person?.name||setup?.name;
+    setPendingWelcome({owner:goalOwnerKey(authenticated),message:`Bienvenue${name?`, ${name}`:''} ! Votre espace est prêt.`});
     localStorage.setItem(SESSION_KEY,JSON.stringify(authenticated));
     notificationPrompted.current=true;
     setData(d=>d?{...d,stats:null}:d);setSession(authenticated);setSessionModal(false);setActiveNav('today');
-    // Le parcours de lancement continue question par question (notifications,
-    // position) tant que rien n'est tranché ; sinon l'accueil s'ouvre aussitôt.
+    // L'installation et les notifications précèdent l'accueil et son message de bienvenue.
     if(launchInProgress)advanceStartup('profile');
     window.scrollTo({top:0,behavior:startupGateRef.current?'auto':'smooth'});
-    const person=data?.sellers.find(s=>s.id===authenticated.sellerId),name=person?.name||setup?.name;
-    flash(`Bienvenue${name?`, ${name}`:''} ! Votre espace est prêt.`);
+
   }
   function forgetDeviceProfile(){clearDeviceProfile();setDeviceProfile(null);}
   async function logoutSeller(){
     if(!await autoSave.flush())return;
+    setPendingWelcome(null);
     notificationAbort.current?.abort();notificationAbort.current=null;setStartupPushPending(false);setStartupNotificationPending(false);setStartupNotificationError('');setNotificationBusy(true);
     try {
       let warning=false;
