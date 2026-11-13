@@ -28,7 +28,7 @@ test('Historique : date passée, ventes cochées, confirmation et reprise idempo
   }});let tree;
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(SalesHistoryPanel,{...props,onBusy:x=>busy.push(x),onUpdate:()=>updated++}));await tick();});
-    assert.match(text(tree.toJSON()),/Sélectionnez un vendeur/);assert.equal(calls.length,0);
+    assert.doesNotMatch(text(tree.toJSON()),/Sélectionnez un vendeur/);assert.equal(calls.length,0);
     assert(tree.root.findAllByType('option').some(option=>text(option).includes('Alice · archivé')));
     await act(async()=>{tree.root.findByProps({'aria-label':'Vendeur pour l’historique'}).props.onChange({target:{value:'1'}});await tick();});
     await act(async()=>{tree.root.findByProps({'aria-label':'Date de référence des ventes'}).props.onChange({target:{value:'2026-10-29'}});await tick();});
@@ -49,7 +49,7 @@ test('Historique : date passée, ventes cochées, confirmation et reprise idempo
   } finally {if(tree)await act(async()=>tree.unmount());if(old)Object.defineProperty(globalThis,'__historyApi',old);else delete globalThis.__historyApi;}
 });
 
-test('Historique : pages sans résultat, chargement continu et sélection limitée à vingt ventes',async()=>{
+test('Historique : pages sans résultat, chargement continu et sélection au-delà de vingt ventes',async()=>{
   const old=Object.getOwnPropertyDescriptor(globalThis,'__historyApi'),calls=[];let tree;
   const rows=Array.from({length:22},(_,i)=>({id:`fixture-sale-${String(i).padStart(4,'0')}`,serviceId:1,businessDate:'2026-10-29',createdAt:'2026-10-29T13:00:00Z',departmentId:'tech',source:'sale'}));
   Object.defineProperty(globalThis,'__historyApi',{configurable:true,value:async(path,options={})=>{
@@ -62,7 +62,7 @@ test('Historique : pages sans résultat, chargement continu et sélection limit�
     await act(async()=>{btn(tree,'Charger la suite').props.onClick();await tick();});assert.equal(calls.length,2);assert.match(calls[1].path,/afterId=cursor-1/);
     let boxes=tree.root.findAllByType('input').filter(x=>x.props.type==='checkbox');assert.equal(boxes.length,22);
     for(let i=0;i<20;i++)await act(async()=>boxes[i].props.onChange());boxes=tree.root.findAllByType('input').filter(x=>x.props.type==='checkbox');
-    assert.equal(boxes.filter(x=>x.props.checked).length,20);assert.equal(boxes.filter(x=>x.props.disabled).length,2);assert.match(text(tree.toJSON()),/20 sélectionnées/);
+    assert.equal(boxes.filter(x=>x.props.checked).length,20);assert.equal(boxes.filter(x=>x.props.disabled).length,0);assert.match(text(tree.toJSON()),/20 sélectionnées/);
     await act(async()=>boxes[0].props.onChange());boxes=tree.root.findAllByType('input').filter(x=>x.props.type==='checkbox');assert.equal(boxes.filter(x=>x.props.disabled).length,0);
     await act(async()=>btn(tree,'Retirer la sélection').props.onClick());assert.match(text(tree.toJSON()),/Retirer 19 ventes/);
   } finally {if(tree)await act(async()=>tree.unmount());if(old)Object.defineProperty(globalThis,'__historyApi',old);else delete globalThis.__historyApi;}
@@ -147,10 +147,12 @@ test('Ajout : date partagée, quantité contrôlée et aucune période hebdomada
       tree.root.findByProps({'aria-label':'Nombre de ventes à ajouter'}).props.onChange({target:{value:'21'}});
     });
     const submit=()=>tree.root.findByProps({className:'history-add-form'}).props.onSubmit({preventDefault(){}});
-    await act(async()=>submit());assert.match(text(tree.toJSON()),/de 1 à 20 ventes/);assert.equal(calls.filter(x=>x.method==='POST').length,0);
-    await act(async()=>tree.root.findByProps({'aria-label':'Nombre de ventes à ajouter'}).props.onChange({target:{value:'1'}}));
+    await act(async()=>submit());assert.match(text(tree.toJSON()),/Ajouter 21 ventes/);assert.equal(calls.filter(x=>x.method==='POST').length,0);
+    await act(async()=>btn(tree,'Annuler').props.onClick());
+    await act(async()=>tree.root.findByProps({'aria-label':'Nombre de ventes à ajouter'}).props.onChange({target:{value:'21'}}));
     await act(async()=>submit());assert.match(text(tree.root.findByProps({'aria-label':'Confirmer l’ajout des ventes'})),/Jour de la vente : 2026-10-29/);
     await act(async()=>{btn(tree,'Confirmer l’ajout').props.onClick();await tick();});
+    assert.deepEqual(calls.filter(x=>x.method==='POST').map(x=>x.body.quantity),[20,1]);
     assert.equal(calls.filter(x=>x.method==='POST').at(-1).body.saleDate,'2026-10-29');assert.equal(calls.filter(x=>x.method==='POST').at(-1).body.period,'day');
   } finally {if(tree)await act(async()=>tree.unmount());if(old)Object.defineProperty(globalThis,'__historyApi',old);else delete globalThis.__historyApi;}
 });

@@ -1818,3 +1818,10 @@ p,h1,h2,h3 { margin:0; }
   .visible-feedback.is-autosave .visible-feedback-action { grid-column:2 / 4; grid-row:2; justify-self:start; }
 }
 .autosave-status .goal-conflict button { min-height:44px; }
+
+/* Validation confirmée : coche et halo sobres, sans bloquer les commandes. */
+.toast-sale-confirmed .toast-icon { animation: sale-confirm-halo 600ms ease-out; }
+.toast-sale-confirmed .toast-icon svg { animation: sale-confirm-check 600ms ease-out; }
+@keyframes sale-confirm-halo { 0% { box-shadow:0 0 0 0 rgba(34,197,94,.3); } 100% { box-shadow:0 0 0 16px rgba(34,197,94,0); } }
+@keyframes sale-confirm-check { 0% { opacity:0;transform:scale(.7);clip-path:inset(0 100% 0 0); } 65% { opacity:1;transform:scale(1.05);clip-path:inset(0); } 100% { transform:scale(1); } }
+@media (prefers-reduced-motion:reduce) { .toast-sale-confirmed .toast-icon,.toast-sale-confirmed .toast-icon svg { animation:none; } }

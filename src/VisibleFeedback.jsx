@@ -46,7 +46,8 @@ export function VisibleFeedback({message,tone='success',revision=0,actionLabel='
     if(!context||!message)return;
     const id=owner.current;
     context.show(id,{message,tone,actionLabel,variant,...(actionLabel?{onAction:()=>action.current?.()}: {})});
-    return ()=>context.remove(id);
+    const timer=setTimeout(()=>context.remove(id),5000);
+    return ()=>{clearTimeout(timer);context.remove(id);};
   },[context,message,tone,revision,actionLabel,variant]);
   return null;
 }

@@ -135,3 +135,14 @@ test('Une actualisation volontaire signale son résultat, sans annoncer les char
     assert.equal(calls,2);assert.match(text(aside(tree)),/Objectifs actualisés/);
   } finally {if(tree)await act(async()=>tree.unmount());}
 });
+
+
+test('Les messages contextuels se ferment automatiquement au bout de cinq secondes',async()=>{
+  let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(h(VisibleFeedbackProvider,null,h(VisibleFeedback,{message:'Service enregistré.'})));});
+    assert.equal(tree.root.findAllByType('aside').length,1);
+    await act(async()=>{await new Promise(resolve=>setTimeout(resolve,5100));});
+    assert.equal(tree.root.findAllByType('aside').length,0);
+  } finally {if(tree)await act(async()=>tree.unmount());}
+});

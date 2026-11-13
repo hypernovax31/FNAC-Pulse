@@ -417,7 +417,7 @@ function readNotificationPermission() {return typeof Notification==='undefined'?
 function Toast({notice,onClose,icon}) {
   const Icon=icon||(notice.tone==='warning'?Info:CircleCheck),container=useRef(null);
   useLayoutEffect(()=>{const node=container.current;return ()=>{if(typeof document!=='undefined'&&node?.contains(document.activeElement))restoreDialogFocus({currentTarget:document.activeElement});};},[]);
-  return <div ref={container} className={`toast toast-${notice.tone||'default'}${notice.variant==='profile-required'?' toast-profile-required':notice.variant==='sound-error'?' toast-sound-error':''}`} role="status" aria-atomic="true">
+  return <div ref={container} className={`toast toast-${notice.tone||'default'}${notice.variant==='profile-required'?' toast-profile-required':notice.variant==='sound-error'?' toast-sound-error':notice.variant==='sale-confirmed'?' toast-sale-confirmed':''}`} role="status" aria-atomic="true">
     <span className="toast-icon" aria-hidden="true"><Icon size={22}/></span><span className="toast-message">{notice.message}</span>
     {notice.action&&<button type="button" className="toast-action" onClick={event=>{restoreDialogFocus(event);onClose();notice.action();}}>{notice.actionLabel}</button>}
     <button type="button" className="toast-close" aria-label="Fermer la notification" onClick={event=>{restoreDialogFocus(event);onClose();}}><X size={19} aria-hidden="true"/></button>
@@ -535,7 +535,7 @@ function AppContent() {
       if(sound.current!==player||!soundEnabledRef.current)return;
       clearTimeout(soundNoticeTimer.current);
       setSoundNotice({message:'Le son Fnac n’a pas pu être lu. Vérifiez le volume et réessayez.',tone:'warning',variant:'sound-error',actionLabel:'Réessayer',action:()=>playStartupSoundNonBlocking(true),sequence:++soundNoticeSequence.current});
-      soundNoticeTimer.current=setTimeout(()=>setSoundNotice(null),8000);
+      soundNoticeTimer.current=setTimeout(()=>setSoundNotice(null),5000);
     };
     const operation=player.playFromGesture({standalone:true,visible:true});
     clearTimeout(startupGestureTimer.current);
@@ -638,7 +638,7 @@ function AppContent() {
     };
   },[]);
 
-  const flash=useCallback((message,options={})=>{clearTimeout(toastTimer.current);setToast({message,...options,sequence:++toastSequence.current});toastTimer.current=setTimeout(()=>setToast(null),options.duration||7000);},[]);
+  const flash=useCallback((message,options={})=>{clearTimeout(toastTimer.current);setToast({message,...options,sequence:++toastSequence.current});toastTimer.current=setTimeout(()=>setToast(null),Math.min(options.duration||5000,5000));},[]);
   useEffect(()=>()=>{clearTimeout(toastTimer.current);clearTimeout(soundNoticeTimer.current);},[]);
   const announceSale=useCallback(sale=>{
     flash(saleMessage(sale.serviceName,sale.sellerName),{tone:'celebrate'});
@@ -872,7 +872,7 @@ function AppContent() {
       // Un message séparé ne doit pas effacer l'action « Annuler » d'une vente.
       clearTimeout(soundNoticeTimer.current);
       setSoundNotice({message:next?'Son Fnac activé sur cet appareil.':'Son Fnac désactivé sur cet appareil.',tone:'sound',sequence:++soundNoticeSequence.current});
-      soundNoticeTimer.current=setTimeout(()=>setSoundNotice(null),7000);
+      soundNoticeTimer.current=setTimeout(()=>setSoundNotice(null),5000);
     }
     if(startupStatus==='unavailable')setStartupStatus('ready');
   }
@@ -1013,7 +1013,7 @@ function AppContent() {
       }
       // Le toast n'attend rien et ne bloque pas l'interface ; sa durée suit la
       // fenêtre garantie avant notification des collègues (délai file ≥ 5 s).
-      flash('Vente enregistrée.',{tone:'success',actionLabel:'Annuler',action:async()=>{
+      flash(`Vente enregistrée. ${service.name}`,{tone:'success',variant:'sale-confirmed',actionLabel:'Annuler',action:async()=>{
         try {await api(`/api/sales/${id}`,{method:'DELETE',body:session});setOptimisticSales(items=>items.filter(item=>item.sale.id!==requestId));if(!CLOUD)void refresh();if(ownerRef.current===targetOwner)flash('Vente annulée.');}
         catch(e){if(ownerRef.current===targetOwner)flash(e.message,{tone:'warning'});}
       },duration:5000});

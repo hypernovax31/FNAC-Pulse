@@ -93,7 +93,7 @@ test('Administrateur : panneau épuré, invitation par adresse, droits globaux e
   const button=caption=>tree.root.findAllByType('button').find(x=>text(x).includes(caption));
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(AdminAccounts,{onBusy:x=>busy.push(x),onLogout:()=>loggedOut++}));await tick();});
-    assert.match(text(tree.toJSON()),/responsable@example\.test/);assert.match(text(tree.toJSON()),/recevra un lien de connexion/);
+    assert.match(text(tree.toJSON()),/responsable@example\.test/);assert.match(text(tree.toJSON()),/Firebase envoie un e-mail standard de connexion/);
     assert.doesNotMatch(text(tree.toJSON()),/Modifier mon e-mail|mot de passe provisoire|Demandes précédentes sans e-mail|Supprimer le compte de test précédent/);
     assert(!e.calls.some(x=>typeof x[1]==='string'&&(/\/access-requests|\/old-test\//).test(x[1])),'aucun chargement ni nettoyage des anciennes données');
     const invite=()=>form(tree,'admin-invite-title');assert.equal(invite().findAllByType('input').length,1);

@@ -132,15 +132,15 @@ export function useAutomaticSave({remoteValue,remoteVersion,onSave,validate,equa
     busy:!!inFlight.current||view.phase==='saving',dirty:dirty(),pending:needsSave(),stale:stale(),current:()=>draftRef.current,version:()=>version.current,lastPhase:()=>viewRef.current.phase};
 }
 
-export function AutoSaveStatus({editor,saved='Modifications enregistrées automatiquement.',label='Enregistrement automatique.',conflict='Cette donnée a changé ailleurs. Votre saisie n’a pas été enregistrée.'}) {
+export function AutoSaveStatus({editor,saved='Modifications enregistrées automatiquement.',label='Enregistrement automatique.',conflict='Cette donnée a changé ailleurs. Votre saisie n’a pas été enregistrée.',showRecovery=true}) {
   const {phase,error,sequence,stale,pending,busy}=editor;
   const message=stale?conflict:phase==='error'?error:'',success=editor.saved||saved;
   return <div className="autosave-status">
-    <VisibleFeedback message={message} tone="error" revision={sequence} variant="autosave" actionLabel={stale?'Recharger':'Réessayer'} onAction={stale?editor.discard:()=>editor.flush(true)}/>
+    <VisibleFeedback message={message} tone="error" revision={sequence} variant="autosave" actionLabel={showRecovery?(stale?'Recharger':'Réessayer'):''} onAction={stale?editor.discard:()=>editor.flush(true)}/>
     <VisibleFeedback message={!message&&phase==='saved'?success:''} revision={sequence}/>
     {message?<div className="goal-conflict" role="alert"><span>{message}</span>
-      {stale?<button type="button" onClick={editor.discard}><RotateCw size={13}/> Recharger les valeurs</button>:<button type="button" onClick={()=>editor.flush(true)}><RotateCw size={13}/> Réessayer</button>}
-      {pending&&!busy&&!stale&&<button type="button" onClick={editor.discard}>Annuler la saisie non enregistrée</button>}
+      {showRecovery&&(stale?<button type="button" onClick={editor.discard}><RotateCw size={13}/> Recharger les valeurs</button>:<button type="button" onClick={()=>editor.flush(true)}><RotateCw size={13}/> Réessayer</button>)}
+      {showRecovery&&pending&&!busy&&!stale&&<button type="button" onClick={editor.discard}>Annuler la saisie non enregistrée</button>}
     </div>:<span className={phase==='saved'?'goal-saved':'autosave-hint'} role="status" aria-live="polite">{phase==='waiting'?'Modification en attente…':phase==='saving'?'Enregistrement automatique…':phase==='saved'?success:label}</span>}
   </div>;
 }

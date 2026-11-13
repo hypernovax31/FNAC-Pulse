@@ -59,7 +59,7 @@ export function SalesHistoryPanel({storeId,storeName,sellers,services,additionSe
     } catch(e){if(sequence.current===request)report(e.message||'Impossible de charger la suite.',true);}
     finally{if(sequence.current===request)setLoadingMore(false);}
   }
-  function select(id) {setSelected(old=>old.includes(id)?old.filter(x=>x!==id):old.length<MAX_SALE_CORRECTION?[...old,id]:old);setNotice('');}
+  function select(id) {setSelected(old=>old.includes(id)?old.filter(x=>x!==id):[...old,id]);setNotice('');}
   function prepareDelete() {
     if(!seller||!selected.length||!range)return;
     const items=rows.filter(row=>selected.includes(row.id)).map(row=>rowLabel(row,services,departments));
@@ -75,7 +75,7 @@ export function SalesHistoryPanel({storeId,storeName,sellers,services,additionSe
     if(!service){report('Choisissez le service à ajouter.');return;}
     if(!department){report('Le département actuel du vendeur est indisponible. Rechargez la sélection.');return;}
     if(!validAdditionDate('day',anchor,anchor,today)){report('Choisissez une journée valide, aujourd’hui ou dans le passé.');return;}
-    if(!Number.isInteger(quantity)||quantity<1||quantity>MAX_SALE_CORRECTION){report(`Choisissez de 1 à ${MAX_SALE_CORRECTION} ventes maximum.`);return;}
+    if(!Number.isSafeInteger(quantity)||quantity<1){report('Choisissez un nombre entier de ventes supérieur à zéro.');return;}
     report('');setNotice('');setUncertain(false);
     setPending({kind:'add',body:{storeId,sellerId:Number(sellerId),period:'day',anchor,saleDate:anchor,serviceId:Number(service.id),departmentId:department.id,
       quantity,requestId:uid(),confirmation:SALE_ADDITION_CONFIRMATION,expectedSellerName:seller.name,expectedStoreName:storeName,
@@ -90,8 +90,18 @@ export function SalesHistoryPanel({storeId,storeName,sellers,services,additionSe
     if(!pending||saving)return;
     setSaving(true);onBusy?.(true);report('');
     const {kind,body}=pending;
+    if(!pending.batches) {
+      pending.batches=[];
+      const total=kind==='add'?body.quantity:body.saleIds.length;
+      for(let offset=0;offset<total;offset+=MAX_SALE_CORRECTION)pending.batches.push({body:{...body,requestId:uid(),...(kind==='add'?{quantity:Math.min(MAX_SALE_CORRECTION,total-offset)}:{saleIds:body.saleIds.slice(offset,offset+MAX_SALE_CORRECTION)})},done:false});
+    }
     try {
-      const result=await api(kind==='add'?'/api/admin/sales/add-correction':'/api/admin/sales/correct',{method:'POST',token,body});
+      for(const batch of pending.batches) {
+        if(batch.done)continue;
+        batch.result=await api(kind==='add'?'/api/admin/sales/add-correction':'/api/admin/sales/correct',{method:'POST',token,body:batch.body});
+        batch.done=true;
+      }
+      const result={added:body.quantity,deleted:body.saleIds?.length,duplicate:pending.batches.every(batch=>batch.result?.duplicate)};
       if(kind==='add') {
         const count=Number(result.added)||body.quantity;
         setAddition(emptyAddition());setMode('remove');setNotice(result.duplicate?`Cet ajout avait déjà été pris en compte pour le ${dateText(body.saleDate)}. Vérifiez les ventes affichées.`:`${count} ${count>1?'ventes ajoutées':'vente ajoutée'} pour le ${dateText(body.saleDate)}.`);
@@ -101,7 +111,7 @@ export function SalesHistoryPanel({storeId,storeName,sellers,services,additionSe
       }
       setPending(null);setUncertain(false);setRefresh(value=>value+1);onUpdate?.();
     } catch(e) {
-      if(e.status&&e.status>=400&&e.status<500&&e.status!==408&&e.status!==429) {
+      if(!pending.batches.some(batch=>batch.done)&&e.status&&e.status>=400&&e.status<500&&e.status!==408&&e.status!==429) {
         setPending(null);setUncertain(false);report(e.message||'La sélection a changé. Rechargez la liste.',true);
       } else {setUncertain(true);report('Résultat incertain : la correction a peut-être été appliquée. Réessayez ou vérifiez les ventes avant de recommencer.');}
     } finally {setSaving(false);onBusy?.(false);}
@@ -120,7 +130,7 @@ export function SalesHistoryPanel({storeId,storeName,sellers,services,additionSe
     {!range&&<p className="history-warning" role="alert">Choisissez une journée valide, aujourd’hui ou dans le passé.</p>}
     {notice&&<div className="goal-saved history-notice" role="status">{notice}</div>}
     {error&&!pending&&<div className="form-error history-error" role="alert">{error}{canReload&&<button type="button" onClick={()=>{onReload?.();setRefresh(value=>value+1);}}> Recharger</button>}</div>}
-    {!seller?<div className="history-empty">Sélectionnez un vendeur pour corriger ses ventes.</div>:range&&<>
+    {seller&&range&&<>
       <div className="history-range"><CalendarDays size={14} aria-hidden="true"/><span>{seller.name} · {dateText(anchor)}</span></div>
       <div className="history-modes" role="group" aria-label="Action sur les ventes">
         <button type="button" aria-pressed={mode==='remove'} className={mode==='remove'?'active':''} disabled={locked} onClick={()=>changeMode('remove')}><Trash2 size={15}/> Retirer</button>
@@ -131,7 +141,7 @@ export function SalesHistoryPanel({storeId,storeName,sellers,services,additionSe
         <form className="history-add-form" onSubmit={prepareAdd}>
           <label><span className="form-label">SERVICE</span><select className="text-input" aria-label="Service à ajouter" value={addition.serviceId} disabled={locked||!additionServices.length} required onChange={e=>{setAddition(v=>({...v,serviceId:e.target.value}));report('');}}><option value="">Choisir un service</option>{additionServices.map(s=><option key={s.id} value={s.id}>{s.name}{s.active===false||s.active===0?' · inactif':''}</option>)}</select></label>
           <p className="history-current-department">Département actuel : <strong>{departments.find(d=>d.id===sellerDepartmentId(seller))?.name||'indisponible'}</strong></p>
-          <label><span className="form-label">NOMBRE DE VENTES · {MAX_SALE_CORRECTION} MAXIMUM</span><input className="text-input" type="number" inputMode="numeric" aria-label="Nombre de ventes à ajouter" min="1" max={MAX_SALE_CORRECTION} step="1" value={addition.quantity} disabled={locked} required onChange={e=>{setAddition(v=>({...v,quantity:e.target.value}));report('');}}/></label>
+          <label><span className="form-label">NOMBRE DE VENTES</span><input className="text-input" type="number" inputMode="numeric" aria-label="Nombre de ventes à ajouter" min="1" step="1" value={addition.quantity} disabled={locked} required onChange={e=>{setAddition(v=>({...v,quantity:e.target.value}));report('');}}/></label>
           <button type="submit" className="history-add-button" disabled={locked||!additionServices.length||!departments.some(d=>d.id===sellerDepartmentId(seller))}><Plus size={15}/> Vérifier l’ajout</button>
         </form>
         {pending?.kind==='add'&&<div className="history-confirm history-confirm-add" role="group" aria-label="Confirmer l’ajout des ventes">
@@ -147,11 +157,11 @@ export function SalesHistoryPanel({storeId,storeName,sellers,services,additionSe
         <label className="history-service-filter"><span className="form-label">SERVICE</span><select className="text-input" aria-label="Filtrer les ventes par service" value={serviceFilter} disabled={locked} onChange={e=>{setServiceFilter(e.target.value);setSelected([]);setNotice('');}}><option value="">Tous les services</option>{additionServices.map(s=><option key={s.id} value={s.id}>{s.name}{s.active===false||s.active===0?' · inactif':''}</option>)}</select></label>
         {loading?<div className="history-empty">Chargement des ventes…</div>:<>
           {displayRows.length?<div className="history-list">{displayRows.map(row=><label className={`history-row ${selected.includes(row.id)?'is-selected':''}`} key={row.id}>
-            <input type="checkbox" checked={selected.includes(row.id)} disabled={locked||(!selected.includes(row.id)&&selected.length>=MAX_SALE_CORRECTION)} onChange={()=>select(row.id)}/>
+            <input type="checkbox" checked={selected.includes(row.id)} disabled={locked} onChange={()=>select(row.id)}/>
             <span className="history-row-copy"><strong>{row.serviceName}</strong><small>{row.departmentName}</small><small>{row.source==='adjustment'?`Correction administrative${recordedAt(row.createdAt)?` · saisie le ${recordedAt(row.createdAt)}`:''}`:`Vente · ${hour(row.createdAt)}`} · réf. {row.id.slice(-6).toUpperCase()}</small></span>
           </label>)}</div>:!error&&<div className="history-empty">{next?'Aucune vente correspondante dans cette partie de la liste.':'Aucune vente correspondante pour cette journée.'}</div>}
           {next&&<button type="button" className="history-more" onClick={more} disabled={locked||loadingMore}>{loadingMore?'Chargement…':'Charger la suite'} <ChevronDown size={14}/></button>}
-          {displayRows.length>0&&<div className="history-actions"><span>{selected.length} sélectionnée{selected.length>1?'s':''} · {MAX_SALE_CORRECTION} maximum</span><button type="button" className="history-delete" disabled={locked||!selected.length} onClick={prepareDelete}><Trash2 size={14}/> Retirer la sélection</button></div>}
+          {displayRows.length>0&&<div className="history-actions"><span>{selected.length} sélectionnée{selected.length>1?'s':''}</span><button type="button" className="history-delete" disabled={locked||!selected.length} onClick={prepareDelete}><Trash2 size={14}/> Retirer la sélection</button></div>}
         </>}
         {pending?.kind==='delete'&&<div className="history-confirm" role="group" aria-label="Confirmer la suppression des ventes sélectionnées">
           <strong>Retirer {pending.items.length} {pending.items.length>1?'ventes':'vente'} ?</strong><p>{pending.body.expectedSellerName} · {pending.body.expectedStoreName} · {dateText(anchor)}</p>

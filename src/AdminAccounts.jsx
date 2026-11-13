@@ -83,14 +83,14 @@ export function AdminAccounts({onLogout,onBusy}) {
     <VisibleFeedback message={listError} tone="error" actionLabel="Réessayer" onAction={()=>loadInvitations()}/>
     <div className="admin-account-current"><ShieldCheck size={18}/><div><strong>Votre compte administrateur</strong><p>{accountEmail||'Chargement de votre adresse…'}</p></div></div>
     <section className="admin-account-section admin-invite-section" aria-labelledby="admin-invite-title">
-      <div className="admin-account-heading"><UserRoundPlus size={19}/><div><h3 id="admin-invite-title">Inviter un administrateur</h3><p>La personne recevra un lien de connexion pour activer son compte.</p></div></div>
+      <div className="admin-account-heading"><UserRoundPlus size={19}/><div><h3 id="admin-invite-title">Inviter un administrateur</h3><p>Saisissez son adresse e-mail, puis envoyez l’invitation.</p></div></div>
       {feedback&&<div className={`admin-alert ${feedback.error?'error':'success'}`} role={feedback.error?'alert':'status'}>{feedback.text}</div>}
       {!draft?<form className="admin-invite-form" onSubmit={prepare}>
         <label htmlFor="admin-invite-email">Adresse e-mail</label>
         <div className="admin-invite-entry"><input className="text-input" id="admin-invite-email" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="nom@exemple.fr" autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={254} disabled={busy} required/><button className="primary-button" disabled={busy} type="submit"><Send size={16}/> Continuer</button></div>
       </form>:<form ref={confirmation} tabIndex={-1} className="admin-invite-confirm" onSubmit={send}>
         <strong>Inviter {draft.email} ?</strong>
-        <p>Après confirmation de son adresse et création ou confirmation de son mot de passe, cette personne aura les droits administrateur sur <b>tous les magasins</b> et pourra inviter d’autres administrateurs, sans autre validation.</p>
+        <p>Cette personne aura accès à <b>tous les magasins</b> et pourra inviter d’autres administrateurs.</p>
         {needsPassword&&<label className="admin-invite-password">Votre mot de passe administrateur<input className="text-input" type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" disabled={busy} required/></label>}
         <div className="admin-invite-confirm-actions"><button className="outline-button" type="button" disabled={busy} onClick={()=>{setDraft(null);setPassword('');setNeedsPassword(false);setFeedback(null);}}>Retour</button><button className="primary-button" type="submit" disabled={busy}><Send size={16}/> {busy?'Envoi…':'Envoyer l’invitation'}</button></div>
       </form>}

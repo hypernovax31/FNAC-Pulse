@@ -137,6 +137,8 @@ test('Formulaire vendeur : minimum visible, période bloquée et contrôle avant
     const input=()=>tree.root.findByProps({'aria-label':'Cible de référence'}),submit=()=>tree.root.findByType('form').props.onSubmit({preventDefault(){}});
     await act(async()=>input().props.onChange({target:{value:'19'}}));await act(async()=>submit());
     assert.match(nodeText(tree.toJSON()),/Respectez le minimum et la période/);assert.equal(saves.length,0);
+    assert.doesNotMatch(nodeText(tree.toJSON()),/Réessayer|Annuler la saisie non enregistrée/);
+    await act(async()=>input().props.onBlur());assert.equal(input().props.value,'20');
     await act(async()=>input().props.onChange({target:{value:'20'}}));await act(async()=>submit());
     assert.equal(saves.length,1);assert.deepEqual(saves[0].values,{day:null,week:null,month:20});
   } finally {if(tree)await act(async()=>tree.unmount());}

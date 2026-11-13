@@ -76,11 +76,11 @@ export function GoalsResetPanel({storeId,storeName,departments,token,disabled,on
     <VisibleFeedback message={jobFeedback.notice?.message} tone={jobFeedback.notice?.tone} revision={jobFeedback.revision}/>
     <VisibleFeedback message={statusError} tone="error" actionLabel="Vérifier" onAction={()=>{setStatusError('');setRefresh(value=>value+1);}}/>
     <VisibleFeedback message={actionError} tone="error" revision={actionRevision} actionLabel={pending&&!open&&!busy&&!disabled?'Reprendre':''} onAction={()=>submit(pending)}/>
-    <div className="sales-reset-heading"><div><h4 id="goals-reset-title">Reset global des objectifs</h4><p>Tous les vendeurs et services d’un département du magasin sélectionné.</p></div></div>
+    <div className="sales-reset-heading"><div><h4 id="goals-reset-title">Reset des objectifs</h4></div></div>
     <label className="goals-reset-select"><span className="form-label">Département à réinitialiser</span><select className="text-input" aria-label="Département à réinitialiser" value={departmentId} onChange={event=>setDepartmentId(event.target.value)} disabled={disabled||busy||open||!!pending||running}>
       <option value="">Choisir un département</option>{departments.map(item=><option key={item.id} value={item.id}>{item.name}{item.active===false||item.active===0?' · archivé':''}</option>)}
     </select></label>
-    {!open&&<button type="button" className="sales-reset-button" disabled={unavailable} onClick={()=>{setActionError('');setOpen(true);}}><RotateCcw size={15} aria-hidden="true"/> Reset global</button>}
+    {!open&&<button type="button" className="sales-reset-button" disabled={unavailable} onClick={()=>{setActionError('');setOpen(true);}}><RotateCcw size={15} aria-hidden="true"/> RESET</button>}
     {running&&<p className="sales-reset-progress" role="status">Reset en cours pour {status.departmentName} : {status.processedSellers} / {status.totalSellers} vendeurs traités. Les objectifs des vendeurs en attente ne sont pas modifiables. Vous pouvez fermer cette fenêtre.</p>}
     {status?.status==='done'&&!pending&&!open&&<p className="sales-reset-progress" role="status">Dernier reset terminé pour {status.departmentName} : {status.processedSellers} vendeur{status.processedSellers>1?'s':''} traité{status.processedSellers>1?'s':''}.</p>}
     {statusError&&<div className="sales-reset-error" role="alert">{statusError} <button type="button" onClick={()=>{setStatusError('');setRefresh(value=>value+1);}}>Vérifier</button></div>}
@@ -95,7 +95,7 @@ export function GoalsResetPanel({storeId,storeName,departments,token,disabled,on
       </div></div>
       <form onSubmit={event=>{event.preventDefault();if(phrase===GOALS_RESET_CONFIRMATION&&!unavailable)submit(null);}}>
         <label><span className="form-label">Tapez {GOALS_RESET_CONFIRMATION} pour confirmer</span><input className="text-input" aria-label="Confirmation du reset des objectifs" value={phrase} onChange={event=>setPhrase(event.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} disabled={busy||disabled} autoFocus/></label>
-        <div className="sales-reset-actions"><button type="button" className="outline-button" disabled={busy} onClick={()=>{setOpen(false);setPhrase('');}}>Annuler</button><button type="submit" className="sales-reset-danger" disabled={unavailable||phrase!==GOALS_RESET_CONFIRMATION}>{busy?'Démarrage…':'Supprimer les objectifs'}</button></div>
+        <div className="sales-reset-actions"><button type="button" className="outline-button" disabled={busy} onClick={()=>{setOpen(false);setPhrase('');}}>Annuler</button><button type="submit" className="sales-reset-danger" disabled={unavailable||phrase!==GOALS_RESET_CONFIRMATION}>{busy?'Démarrage…':'RESET'}</button></div>
       </form>
     </div>}
   </section>;
