@@ -190,13 +190,13 @@ test('Admin simplifié : objectif en lecture seule, minimum séparé, équivalen
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(GoalForm,{services:props.services,goals:{s1:{month:50,day:null,week:null,revision:'simple-revision',minimum:{period:'month',amount:20}}},workdays:props.workdays,date:props.date,admin:true,onSave:async()=>{}}));});
     assert.match(nodeText(tree.root.findByProps({'aria-label':'Objectif actuel du vendeur'})),/50 par mois/);
-    assert.match(nodeText(tree.root.findByProps({className:'admin-goal-minimum-editor'})),/Minimum administrateur/);
+    assert.match(nodeText(tree.root.findByProps({className:'admin-goal-minimum-editor'})),/Objectif minimum/);
     assert.equal(tree.root.findByProps({'aria-label':'Cible de référence'}).props.value,'20');
     assert.equal(tree.root.findByProps({className:'admin-minimum-equivalents'}).props.open,undefined);
     assert.match(nodeText(tree.root.findByProps({className:'admin-minimum-equivalents'})),/Objectifs par jour, semaine et mois/);
     assert.doesNotMatch(nodeText(tree.toJSON()),/Voir les équivalences du minimum/);
     assert.equal(tree.root.findAllByProps({className:'goal-form-intro'}).length,0);
-    assert.match(nodeText(tree.toJSON()),/Le vendeur peut l’augmenter, mais pas descendre en dessous/);
+    assert.match(nodeText(tree.toJSON()),/Le vendeur peut choisir une cible supérieure, mais jamais inférieure/);
   } finally {if(tree)await act(async()=>tree.unmount());}
 });
 

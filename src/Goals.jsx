@@ -84,7 +84,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     </section>}
     {admin&&minimum&&basis!==minimum.period&&<p className="goal-minimum">Changer de période remplace la référence et son éventuel ajustement personnel.</p>}
     <section className={admin?'admin-goal-minimum-editor':undefined}>
-    {admin&&<div className="admin-goal-minimum-heading"><h4>Minimum administrateur</h4><p>Le vendeur peut l’augmenter, mais pas descendre en dessous.</p></div>}
+    {admin&&<div className="admin-goal-minimum-heading"><h4>Objectif minimum</h4><p>Le vendeur peut choisir une cible supérieure, mais jamais inférieure.</p></div>}
     <div className="goal-base-fields">
       <label><span className="form-label">{admin?'PÉRIODE':'PÉRIODE DE RÉFÉRENCE'}</span><select className="text-input" aria-label="Période de référence" value={basis} onChange={e=>changeBasis(e.target.value)} disabled={disabled||!service||(!admin&&!!minimum)}>
         <option value="day">Par jour travaillé</option><option value="week">Par semaine</option><option value="month">Par mois</option>
