@@ -171,7 +171,7 @@ test('Admin : cible vendeur et calculs actualisés sans augmenter le minimum',as
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(GoalForm,{...base,goals:{s1:entry(20)}}));});
     const current=()=>tree.root.findByProps({'aria-label':'Objectif actuel du vendeur'});
-    assert.match(nodeText(current()),/20 par mois/);
+    assert.equal(tree.root.findAllByProps({'aria-label':'Objectif actuel du vendeur'}).length,0,'masqué lorsque la cible égale le minimum');
     await act(async()=>{tree.update(React.createElement(GoalForm,{...base,goals:{s1:entry(30)}}));});
     assert.match(nodeText(current()),/30 par mois/);
     const cells=current().findByProps({className:'goal-preview-grid'}).findAllByType('strong');
@@ -195,5 +195,22 @@ test('Admin simplifié : objectif en lecture seule, minimum séparé, équivalen
     assert.equal(tree.root.findByProps({className:'admin-minimum-equivalents'}).props.open,undefined);
     assert.equal(tree.root.findAllByProps({className:'goal-form-intro'}).length,0);
     assert.match(nodeText(tree.toJSON()),/Le vendeur peut l’augmenter, mais pas descendre en dessous/);
+  } finally {if(tree)await act(async()=>tree.unmount());}
+});
+
+
+test('Admin : objectif actuel visible seulement au-dessus du minimum administrateur',async()=>{
+  const base={services:props.services,workdays:props.workdays,date:props.date,initialServiceId:1,admin:true,onSave:async()=>{}};
+  const entry=amount=>({month:amount,day:null,week:null,revision:`conditional-${amount}`,minimum:{period:'month',amount:20},personal:{period:'month',amount}});
+  let tree;
+  try {
+    const update=async goals=>act(async()=>{const el=React.createElement(GoalForm,{...base,goals});if(tree)tree.update(el);else tree=TestRenderer.create(el);});
+    const count=()=>tree.root.findAllByProps({'aria-label':'Objectif actuel du vendeur'}).length;
+    await update({});assert.equal(count(),0,'aucun objectif');
+    await update({s1:entry(20)});assert.equal(count(),0,'minimum seul');
+    await update({s1:entry(50)});assert.equal(count(),1,'hausse personnelle');
+    await update({s1:entry(20)});assert.equal(count(),0,'retour au minimum');
+    await update({s1:{month:50,day:null,week:null,revision:'without-minimum'}});assert.equal(count(),0,'aucun minimum de comparaison');
+    assert.equal(tree.root.findAllByProps({className:'admin-goal-minimum-editor'}).length,1,'le minimum reste modifiable');
   } finally {if(tree)await act(async()=>tree.unmount());}
 });

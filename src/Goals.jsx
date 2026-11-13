@@ -77,7 +77,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     </select></label>
     {!admin&&<p className="goal-form-intro">Choisissez une cible de référence. Les cibles du jour, de la semaine et du mois sont calculées selon les jours travaillés.</p>}
     {!admin&&minimum&&<p className="goal-minimum"><strong>Minimum administrateur : {formatNumber(minimum.amount)} {REFERENCE_LABELS[minimum.period]}.</strong> Vous pouvez augmenter votre cible ou la redescendre jusqu’à ce minimum.</p>}
-    {admin&&<section className="goal-preview admin-seller-target" aria-label="Objectif actuel du vendeur" aria-live="polite">
+    {admin&&minimum&&effective&&effective.period===minimum.period&&effective.amount>minimum.amount&&<section className="goal-preview admin-seller-target" aria-label="Objectif actuel du vendeur" aria-live="polite">
       <p className="admin-target-title"><span className="form-label">OBJECTIF ACTUEL DU VENDEUR :</span> <strong>{effective?`${formatNumber(effective.amount)} ${REFERENCE_LABELS[effective.period]}`:'Aucun objectif défini'}</strong></p>
       <div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PERSONAL_PERIOD_LABELS[period]}</span><strong>{sellerTargets?formatNumber(sellerTargets[period]):'—'}</strong></div>)}</div>
       <p className="goal-preview-hint">{minimum&&effective&&effective.amount>minimum.amount?'Le vendeur a choisi un objectif plus élevé.':'Actualisé automatiquement.'}</p>
