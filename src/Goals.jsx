@@ -70,28 +70,31 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     editor.change({period:basis,amount:'',remove:true});
     await editor.flush();
   }
-  return <form className="goal-form" onSubmit={event=>{event.preventDefault();void editor.flush();}}>
+  const minimumPreview=<div className="goal-preview" aria-live="polite"><span className="form-label">{admin?'CIBLES CALCULÉES POUR CE MINIMUM':'CIBLES CALCULÉES POUR LA PÉRIODE EN COURS'}</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PREVIEW_LABELS[period]}</span><strong>{preview?formatNumber(preview[period]):'—'}</strong></div>)}</div><p className="goal-preview-hint">Ces quantités sont des objectifs à atteindre, pas les ventes déjà réalisées.</p></div>;
+  return <form className={`goal-form${admin?' admin-goal-form':''}`}  onSubmit={event=>{event.preventDefault();void editor.flush();}}>
     <label><span className="form-label">SERVICE</span><select className="text-input" aria-label="Service pour les objectifs" value={service} onChange={e=>{const id=e.target.value;void loadService(id);}} disabled={disabled||!services.length}>
       {!services.length&&<option value="">Aucun service disponible</option>}{services.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
     </select></label>
-    <p className="goal-form-intro">{admin?'Consultez la cible actuelle du vendeur et définissez séparément son minimum. Le vendeur peut choisir une cible plus élevée.':'Choisissez une cible de référence. Les cibles du jour, de la semaine et du mois sont calculées selon les jours travaillés.'}</p>
+    {!admin&&<p className="goal-form-intro">Choisissez une cible de référence. Les cibles du jour, de la semaine et du mois sont calculées selon les jours travaillés.</p>}
     {!admin&&minimum&&<p className="goal-minimum"><strong>Minimum administrateur : {formatNumber(minimum.amount)} {REFERENCE_LABELS[minimum.period]}.</strong> Vous pouvez augmenter votre cible ou la redescendre jusqu’à ce minimum.</p>}
-    {admin&&!minimum&&hasGoal(current)&&<p className="goal-minimum">Objectif existant sans minimum : toute modification fixera un minimum.</p>}
-    {admin&&effective&&<section className="goal-preview admin-seller-target" aria-label="Objectif actuel du vendeur" aria-live="polite">
-      <p><span className="form-label">OBJECTIF ACTUEL DU VENDEUR :</span> <strong>{formatNumber(effective.amount)} {REFERENCE_LABELS[effective.period]}</strong></p>
-      <div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PREVIEW_LABELS[period]}</span><strong>{sellerTargets?formatNumber(sellerTargets[period]):'—'}</strong></div>)}</div>
-      <p className="goal-preview-hint">La cible du vendeur est actualisée automatiquement. Le minimum administrateur reste indépendant.</p>
+    {admin&&<section className="goal-preview admin-seller-target" aria-label="Objectif actuel du vendeur" aria-live="polite">
+      <p className="admin-target-title"><span className="form-label">OBJECTIF ACTUEL DU VENDEUR :</span> <strong>{effective?`${formatNumber(effective.amount)} ${REFERENCE_LABELS[effective.period]}`:'Aucun objectif défini'}</strong></p>
+      <div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PERSONAL_PERIOD_LABELS[period]}</span><strong>{sellerTargets?formatNumber(sellerTargets[period]):'—'}</strong></div>)}</div>
+      <p className="goal-preview-hint">{minimum&&effective&&effective.amount>minimum.amount?'Le vendeur a choisi un objectif plus élevé.':'Actualisé automatiquement.'}</p>
     </section>}
     {admin&&minimum&&basis!==minimum.period&&<p className="goal-minimum">Changer de période remplace la référence et son éventuel ajustement personnel.</p>}
+    <section className={admin?'admin-goal-minimum-editor':undefined}>
+    {admin&&<div className="admin-goal-minimum-heading"><h4>Minimum administrateur</h4><p>Le vendeur peut l’augmenter, mais pas descendre en dessous.</p></div>}
     <div className="goal-base-fields">
-      <label><span className="form-label">PÉRIODE DE RÉFÉRENCE</span><select className="text-input" aria-label="Période de référence" value={basis} onChange={e=>changeBasis(e.target.value)} disabled={disabled||!service||(!admin&&!!minimum)}>
+      <label><span className="form-label">{admin?'PÉRIODE':'PÉRIODE DE RÉFÉRENCE'}</span><select className="text-input" aria-label="Période de référence" value={basis} onChange={e=>changeBasis(e.target.value)} disabled={disabled||!service||(!admin&&!!minimum)}>
         <option value="day">Par jour travaillé</option><option value="week">Par semaine</option><option value="month">Par mois</option>
       </select></label>
       <label><span className="form-label">{admin?'CIBLE MINIMALE':'CIBLE'}</span><input className="text-input" aria-label="Cible de référence" inputMode="numeric" type="number" min={!admin&&minimum?minimum.amount:0} max={GOAL_LIMIT} step="1" placeholder="Ex. 10" value={amount} disabled={disabled||!service} onChange={e=>{const value=e.target.value;editor.change({period:editor.current().period,amount:value});}} onBlur={()=>{if(!admin&&minimum&&(editor.current().amount===''||Number(editor.current().amount)<minimum.amount))editor.change({period:minimum.period,amount:String(minimum.amount)});}} required/></label>
     </div>
-    <div className="goal-preview" aria-live="polite"><span className="form-label">{admin?'CIBLES CALCULÉES POUR CE MINIMUM':'CIBLES CALCULÉES POUR LA PÉRIODE EN COURS'}</span><div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PREVIEW_LABELS[period]}</span><strong>{preview?formatNumber(preview[period]):'—'}</strong></div>)}</div><p className="goal-preview-hint">Ces quantités sont des objectifs à atteindre, pas les ventes déjà réalisées.</p></div>
-    {showPlanning&&<details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Modifiez ces jours dans la fiche du vendeur, onglet Vendeurs. Les cibles par semaine ou par mois sont réparties en entiers : samedi 6 parts, lundi et vendredi 5, les autres jours travaillés 4. Une cible par jour travaillé reste identique chaque jour. Les jours fériés sont inclus et certains jours peuvent recevoir 0. Changer de période remplace la référence et son éventuelle hausse personnelle.</p></details>}
+    {admin?<details className="admin-minimum-equivalents"><summary>Voir les équivalences du minimum</summary>{minimumPreview}</details>:minimumPreview}
     <AutoSaveStatus showRecovery={admin||!minimum} editor={editor} saved="Objectifs enregistrés automatiquement." conflict="Cet objectif a été modifié ailleurs. Votre saisie n’a pas été enregistrée."/>
+    </section>
+    {showPlanning&&<details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Modifiez ces jours dans la fiche du vendeur, onglet Vendeurs. Les cibles par semaine ou par mois sont réparties en entiers : samedi 6 parts, lundi et vendredi 5, les autres jours travaillés 4. Une cible par jour travaillé reste identique chaque jour. Les jours fériés sont inclus et certains jours peuvent recevoir 0. Changer de période remplace la référence et son éventuelle hausse personnelle.</p></details>}
     {hasGoal(current)&&<button type="button" className="goal-remove" onClick={remove} disabled={editor.busy||disabled||editor.stale||(!admin&&!!minimum)} title={!admin&&minimum?'Seul un administrateur peut supprimer ce minimum.':undefined}>Supprimer l’objectif de ce service</button>}
     {onCancel&&<div className="goal-form-actions"><button type="button" className="outline-button" onClick={onCancel}>Fermer</button></div>}
   </form>;

@@ -94,6 +94,7 @@ test('Objectifs admin : retour au panneau actualise la hausse vendeur, sans modi
     await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},session:{storeId:store,sellerId:1},data:{stores:[{id:store,name:'Fnac Test'}],services:all.services,today:'2026-10-26'}}));await tick();});
     await act(async()=>{tree.root.findAllByProps({role:'tab'}).find(x=>text(x)==='Objectifs').props.onClick();await tick();});
     assert.equal(reads,1);
+    assert.equal(tree.root.findByProps({className:'admin-goals-reset'}).props.open,undefined,'le reset reste replié par défaut');
     amount=35;
     await act(async()=>{events.get('focus')();await tick();});
     assert.equal(reads,2);assert.equal(writes,0);

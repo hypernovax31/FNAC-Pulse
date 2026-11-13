@@ -400,13 +400,14 @@ function AdminContent({onClose,data,session,onChanged}) {
         <SalesResetPanel key={`reset:${adminStore}`} storeId={adminStore} storeName={adminStoreName} token={token} disabled={busy} onUpdate={onChanged}/>
       </>}
       {tab==='goals'&&adminStore&&<>
-        <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Définissez les objectifs par service. Les jours travaillés se règlent dans chaque fiche de l’onglet Vendeurs.</p></div></div>
+        <div className="admin-section-heading"><div><h3>Objectifs</h3><p>Choisissez un vendeur, puis un service.</p></div></div>
         <div className="admin-selects admin-selects-single"><label><span className="form-label">Vendeur</span><select aria-label="Vendeur pour les objectifs" className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>{const value=e.target.value;void chooseSeller(value);}}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label></div>
         {adminSeller ? goalsFor===`${adminStore}:${adminSeller}`&&adminGoals&&adminWorkdays ? <React.Fragment key={`${adminStore}:${adminSeller}`}>
-          <section className="admin-goals-services" aria-labelledby="admin-goals-services-title"><div className="workdays-heading"><div><h4 id="admin-goals-services-title">Services</h4><p>Consultez la cible actuelle du vendeur et ajustez son minimum pour chaque service.</p></div></div><GoalForm services={activeServices} goals={adminGoals} workdays={adminWorkdays} date={data.today} onSave={saveAdminGoals} disabled={busy} showPlanning admin/></section>
+          <section className="admin-goals-services" aria-label="Objectifs du service"><GoalForm services={activeServices} goals={adminGoals} workdays={adminWorkdays} date={data.today} onSave={saveAdminGoals} disabled={busy} showPlanning admin/></section>
         </React.Fragment> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un vendeur pour gérer ses objectifs.</div>}
-        <div className="admin-note"><Info size={15}/> Les objectifs se répètent et toute modification s’applique aux périodes suivantes.</div>
+        <details className="admin-goals-reset"><summary>Réinitialiser les objectifs…</summary>
         <GoalsResetPanel key={adminStore} storeId={adminStore} storeName={adminStoreName} departments={storeDepartments} token={token} disabled={busy||!allLoaded||autoSave.pending} onUpdate={refreshAfterGoalsReset}/>
+        </details>
       </>}
       {tab==='departments'&&adminStore&&<>
         <div className="admin-section-heading"><div><h3>Départements du magasin</h3><p>Renommez, ajoutez ou archivez les départements de ce magasin. Archivez les vendeurs actifs avant d’archiver leur département.</p></div></div>

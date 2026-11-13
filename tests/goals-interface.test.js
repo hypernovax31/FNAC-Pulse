@@ -183,3 +183,17 @@ test('Admin : cible vendeur et calculs actualisés sans augmenter le minimum',as
     assert.equal(tree.root.findByProps({'aria-label':'Cible de référence'}).props.value,'25','une saisie admin en cours ne doit pas être écrasée');
   } finally {if(tree)await act(async()=>tree.unmount());}
 });
+
+
+test('Admin simplifié : objectif en lecture seule, minimum séparé, équivalences repliées',async()=>{
+  let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(GoalForm,{services:props.services,goals:{s1:{month:50,day:null,week:null,revision:'simple-revision',minimum:{period:'month',amount:20}}},workdays:props.workdays,date:props.date,admin:true,onSave:async()=>{}}));});
+    assert.match(nodeText(tree.root.findByProps({'aria-label':'Objectif actuel du vendeur'})),/50 par mois/);
+    assert.match(nodeText(tree.root.findByProps({className:'admin-goal-minimum-editor'})),/Minimum administrateur/);
+    assert.equal(tree.root.findByProps({'aria-label':'Cible de référence'}).props.value,'20');
+    assert.equal(tree.root.findByProps({className:'admin-minimum-equivalents'}).props.open,undefined);
+    assert.equal(tree.root.findAllByProps({className:'goal-form-intro'}).length,0);
+    assert.match(nodeText(tree.toJSON()),/Le vendeur peut l’augmenter, mais pas descendre en dessous/);
+  } finally {if(tree)await act(async()=>tree.unmount());}
+});
