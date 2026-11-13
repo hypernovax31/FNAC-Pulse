@@ -1865,3 +1865,14 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .admin-goal-form .admin-minimum-equivalents { border-color:#8c783e; background:#342f20; }
 [data-theme='dark'] .admin-goal-form .admin-minimum-equivalents > summary { color:#efdea6; }
 [data-theme='dark'] .admin-goal-form .goal-form-details > summary { border:0; background:transparent; box-shadow:none; color:#aeb4a6; }
+
+/* Confirmation locale : visible là où le vendeur vient de toucher. */
+.service-card.is-sale-confirmed { border-color:#72a783; animation:service-confirm-border 850ms ease-out; }
+.service-card.is-sale-confirmed .service-add-indicator { background:#e3f2e7; color:#287441; animation:sale-confirm-halo 850ms ease-out; }
+.service-card.is-sale-confirmed .service-add-indicator svg { animation:sale-confirm-check 600ms ease-out; }
+.service-card.is-sale-confirmed .service-add-label { color:#287441; }
+@keyframes service-confirm-border { 0% { box-shadow:inset 0 0 0 2px rgba(65,145,88,.35),0 0 0 3px rgba(65,145,88,.2); } 100% { box-shadow:inset 0 0 0 0 rgba(65,145,88,0),0 0 0 8px rgba(65,145,88,0); } }
+[data-theme='dark'] .service-card.is-sale-confirmed { border-color:#7fbd91; }
+[data-theme='dark'] .service-card.is-sale-confirmed .service-add-indicator { background:#2e5338; color:#c2edcc; }
+[data-theme='dark'] .service-card.is-sale-confirmed .service-add-label { color:#b3e3be; }
+@media (prefers-reduced-motion:reduce) { .service-card.is-sale-confirmed,.service-card.is-sale-confirmed .service-add-indicator,.service-card.is-sale-confirmed .service-add-indicator svg { animation:none; } }

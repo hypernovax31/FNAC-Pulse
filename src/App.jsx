@@ -354,12 +354,21 @@ function TodayDetails({scope,stats,services,date,department,offline,onClose}) {
     {offline&&<p className="today-detail-offline">Dernières données disponibles · en attente de connexion.</p>}
   </Modal>;
 }
-function ServiceCard({service,index,count,session,pending,uncertain=false,provisional=0,onAdd,onRemove}) {
+function ServiceCard({service,index,count,session,pending,uncertain=false,provisional=0,confirmation=0,onAdd,onRemove}) {
   const iconKey=serviceIconKey(service),Icon=icons[iconKey]||MoreHorizontal,countId=`service-count-${service.id}`;
-  return <article className={`service-card${pending?' is-pending':''}`}>
+  const [confirmed,setConfirmed]=useState(false),lastConfirmation=useRef(confirmation);
+  useEffect(()=>{
+    if(lastConfirmation.current===confirmation)return;
+    lastConfirmation.current=confirmation;
+    if(!confirmation){setConfirmed(false);return;}
+    setConfirmed(true);
+    const timer=setTimeout(()=>setConfirmed(false),1100);
+    return ()=>clearTimeout(timer);
+  },[confirmation]);
+  return <article className={`service-card${pending?' is-pending':''}${confirmed?' is-sale-confirmed':''}`}>
     <button type="button" className="service-add" onClick={()=>onAdd(service)} disabled={pending} aria-busy={!!pending} aria-label={`${uncertain?'Vérifier l’envoi':'Ajouter une vente'} ${service.name}`} aria-describedby={countId}>
-      <span className="service-card-top"><span className={`service-icon ${iconColors[index%iconColors.length]}`} data-service-icon={iconKey} aria-hidden="true"><Icon size={20} strokeWidth={1.8}/></span><span className="service-add-indicator" aria-hidden="true"><Plus size={17} strokeWidth={2.7}/></span></span>
-      <strong className="service-card-name">{service.name}</strong><span className="service-add-label"><Plus size={13} strokeWidth={2.7} aria-hidden="true"/>{pending?'Envoi…':uncertain?'Vérifier l’envoi':'Ajouter une vente'}</span>
+      <span className="service-card-top"><span className={`service-icon ${iconColors[index%iconColors.length]}`} data-service-icon={iconKey} aria-hidden="true"><Icon size={20} strokeWidth={1.8}/></span><span key={confirmed?confirmation:'idle'} className="service-add-indicator" aria-hidden="true">{confirmed?<Check size={19} strokeWidth={2.7}/>:<Plus size={17} strokeWidth={2.7}/>}</span></span>
+      <strong className="service-card-name">{service.name}</strong><span className="service-add-label">{confirmed?<Check size={13} strokeWidth={2.7} aria-hidden="true"/>:<Plus size={13} strokeWidth={2.7} aria-hidden="true"/>}{pending?'Envoi…':uncertain?'Vérifier l’envoi':confirmed?'Enregistré':'Ajouter une vente'}</span>
     </button>
     <div className="service-card-footer"><span id={countId}>{session?`${count} aujourd’hui`:'Profil à choisir'}{provisional>0&&<small className="service-sync">{provisional} en cours</small>}</span><button type="button" className="minus-button" onClick={()=>onRemove(service)} disabled={pending||uncertain||!session||count<=0} title={uncertain?'Vérifiez d’abord la vente non confirmée':!session?'Choisissez votre profil':count<=0?'Aucune vente à retirer':`Retirer une vente ${service.name}`} aria-label={`Retirer une vente ${service.name}`} aria-describedby={countId}><Minus size={19} strokeWidth={2.5} aria-hidden="true"/></button></div>
   </article>;
@@ -481,6 +490,7 @@ function AppContent() {
   const [notificationCheckedKey,setNotificationCheckedKey]=useState('');
   const [notificationBusy,setNotificationBusy]=useState(false);
   const [pending,setPending]=useState({});
+  const [saleConfirmations,setSaleConfirmations]=useState({});
   const [liveSnapshot,setLiveSnapshot]=useState(null),[optimisticSales,setOptimisticSales]=useState([]);
   const [saleRetries,setSaleRetries]=useState(()=>CLOUD?readPendingSales():[]),saleRetriesRef=useRef(saleRetries),observedSnapshot=useRef(null);
   const [toast,setToast]=useState(null);
@@ -1021,6 +1031,7 @@ function AppContent() {
       }
       // Le toast n'attend rien et ne bloque pas l'interface ; sa durée suit la
       // fenêtre garantie avant notification des collègues (délai file ≥ 5 s).
+      setSaleConfirmations(values=>({...values,[pendingKey]:(values[pendingKey]||0)+1}));
       flash(`Vente enregistrée. ${service.name}`,{tone:'success',variant:'sale-confirmed',actionLabel:'Annuler',action:async()=>{
         try {await api(`/api/sales/${id}`,{method:'DELETE',body:session});setOptimisticSales(items=>items.filter(item=>item.sale.id!==requestId));if(!CLOUD)void refresh();if(ownerRef.current===targetOwner)flash('Vente annulée.');}
         catch(e){if(ownerRef.current===targetOwner)flash(e.message,{tone:'warning'});}
@@ -1187,7 +1198,7 @@ function AppContent() {
         <TodayOverview stats={stats} hasSession={!!session} onShow={setTodayDetail}/>
         {currentRetries.some(item=>!pending[`${owner}:${item.serviceId}`])&&<p className="sales-retry-status" role="alert">Une vente n’est pas confirmée. Touchez « Vérifier l’envoi » sur le service concerné pour reprendre sans doublon.</p>}
         {provisional.length>0&&<p className="sales-sync-status" role="status">Mise à jour en cours : les chiffres incluent {provisional.length} {provisional.length>1?'ventes':'vente'} en cours d’enregistrement ou de synchronisation.</p>}
-        <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> VENTES QUOTIDIENNES</div><h2>Ajouter un service</h2><p>Touchez un service pour ajouter une vente.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} count={counts[s.id]||0} session={session} pending={pending[`${owner}:${s.id}`]} uncertain={currentRetries.some(item=>item.serviceId===Number(s.id))&&!pending[`${owner}:${s.id}`]} provisional={provisional.filter(item=>Number(item.sale.serviceId)===Number(s.id)).length} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
+        <div className="dashboard-grid"><div className="main-column"><section className="panel services-panel" id="services"><div className="panel-heading"><div><div className="section-kicker"><span className="kicker-line"/> VENTES QUOTIDIENNES</div><h2>Ajouter un service</h2><p>Touchez un service pour ajouter une vente.</p></div><span className="service-count">{data.services.length} SERVICES</span></div><div className="services-grid">{data.services.map((s,i)=><ServiceCard key={s.id} service={s} index={i} confirmation={saleConfirmations[`${owner}:${s.id}`]||0} count={counts[s.id]||0} session={session} pending={pending[`${owner}:${s.id}`]} uncertain={currentRetries.some(item=>item.serviceId===Number(s.id))&&!pending[`${owner}:${s.id}`]} provisional={provisional.filter(item=>Number(item.sale.serviceId)===Number(s.id)).length} onAdd={addSale} onRemove={removeSale}/>)}</div><div className="service-hint"><Info size={14}/><span>Une erreur ? Utilisez le bouton <strong>−</strong> pour retirer votre dernière vente du service.</span></div></section>
           {session&&<GoalsPanel services={data.services} goals={currentGoals} workdays={goalState.workdays} stats={stats} date={data.today} feedbackScope={owner} loading={goalState.loading} error={goalState.error} offline={connection==='offline'} onEdit={serviceId=>setGoalModal({serviceId})} onRetry={loadGoals}/>}
           <Summary stats={stats} hasSession={!!session} storeId={session?.storeId} departments={departments} goals={currentSummary} goalsLoading={summaryState.key===summaryKey&&summaryState.loading} goalsError={summaryState.key===summaryKey?summaryState.error:''} onRetry={loadSummaryGoals}/>
         </div><div className="right-column"><Ranking leaders={stats?.leaderboard} hasSession={!!session}/><ActivityCard activity={stats?.activity} hasSession={!!session}/></div></div>

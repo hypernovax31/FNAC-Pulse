@@ -411,6 +411,7 @@ test('Cartes tactiles : doubles gestes, retrait distinct, annulation préservée
     assert(add().props.disabled);assert(remove().props.disabled);
     await act(async()=>{finishSale({id:'vente-fictive'});await tick();await tick();});
     assert(!add().props.disabled);assert(!remove().props.disabled);assert.match(text(tree.toJSON()),/Vente enregistrée\./);assert(button(tree,'Annuler'));
+    assert(tree.root.findAllByType('article').some(node=>node.props.className?.includes('is-sale-confirmed')),'confirmation sur la carte touchée');
     await e.press(tree.root.findByProps({'aria-label':'Désactiver le son Fnac'}));
     assert.match(text(tree.toJSON()),/Son Fnac désactivé sur cet appareil\./);assert(button(tree,'Annuler'));
     await e.press(button(tree,'Annuler'));
@@ -961,6 +962,7 @@ test('Ventes rapides : affichage immédiat provisoire, déduplication temps rée
     await act(async()=>{const click=add().props.onClick;click();click();await tick();});
     assert.equal(pending.length,1);assert.match(count(),/^1 aujourd’hui1 en cours/);
     assert.match(text(tree.toJSON()),/les chiffres incluent 1 vente en cours/);assert.doesNotMatch(text(tree.toJSON()),/Vente enregistrée\./);
+    assert(!tree.root.findAllByType('article').some(node=>node.props.className?.includes('is-sale-confirmed')),'pas de coche avant confirmation serveur');
     assert(add().props.disabled); // pas de doublon par double geste tant que le POST n'a pas répondu
     const first=sale(pending[0].body);
     await act(async()=>{emit([first]);await tick();});
@@ -1033,4 +1035,21 @@ test('Bienvenue : PIN validé, aucun toast pendant les étapes, affichage une fo
     await act(async()=>{await tick();await tick();});
     assert.doesNotMatch(text(tree.toJSON()),/Bienvenue, Morgan/);
   } finally {await finish(tree,e);}
+});
+
+
+test('Validation service : coche locale après confirmation, réarmable et temporaire',async()=>{
+  const {ServiceCard}=module.exports;let tree;
+  const props={service:{id:1,name:'DMax'},index:0,count:0,session,onAdd(){},onRemove(){}};
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(ServiceCard,{...props,confirmation:0}));});
+    const confirmed=()=>tree.root.findByType('article').props.className.includes('is-sale-confirmed');
+    assert(!confirmed());
+    await act(async()=>tree.update(React.createElement(ServiceCard,{...props,confirmation:1})));
+    assert(confirmed());assert.match(text(tree.toJSON()),/Enregistré/);
+    await act(async()=>{await new Promise(r=>setTimeout(r,650));tree.update(React.createElement(ServiceCard,{...props,confirmation:2}));});
+    await act(async()=>{await new Promise(r=>setTimeout(r,650));});assert(confirmed(),'la seconde validation relance la durée');
+    await act(async()=>{await new Promise(r=>setTimeout(r,550));});assert(!confirmed());
+    assert.doesNotMatch(text(tree.toJSON()),/Enregistré/);
+  } finally {if(tree)await act(async()=>tree.unmount());}
 });

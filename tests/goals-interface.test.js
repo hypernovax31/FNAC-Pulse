@@ -193,7 +193,7 @@ test('Admin simplifié : objectif en lecture seule, minimum séparé, équivalen
     assert.match(nodeText(tree.root.findByProps({className:'admin-goal-minimum-editor'})),/Minimum administrateur/);
     assert.equal(tree.root.findByProps({'aria-label':'Cible de référence'}).props.value,'20');
     assert.equal(tree.root.findByProps({className:'admin-minimum-equivalents'}).props.open,undefined);
-    assert.match(nodeText(tree.root.findByProps({className:'admin-minimum-equivalents'})),/Objectifs calculés à partir du minimum/);
+    assert.match(nodeText(tree.root.findByProps({className:'admin-minimum-equivalents'})),/Objectifs par jour, semaine et mois/);
     assert.doesNotMatch(nodeText(tree.toJSON()),/Voir les équivalences du minimum/);
     assert.equal(tree.root.findAllByProps({className:'goal-form-intro'}).length,0);
     assert.match(nodeText(tree.toJSON()),/Le vendeur peut l’augmenter, mais pas descendre en dessous/);
