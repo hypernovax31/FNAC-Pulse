@@ -78,8 +78,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     {!admin&&minimum&&<p className="goal-minimum"><strong>Minimum administrateur : {formatNumber(minimum.amount)} {REFERENCE_LABELS[minimum.period]}.</strong> Vous pouvez augmenter votre cible ou la redescendre jusqu’à ce minimum.</p>}
     {admin&&!minimum&&hasGoal(current)&&<p className="goal-minimum">Objectif existant sans minimum : toute modification fixera un minimum.</p>}
     {admin&&effective&&<section className="goal-preview admin-seller-target" aria-label="Objectif actuel du vendeur" aria-live="polite">
-      <span className="form-label">OBJECTIF ACTUEL DU VENDEUR</span>
-      <p>Cible personnelle actuelle : <strong>{formatNumber(effective.amount)} {REFERENCE_LABELS[effective.period]}</strong></p>
+      <p><span className="form-label">OBJECTIF ACTUEL DU VENDEUR :</span> <strong>{formatNumber(effective.amount)} {REFERENCE_LABELS[effective.period]}</strong></p>
       <div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PREVIEW_LABELS[period]}</span><strong>{sellerTargets?formatNumber(sellerTargets[period]):'—'}</strong></div>)}</div>
       <p className="goal-preview-hint">La cible du vendeur est actualisée automatiquement. Le minimum administrateur reste indépendant.</p>
     </section>}

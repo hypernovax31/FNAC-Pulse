@@ -148,7 +148,7 @@ test('Formulaire admin : minimum distinct de la cible personnelle et changement 
   const goals={s1:{day:null,week:null,month:50,revision:'rev-minimum-001',minimum:{period:'month',amount:20},personal:{period:'month',amount:50}}};
   const p={services:props.services,goals,workdays:props.workdays,date:props.date,initialServiceId:1,admin:true,showPlanning:true};
   const html=render(GoalForm,{...p,onSave:()=>{}});
-  assert.match(html,/CIBLE MINIMALE/);assert.match(html,/Cible personnelle actuelle/);assert.match(html,/aria-label="Cible de référence"[^>]+value="20"/);
+  assert.match(html,/CIBLE MINIMALE/);assert.match(html,/OBJECTIF ACTUEL DU VENDEUR :/);assert.doesNotMatch(html,/Cible personnelle actuelle/);assert.match(html,/aria-label="Cible de référence"[^>]+value="20"/);
   assert.match(html,/samedi 6 parts, lundi et vendredi 5/);assert.match(html,/Une cible par jour travaillé reste identique/);
   const old=Object.getOwnPropertyDescriptor(globalThis,'window');let tree,confirmed=false;const saves=[];
   Object.defineProperty(globalThis,'window',{configurable:true,value:{confirm:()=>confirmed}});
