@@ -163,3 +163,23 @@ test('Formulaire admin : minimum distinct de la cible personnelle et changement 
     await act(async()=>submit());assert.equal(saves.length,1);assert.deepEqual(saves[0].values,{day:null,week:20,month:null});
   } finally {if(tree)await act(async()=>tree.unmount());if(old)Object.defineProperty(globalThis,'window',old);else delete globalThis.window;}
 });
+
+test('Admin : cible vendeur et calculs actualisés sans augmenter le minimum',async()=>{
+  const base={services:props.services,workdays:props.workdays,date:props.date,initialServiceId:1,admin:true,onSave:async()=>{throw Error('Aucune écriture attendue');}};
+  const entry=amount=>({day:null,week:null,month:amount,revision:`seller-revision-${amount}`,minimum:{period:'month',amount:20},personal:{period:'month',amount}});
+  let tree;
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(GoalForm,{...base,goals:{s1:entry(20)}}));});
+    const current=()=>tree.root.findByProps({'aria-label':'Objectif actuel du vendeur'});
+    assert.match(nodeText(current()),/20 par mois/);
+    await act(async()=>{tree.update(React.createElement(GoalForm,{...base,goals:{s1:entry(30)}}));});
+    assert.match(nodeText(current()),/30 par mois/);
+    const cells=current().findByProps({className:'goal-preview-grid'}).findAllByType('strong');
+    assert.equal(nodeText(cells[2]),'30');
+    assert.equal(tree.root.findByProps({'aria-label':'Cible de référence'}).props.value,'20');
+    await act(async()=>tree.root.findByProps({'aria-label':'Cible de référence'}).props.onChange({target:{value:'25'}}));
+    await act(async()=>{tree.update(React.createElement(GoalForm,{...base,goals:{s1:entry(40)}}));});
+    assert.match(nodeText(current()),/40 par mois/);
+    assert.equal(tree.root.findByProps({'aria-label':'Cible de référence'}).props.value,'25','une saisie admin en cours ne doit pas être écrasée');
+  } finally {if(tree)await act(async()=>tree.unmount());}
+});

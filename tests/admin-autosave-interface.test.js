@@ -75,3 +75,29 @@ test('Administration : attente des écritures avant onglet, vendeur et fermeture
     await act(async()=>{action('Fermer').props.onClick();await tick();});assert.equal(closes,1);
   } finally {if(tree)await act(async()=>tree.unmount());for(const key of keys){const old=prior.get(key);if(old)Object.defineProperty(globalThis,key,old);else delete globalThis[key];}}
 });
+
+test('Objectifs admin : retour au panneau actualise la hausse vendeur, sans modifier son minimum',async()=>{
+  const keys=['window','document','sessionStorage','__autosaveAdminApi'],prior=new Map(keys.map(k=>[k,Object.getOwnPropertyDescriptor(globalThis,k)]));
+  const events=new Map();let amount=20,tree,reads=0,writes=0;
+  const store='magasin-test';
+  const all={sellers:[{id:1,name:'Alice',storeId:store,departmentId:'tech',active:true}],services:[{id:1,name:'DMax',active:true}],serviceOrders:{},departmentsByStore:{}};
+  Object.defineProperty(globalThis,'window',{configurable:true,value:{confirm:()=>true,addEventListener(k,fn){if(k==='focus')events.set(k,fn);},removeEventListener(k){events.delete(k);}}});
+  Object.defineProperty(globalThis,'document',{configurable:true,value:{visibilityState:'visible',body:{style:{}},activeElement:null,addEventListener(){},removeEventListener(){},getElementById(){return null;}}});
+  Object.defineProperty(globalThis,'sessionStorage',{configurable:true,value:{getItem:k=>k==='pulse-admin-token'?'test-admin':null,setItem(){},removeItem(){}}});
+  Object.defineProperty(globalThis,'__autosaveAdminApi',{configurable:true,value:async(path,options={})=>{
+    if(options.method&&options.method!=='GET')writes++;
+    if(path==='/api/admin/all')return all;
+    if(path.startsWith('/api/admin/goals?')){reads++;return {goals:{s1:{month:amount,day:null,week:null,minimum:{period:'month',amount:20},personal:{period:'month',amount},revision:`revision-${amount}`}},workdays:[1,2,3,4,5]};}
+    return {status:'idle',jobId:null};
+  }});
+  try {
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Admin,{onClose(){},onChanged(){},session:{storeId:store,sellerId:1},data:{stores:[{id:store,name:'Fnac Test'}],services:all.services,today:'2026-10-26'}}));await tick();});
+    await act(async()=>{tree.root.findAllByProps({role:'tab'}).find(x=>text(x)==='Objectifs').props.onClick();await tick();});
+    assert.equal(reads,1);
+    amount=35;
+    await act(async()=>{events.get('focus')();await tick();});
+    assert.equal(reads,2);assert.equal(writes,0);
+    assert.match(text(tree.root.findByProps({'aria-label':'Objectif actuel du vendeur'})),/35 par mois/);
+    assert.equal(tree.root.findByProps({'aria-label':'Cible de référence'}).props.value,'20');
+  } finally {if(tree)await act(async()=>tree.unmount());for(const [key,value] of prior)if(value)Object.defineProperty(globalThis,key,value);else delete globalThis[key];}
+});

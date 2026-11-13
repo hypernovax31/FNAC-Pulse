@@ -81,6 +81,7 @@ function AdminContent({onClose,data,session,onChanged}) {
   const [adminWorkdays,setAdminWorkdays]=useState(null);
   const [goalsFor,setGoalsFor]=useState('');
   const [goalsLoading,setGoalsLoading]=useState(false);
+  const goalsSyncVersion=useRef(0),goalsSaving=useRef(false);
   const goalScope=useRef('');goalScope.current=`${adminStore}:${adminSeller}:${tab}`;
   const [name,setName]=useState('');
   const [newSellerDepartment,setNewSellerDepartment]=useState('');
@@ -113,14 +114,27 @@ function AdminContent({onClose,data,session,onChanged}) {
   }
   useEffect(()=>{
     if(!token||!adminStore||!adminSeller||tab!=='goals')return;
-    let cancelled=false;setGoalsFor('');setAdminGoals(null);setAdminWorkdays(null);setGoalsLoading(true);
-    api(`/api/admin/goals?storeId=${encodeURIComponent(adminStore)}&sellerId=${encodeURIComponent(adminSeller)}`,{token}).then(result=>{
-      if(!cancelled){applyAdminGoals(result);setGoalsFor(`${adminStore}:${adminSeller}`);}
-    }).catch(e=>{if(!cancelled)setError(e.message)}).finally(()=>{if(!cancelled)setGoalsLoading(false)});
-    return ()=>{cancelled=true};
+    let cancelled=false,reading=false;setGoalsFor('');setAdminGoals(null);setAdminWorkdays(null);setGoalsLoading(true);
+    async function load(background=false) {
+      if(cancelled||reading||goalsSaving.current)return;
+      if(background&&typeof document!=='undefined'&&document.visibilityState==='hidden')return;
+      reading=true;const version=goalsSyncVersion.current;
+      try {
+        const result=await api(`/api/admin/goals?storeId=${encodeURIComponent(adminStore)}&sellerId=${encodeURIComponent(adminSeller)}`,{token});
+        if(!cancelled&&version===goalsSyncVersion.current){applyAdminGoals(result);setGoalsFor(`${adminStore}:${adminSeller}`);}
+      } catch(e){if(!cancelled&&!background)setError(e.message);}
+      finally {reading=false;if(!cancelled&&!background)setGoalsLoading(false);}
+    }
+    void load();
+    const refresh=()=>{void load(true);};
+    const timer=setInterval(refresh,15000);
+    if(typeof document!=='undefined')document.addEventListener?.('visibilitychange',refresh);
+    if(typeof window!=='undefined')window.addEventListener?.('focus',refresh);
+    return ()=>{cancelled=true;clearInterval(timer);if(typeof document!=='undefined')document.removeEventListener?.('visibilitychange',refresh);if(typeof window!=='undefined')window.removeEventListener?.('focus',refresh);};
   },[token,adminStore,adminSeller,tab]);
   async function saveAdminGoals(body) {
     const scope=`${adminStore}:${adminSeller}:${tab}`;setError('');setNotice('');
+    goalsSaving.current=true;goalsSyncVersion.current++;
     try {
       const result=await api('/api/admin/goals',{method:'POST',token,keepalive:true,body:{...body,storeId:adminStore,sellerId:Number(adminSeller)}});
       if(goalScope.current===scope)applyAdminGoals(result);
@@ -130,7 +144,7 @@ function AdminContent({onClose,data,session,onChanged}) {
         try{const latest=await api(`/api/admin/goals?storeId=${encodeURIComponent(adminStore)}&sellerId=${encodeURIComponent(adminSeller)}`,{token});if(goalScope.current===scope)applyAdminGoals(latest);}catch{}
       }
       throw e;
-    }
+    } finally {goalsSaving.current=false;goalsSyncVersion.current++;}
   }
   async function refreshAfterGoalsReset() {
     const scope=`${adminStore}:${adminSeller}:${tab}`;
@@ -389,7 +403,7 @@ function AdminContent({onClose,data,session,onChanged}) {
         <div className="admin-section-heading"><div><h3>Objectifs par vendeur</h3><p>Définissez les objectifs par service. Les jours travaillés se règlent dans chaque fiche de l’onglet Vendeurs.</p></div></div>
         <div className="admin-selects admin-selects-single"><label><span className="form-label">Vendeur</span><select aria-label="Vendeur pour les objectifs" className="text-input" disabled={!adminStore||!activeSellers.length||busy} value={adminSeller} onChange={e=>{const value=e.target.value;void chooseSeller(value);}}><option value="">Choisir un vendeur</option>{activeSellers.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label></div>
         {adminSeller ? goalsFor===`${adminStore}:${adminSeller}`&&adminGoals&&adminWorkdays ? <React.Fragment key={`${adminStore}:${adminSeller}`}>
-          <section className="admin-goals-services" aria-labelledby="admin-goals-services-title"><div className="workdays-heading"><div><h4 id="admin-goals-services-title">Services</h4><p>Définissez un minimum et sa période de référence pour chaque service.</p></div></div><GoalForm services={activeServices} goals={adminGoals} workdays={adminWorkdays} date={data.today} onSave={saveAdminGoals} disabled={busy} showPlanning admin/></section>
+          <section className="admin-goals-services" aria-labelledby="admin-goals-services-title"><div className="workdays-heading"><div><h4 id="admin-goals-services-title">Services</h4><p>Consultez la cible actuelle du vendeur et ajustez son minimum pour chaque service.</p></div></div><GoalForm services={activeServices} goals={adminGoals} workdays={adminWorkdays} date={data.today} onSave={saveAdminGoals} disabled={busy} showPlanning admin/></section>
         </React.Fragment> : <div className="empty-admin">{goalsLoading?'Chargement des objectifs…':'Objectifs indisponibles. Réessayez en changeant de sélection.'}</div> : <div className="empty-admin">Sélectionnez un vendeur pour gérer ses objectifs.</div>}
         <div className="admin-note"><Info size={15}/> Les objectifs se répètent et toute modification s’applique aux périodes suivantes.</div>
         <GoalsResetPanel key={adminStore} storeId={adminStore} storeName={adminStoreName} departments={storeDepartments} token={token} disabled={busy||!allLoaded||autoSave.pending} onUpdate={refreshAfterGoalsReset}/>

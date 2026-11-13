@@ -24,6 +24,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
   const [service,setService]=useState(String(initial));
   const goalsRef=useRef(goals);goalsRef.current=goals;
   const current=goals?.[`s${service}`],minimum=goalMinimum(current),effective=goalReference(current);
+  const sellerTargets=effective?goalTargets(current,date,workdays):null;
   const editor=useAutomaticSave({
     remoteValue:formReference(current,admin),remoteVersion:current?.revision||null,disabled:disabled||!service,
     equals:(a,b)=>{
@@ -73,10 +74,15 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     <label><span className="form-label">SERVICE</span><select className="text-input" aria-label="Service pour les objectifs" value={service} onChange={e=>{const id=e.target.value;void loadService(id);}} disabled={disabled||!services.length}>
       {!services.length&&<option value="">Aucun service disponible</option>}{services.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
     </select></label>
-    <p className="goal-form-intro">{admin?'Fixez un minimum et sa période de référence. Le vendeur peut choisir une cible plus élevée.':'Choisissez une cible de référence. Les cibles du jour, de la semaine et du mois sont calculées selon les jours travaillés.'}</p>
+    <p className="goal-form-intro">{admin?'Consultez la cible actuelle du vendeur et définissez séparément son minimum. Le vendeur peut choisir une cible plus élevée.':'Choisissez une cible de référence. Les cibles du jour, de la semaine et du mois sont calculées selon les jours travaillés.'}</p>
     {!admin&&minimum&&<p className="goal-minimum"><strong>Minimum administrateur : {formatNumber(minimum.amount)} {REFERENCE_LABELS[minimum.period]}.</strong> Vous pouvez augmenter votre cible ou la redescendre jusqu’à ce minimum.</p>}
     {admin&&!minimum&&hasGoal(current)&&<p className="goal-minimum">Objectif existant sans minimum : toute modification fixera un minimum.</p>}
-    {admin&&minimum&&effective&&effective.period===minimum.period&&effective.amount>minimum.amount&&<p className="goal-minimum">Cible personnelle actuelle : <strong>{formatNumber(effective.amount)} {REFERENCE_LABELS[effective.period]}</strong>. Elle est conservée si vous modifiez le minimum sans changer de période.</p>}
+    {admin&&effective&&<section className="goal-preview admin-seller-target" aria-label="Objectif actuel du vendeur" aria-live="polite">
+      <span className="form-label">OBJECTIF ACTUEL DU VENDEUR</span>
+      <p>Cible personnelle actuelle : <strong>{formatNumber(effective.amount)} {REFERENCE_LABELS[effective.period]}</strong></p>
+      <div className="goal-preview-grid">{GOAL_PERIODS.map(period=><div key={period}><span>{PREVIEW_LABELS[period]}</span><strong>{sellerTargets?formatNumber(sellerTargets[period]):'—'}</strong></div>)}</div>
+      <p className="goal-preview-hint">La cible du vendeur est actualisée automatiquement. Le minimum administrateur reste indépendant.</p>
+    </section>}
     {admin&&minimum&&basis!==minimum.period&&<p className="goal-minimum">Changer de période remplace la référence et son éventuel ajustement personnel.</p>}
     <div className="goal-base-fields">
       <label><span className="form-label">PÉRIODE DE RÉFÉRENCE</span><select className="text-input" aria-label="Période de référence" value={basis} onChange={e=>changeBasis(e.target.value)} disabled={disabled||!service||(!admin&&!!minimum)}>
