@@ -203,7 +203,8 @@ test('Installation : le bouton ouvre la demande native depuis le geste utilisate
     tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Plus tard · Accéder aux services'));
     assert(section(tree,'Installer l’application ?'));
     await e.press(button(tree,'Installer l’application'));
-    assert.equal(called,1);assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.equal(e.locations.length,0);
+    assert.equal(called,1);assert.match(text(tree.toJSON()),/Installation terminée/);assert.equal(e.locations.length,0);
+    assert.equal(e.notifications.length,0);assert(section(tree,'Installer l’application ?'));
   } finally {await finish(tree,e);}
 });
 
@@ -219,13 +220,33 @@ test('Installation : annulation native conserve les instructions et Plus tard',a
   } finally {await finish(tree,e);}
 });
 
-test('Installation : événement appinstalled termine l’étape sans géolocalisation',async()=>{
+test('Installation : ouvrir depuis l’icône avant les notifications',async()=>{
   const e=environment({standalone:false,auth:null});let tree;
   try {
     tree=await mount({stayAtLaunch:true});await e.press(button(tree,'Plus tard · Accéder aux services'));
     assert(section(tree,'Installer l’application ?'));
     await act(async()=>{e.dispatchWindow('appinstalled');await tick();});
+    assert.match(text(tree.toJSON()),/Installation terminée/);assert.equal(e.notifications.length,0);
+    assert.equal(e.values.get('fnac-pulse-install-continue-v1'),'1');
+    await act(async()=>{e.displayAs(true);await tick();await tick();});
+    assert(section(tree,'Activer les notifications ?'));assert.equal(e.notifications.length,0);
+    await e.press(button(tree,'Activer les notifications'));
+    assert.equal(e.notifications.length,1);assert.equal(e.notifications[0].gesture,true);
     assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);assert.equal(e.locations.length,0);
+    assert.equal(e.values.get('fnac-pulse-install-continue-v1'),undefined);
+  } finally {await finish(tree,e);}
+});
+
+test('Installation : réouverture depuis l’icône reprend les notifications même avec session restaurée',async()=>{
+  const e=environment({auth:session});let tree;
+  e.values.set('fnac-pulse-install-continue-v1','1');
+  try {
+    tree=await mount({stayAtLaunch:true});await act(async()=>{await tick();await tick();});
+    assert(section(tree,'Activer les notifications ?'));
+    assert.doesNotMatch(text(tree.toJSON()),/Quel est votre magasin/);
+    await e.press(tree.root.findByProps({className:'startup-step-later'}));
+    assert.match(text(tree.toJSON()),/VOTRE TABLEAU DE BORD/);
+    assert.equal(e.values.get('fnac-pulse-install-continue-v1'),undefined);
   } finally {await finish(tree,e);}
 });
 

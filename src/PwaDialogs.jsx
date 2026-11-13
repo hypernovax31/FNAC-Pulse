@@ -3,13 +3,13 @@ import { Bell, BellOff, BellRing, Check, Download, Info } from 'lucide-react';
 import { Modal } from './Admin';
 import { VisibleFeedback } from './VisibleFeedback';
 
-export function InstallContent({platform,base,promptAvailable,installError,onInstall,onClose,startup=false}) {
+export function InstallContent({platform,base,promptAvailable,installError,onInstall,onClose,startup=false,installed=false}) {
   const ios=platform.os==='ios',android=platform.os==='android';
   return <>
     <VisibleFeedback message={installError} tone="error"/>
     <div className="install-app-preview"><img src={`${base}icons/icon-192-v3.png`} width="54" height="54" alt=""/><div><strong>Fnac Pulse</strong><p>Retrouvez rapidement votre équipe et vos services.</p></div></div>
     {platform.inApp&&<div className="notification-device-note"><Info size={15}/><span>Ouvrez d’abord ce lien dans {ios?'Safari':'Chrome'} : le navigateur intégré à cette application peut empêcher l’installation.</span></div>}
-    {ios?<div className="install-steps">
+    {startup&&installed?<p className="notification-device-note"><Check size={16}/><span>Installation terminée. Ouvrez Fnac Pulse depuis son icône sur le bureau ou l’écran d’accueil pour activer les notifications.</span></p>:ios?<div className="install-steps">
       <div><span>1</span><p>Dans <strong>Safari</strong>, touchez <strong>Partager</strong> (le carré avec une flèche vers le haut).</p></div>
       <div><span>2</span><p>Choisissez <strong>Sur l’écran d’accueil</strong>.</p></div>
       <div><span>3</span><p>Si proposé, gardez <strong>Ouvrir comme app</strong> activé, puis touchez <strong>Ajouter</strong>.</p></div>
@@ -22,7 +22,7 @@ export function InstallContent({platform,base,promptAvailable,installError,onIns
     </div>}
     <p className="modal-hint"><Info size={14}/><span>{ios?'Ouvrez ensuite l’application depuis son icône : c’est nécessaire pour les notifications sur iPhone et iPad (iOS/iPadOS 16.4 ou plus).':'Après l’installation, ouvrez Fnac Pulse depuis son icône et choisissez votre profil pour activer les notifications.'}</span></p>
     {installError&&<div className="install-error" role="alert">{installError}</div>}
-    {promptAvailable&&!platform.inApp&&!ios?<><button type="button" className="primary-button full-button" onClick={onInstall}>Installer l’application <Download size={16}/></button><button type="button" className={startup?'startup-step-later':'notification-later'} onClick={onClose}>Plus tard</button></>:<button type="button" className={startup?'startup-step-later':'primary-button full-button'} onClick={onClose}>{startup?'Plus tard':<>J’ai compris <Check size={16}/></>}</button>}
+    {promptAvailable&&!platform.inApp&&!ios&&!(startup&&installed)?<><button type="button" className="primary-button full-button" onClick={onInstall}>Installer l’application <Download size={16}/></button><button type="button" className={startup?'startup-step-later':'notification-later'} onClick={onClose}>Plus tard</button></>:<button type="button" className={startup?'startup-step-later':'primary-button full-button'} onClick={onClose}>{startup?'Plus tard':<>J’ai compris <Check size={16}/></>}</button>}
   </>;
 }
 

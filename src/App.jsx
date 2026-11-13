@@ -37,6 +37,8 @@ import { isStandalone, installPlatform, notificationBanner } from './install.js'
 import { InstallContent, InstallDialog, NotificationsDialog } from './PwaDialogs';
 
 const APP_BASE = import.meta.env.BASE_URL;
+const INSTALL_CONTINUE_KEY = 'fnac-pulse-install-continue-v1';
+function resumeInstalledSetup(){try{return isStandalone()&&localStorage.getItem(INSTALL_CONTINUE_KEY)==='1';}catch{return false;}}
 const SESSION_KEY = 'fnac-pulse-session-v1';
 const CACHE_KEY = 'fnac-pulse-last-view-v1';
 const GOALS_CACHE_KEY = 'fnac-pulse-personal-goals-v1';
@@ -458,11 +460,13 @@ function AppContent() {
   // restaurée ou une connexion réussie ouvre directement le tableau de bord.
   const [startupGate,setStartupGate]=useState(true);
   // « Plus tard » disparaît dès le début de la saisie du profil au lancement.
-  const [startupEdited,setStartupEdited]=useState(false);
+  const [resumeInstallation]=useState(resumeInstalledSetup);
+  const [appMode,setAppMode]=useState(isStandalone);
+  const [startupEdited,setStartupEdited]=useState(resumeInstallation);
   const [startupReady,setStartupReady]=useState(false);
   const [startupStatus,setStartupStatus]=useState('ready');
-  // Parcours de lancement pas à pas : profil, puis notifications, puis installation.
-  const [startupStep,setStartupStep]=useState('profile');
+  // Parcours de lancement pas à pas : profil, puis installation, puis notifications.
+  const [startupStep,setStartupStep]=useState(resumeInstallation?'notifications':'profile');
   const [startupStepNote,setStartupStepNote]=useState('');
   const [locationStatus,setLocationStatus]=useState('checking');
   const [startupLocation,setStartupLocation]=useState(null);
@@ -616,8 +620,11 @@ function AppContent() {
     // depuis une autre fenêtre ou par le système) : passer à la suite.
     if(!startupGate||startupStep==='profile')return;
     if(startupStep==='notifications'&&!wantsNotificationStep)advanceStartup('notifications');
-    else if(startupStep==='install'&&installed)advanceStartup('install');
-  },[startupGate,startupStep,wantsNotificationStep,installed]);
+    else if(startupStep==='install'&&appMode)advanceStartup('install');
+  },[startupGate,startupStep,wantsNotificationStep,appMode]);
+  useEffect(()=>{
+    if(startupGate&&startupStep==='install')try{localStorage.setItem(INSTALL_CONTINUE_KEY,'1');}catch{}
+  },[startupGate,startupStep]);
   useEffect(()=>{
     let timer,permissionStatus,cancelled=false;
     const sync=()=>{
@@ -785,7 +792,7 @@ function AppContent() {
     if('serviceWorker' in navigator) navigator.serviceWorker.register(`${APP_BASE}sw.js`, {scope:APP_BASE}).catch(()=>{});
     const promptReady=()=>setInstallPrompt(window.__fnacInstallPrompt||null);
     const onInstalled=()=>{setInstalled(true);setInstallPrompt(null);setInstallError('');setInstallModal(false);};
-    const displayChanged=()=>{if(isStandalone())onInstalled();};
+    const displayChanged=()=>{const standalone=isStandalone();setAppMode(standalone);if(standalone)onInstalled();};
     const media=['standalone','fullscreen','minimal-ui','window-controls-overlay'].map(mode=>window.matchMedia?.(`(display-mode: ${mode})`)).filter(Boolean);
     window.addEventListener('fnac-install-ready',promptReady);window.addEventListener('appinstalled',onInstalled);
     for(const item of media){if(item.addEventListener)item.addEventListener('change',displayChanged);else item.addListener?.(displayChanged);}
@@ -874,11 +881,12 @@ function AppContent() {
     }
     if(startupStatus==='unavailable')setStartupStatus('ready');
   }
-  // À la fin du profil, les questions facultatives suivent : notifications
-  // puis installation. Sinon, l'accueil s'ouvre directement.
+  // Installer d'abord l'application, puis proposer les notifications.
+  // Sur iOS, celles-ci deviennent disponibles dans l'application installée.
   function advanceStartup(from='profile'){
-    if(from==='profile'&&wantsNotificationStep){setStartupStepNote('');setStartupStep('notifications');return;}
-    if(from!=='install'&&!installed){setStartupStepNote('');setStartupStep('install');return;}
+    if(from==='profile'&&!appMode){setStartupStepNote('');setStartupStep('install');return;}
+    if(from!=='notifications'&&appMode&&wantsNotificationStep){setInstallModal(false);setStartupStepNote('');setStartupStep('notifications');return;}
+    try{localStorage.removeItem(INSTALL_CONTINUE_KEY);}catch{}
     setInstallModal(false);
     setStartupGate(false);
   }
@@ -1118,7 +1126,7 @@ function AppContent() {
   }
   function openNotifications(){notificationPrompted.current=true;setNotificationsModal(true);}
   function retryNotifications(){setNotificationError('');setNotificationCheck(n=>n+1);}
-  function openInstall(){setInstallError('');setNotificationsModal(false);setInstallModal('manual');}
+  function openInstall(){try{localStorage.setItem(INSTALL_CONTINUE_KEY,'1');}catch{}setInstallError('');setNotificationsModal(false);setInstallModal('manual');}
   async function installApp(){
     const prompt=installPrompt;if(!prompt)return;
     setInstallPrompt(null);setInstallError('');
@@ -1126,7 +1134,7 @@ function AppContent() {
     try {
       const result=await prompt.prompt();
       const choice=prompt.userChoice?await prompt.userChoice:result;
-      if(choice?.outcome==='accepted'){setInstallModal(false);if(startupGateRef.current&&startupStep==='install')advanceStartup('install');}
+      if(choice?.outcome==='accepted'){setInstallModal(false);setInstalled(true);}
       else if(choice?.outcome==='dismissed')setInstallError('Installation annulée. Vous pouvez aussi utiliser le menu du navigateur.');
     } catch {setInstallError('Le navigateur n’a pas ouvert l’installation. Utilisez le menu indiqué ci-dessus.');}
   }
@@ -1143,7 +1151,7 @@ function AppContent() {
     <div className="startup-step-actions"><button type="button" className="primary-button full-button" onClick={answerStartupNotifications} disabled={notificationBusy} aria-busy={notificationBusy}>{notificationBusy?'Activation…':'Activer les notifications'} <ArrowRight size={16} aria-hidden="true"/></button>
     <button type="button" className="startup-step-later" onClick={()=>advanceStartup('notifications')}>Plus tard</button></div>
     {startupStepNote&&<p className="form-error session-error" role="alert">{startupStepNote}</p>}
-  </div>:startupStep==='install'?<div className="startup-step"><InstallContent platform={platform} base={APP_BASE} promptAvailable={!!installPrompt} installError={installError} onInstall={installApp} onClose={()=>advanceStartup('install')} startup/></div>:null;
+  </div>:startupStep==='install'?<div className="startup-step"><InstallContent installed={installed} platform={platform} base={APP_BASE} promptAvailable={!!installPrompt} installError={installError} onInstall={installApp} onClose={()=>advanceStartup('install')} startup/></div>:null;
   const toastItems=(toast||soundNotice)?<>
     {toast&&<Toast key={`toast-${toast.sequence}`} notice={toast} onClose={()=>{clearTimeout(toastTimer.current);setToast(null);}}/>}
     {soundNotice&&<Toast key={`sound-${soundNotice.sequence}`} notice={soundNotice} icon={soundEnabled?Volume2:VolumeX} onClose={()=>{clearTimeout(soundNoticeTimer.current);setSoundNotice(null);}}/>}
