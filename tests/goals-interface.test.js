@@ -80,7 +80,7 @@ test('Formulaire : référence, aperçu des trois cibles, zéro et priorité men
   assert.match(html,/<option value="month" selected="">Par mois<\/option>/);
   assert.match(html,/Cible du jour/);assert.match(html,/Cible semaine/);assert.match(html,/Cible mois/);
   assert.match(html,/objectifs à atteindre, pas les ventes déjà réalisées/);
-  assert.match(html,/Supprimer l’objectif de ce service/);
+  assert.doesNotMatch(html,/Supprimer l’objectif de ce service/);
   assert.doesNotMatch(html,/Planning et calcul/);
   const admin=render(GoalForm,{services:props.services,goals:props.goals,workdays:props.workdays,date:props.date,onSave:()=>{},showPlanning:true});
   assert.match(admin,/Planning et calcul/);assert.match(admin,/Jours travaillés/);
@@ -130,7 +130,7 @@ test('Formulaire vendeur : minimum visible, période bloquée et contrôle avant
   const goals={s1:{day:null,week:null,month:50,revision:'rev-minimum-001',minimum:{period:'month',amount:20},personal:{period:'month',amount:50}}};
   const html=render(GoalForm,{services:props.services,goals,workdays:props.workdays,date:props.date,initialServiceId:1,onSave:()=>{}});
   assert.match(html,/Minimum administrateur : 20 par mois/);assert.match(html,/aria-label="Période de référence"[^>]*disabled/);
-  assert.match(html,/aria-label="Cible de référence"[^>]+min="20"/);assert.match(html,/Seul un administrateur peut supprimer ce minimum/);
+  assert.match(html,/aria-label="Cible de référence"[^>]+min="20"/);assert.doesNotMatch(html,/Supprimer l’objectif de ce service/);
   let tree;const saves=[];
   try {
     await act(async()=>{tree=TestRenderer.create(React.createElement(GoalForm,{services:props.services,goals,workdays:props.workdays,date:props.date,initialServiceId:1,onSave:async v=>saves.push(v)}));});
@@ -215,4 +215,13 @@ test('Admin : objectif actuel visible seulement au-dessus du minimum administrat
     await update({s1:{month:50,day:null,week:null,revision:'without-minimum'}});assert.equal(count(),0,'aucun minimum de comparaison');
     assert.equal(tree.root.findAllByProps({className:'admin-goal-minimum-editor'}).length,1,'le minimum reste modifiable');
   } finally {if(tree)await act(async()=>tree.unmount());}
+});
+
+
+test('Suppression objectif : bouton réservé à l’administrateur, absent chez le vendeur',()=>{
+  const base={services:props.services,workdays:props.workdays,date:props.date,onSave(){}};
+  for(const goals of [{s1:{month:30}},{s1:{month:50,minimum:{period:'month',amount:20},personal:{period:'month',amount:50}}}]) {
+    assert.doesNotMatch(render(GoalForm,{...base,goals}),/Supprimer l’objectif de ce service/);
+    assert.match(render(GoalForm,{...base,goals,admin:true}),/Supprimer l’objectif de ce service/);
+  }
 });

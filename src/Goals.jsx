@@ -35,7 +35,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     validate:value=>{
       if(value.remove)return '';
       let values;try{values=parseGoalInputs(referenceInputs(value.period,value.amount));}catch(e){return e.message;}
-      if(!hasGoal(values))return 'Indiquez une cible de référence. Pour supprimer un objectif, utilisez l’action de suppression.';
+      if(!hasGoal(values))return admin?'Indiquez une cible de référence. Pour supprimer un objectif, utilisez l’action de suppression.':'Indiquez une cible de référence.';
       if(!admin&&minimum&&(value.period!==minimum.period||Number(value.amount)<minimum.amount))return 'Respectez le minimum et la période fixés par l’administrateur.';
       return '';
     },
@@ -63,7 +63,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     editor.change({...editor.current(),period});
   }
   async function remove() {
-    if(!service||editor.stale||editor.busy||disabled||(!admin&&minimum))return;
+    if(!admin||!service||editor.stale||editor.busy||disabled)return;
     const name=services.find(s=>String(s.id)===service)?.name||'ce service';
     if(!window.confirm(`Supprimer les objectifs de ${name} pour les trois périodes ?`))return;
     if(!await editor.flush())return;
@@ -95,7 +95,7 @@ export function GoalForm({services,goals,workdays,initialServiceId,onSave,onCanc
     <AutoSaveStatus showRecovery={admin||!minimum} editor={editor} saved="Objectifs enregistrés automatiquement." conflict="Cet objectif a été modifié ailleurs. Votre saisie n’a pas été enregistrée."/>
     </section>
     {showPlanning&&<details className="goal-form-details"><summary>Planning et calcul</summary><p className="goal-form-hint">Jours travaillés : {workdaysLabel(workdays)}. Modifiez ces jours dans la fiche du vendeur, onglet Vendeurs. Les cibles par semaine ou par mois sont réparties en entiers : samedi 6 parts, lundi et vendredi 5, les autres jours travaillés 4. Une cible par jour travaillé reste identique chaque jour. Les jours fériés sont inclus et certains jours peuvent recevoir 0. Changer de période remplace la référence et son éventuelle hausse personnelle.</p></details>}
-    {hasGoal(current)&&<button type="button" className="goal-remove" onClick={remove} disabled={editor.busy||disabled||editor.stale||(!admin&&!!minimum)} title={!admin&&minimum?'Seul un administrateur peut supprimer ce minimum.':undefined}>Supprimer l’objectif de ce service</button>}
+    {admin&&hasGoal(current)&&<button type="button" className="goal-remove" onClick={remove} disabled={editor.busy||disabled||editor.stale}>Supprimer l’objectif de ce service</button>}
     {onCancel&&<div className="goal-form-actions"><button type="button" className="outline-button" onClick={onCancel}>Fermer</button></div>}
   </form>;
 }

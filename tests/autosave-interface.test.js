@@ -17,10 +17,10 @@ const services=[{id:1,name:'DMax'},{id:2,name:'FVD'}];
 const initial={s1:{day:null,week:null,month:30,revision:'goal-rev-001'},s2:{day:null,week:null,month:10,revision:'goal-rev-002'}};
 const response=(id,amount,revision)=>({goals:{...initial,[`s${id}`]:{day:null,week:null,month:amount,revision}},workdays:[1,2,3,4,5]});
 function Gate({onLeave}) {const registry=useAutoSaveRegistry();return React.createElement('button',{onClick:async()=>{if(await registry.flush())onLeave();}},'Changer d’onglet');}
-function Harness({save,onLeave=()=>{},start=initial}) {
+function Harness({save,onLeave=()=>{},start=initial,admin=false}) {
   const [goals,setGoals]=useState(start);
   return React.createElement(AutoSaveProvider,null,React.createElement(Gate,{onLeave}),React.createElement(GoalForm,{
-    services,goals,workdays:[1,2,3,4,5],date:'2026-10-26',initialServiceId:1,
+    services,goals,admin,workdays:[1,2,3,4,5],date:'2026-10-26',initialServiceId:1,
     onSave:async body=>{const result=await save(body,setGoals);setGoals(result.goals);return result;},
   }));
 }
@@ -188,7 +188,7 @@ test('Réponse perdue après écriture distante : conflit et saisie ultérieure 
 test('Suppression explicite : aucune valeur nulle sans confirmation',async()=>{
   const env=stubWindow(),calls=[];let tree;
   try {
-    await act(async()=>{tree=TestRenderer.create(React.createElement(Harness,{save:async body=>{calls.push(body);return {goals:{...initial,s1:{day:null,week:null,month:null,revision:'goal-rev-deleted'}},workdays:[1,2,3,4,5]};}}));});
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Harness,{admin:true,save:async body=>{calls.push(body);return {goals:{...initial,s1:{day:null,week:null,month:null,revision:'goal-rev-deleted'}},workdays:[1,2,3,4,5]};}}));});
     env.setAccept(false);await act(async()=>{button(tree,'Supprimer l’objectif de ce service').props.onClick();await tick();});assert.equal(calls.length,0);
     env.setAccept(true);await act(async()=>{button(tree,'Supprimer l’objectif de ce service').props.onClick();await tick();});
     assert.equal(calls.length,1);assert.deepEqual(calls[0].values,{day:null,week:null,month:null});assert.equal(calls[0].revision,'goal-rev-001');assert.match(text(tree.toJSON()),/Objectif supprimé\./);
