@@ -1049,7 +1049,7 @@ test('Validation service : coche locale après confirmation, réarmable et tempo
     assert(confirmed());assert.match(text(tree.toJSON()),/Enregistré/);
     await act(async()=>{await new Promise(r=>setTimeout(r,650));tree.update(React.createElement(ServiceCard,{...props,confirmation:2}));});
     await act(async()=>{await new Promise(r=>setTimeout(r,650));});assert(confirmed(),'la seconde validation relance la durée');
-    await act(async()=>{await new Promise(r=>setTimeout(r,550));});assert(!confirmed());
+    await act(async()=>{await new Promise(r=>setTimeout(r,1050));});assert(!confirmed());
     assert.doesNotMatch(text(tree.toJSON()),/Enregistré/);
   } finally {if(tree)await act(async()=>tree.unmount());}
 });

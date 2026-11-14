@@ -362,7 +362,7 @@ function ServiceCard({service,index,count,session,pending,uncertain=false,provis
     lastConfirmation.current=confirmation;
     if(!confirmation){setConfirmed(false);return;}
     setConfirmed(true);
-    const timer=setTimeout(()=>setConfirmed(false),1100);
+    const timer=setTimeout(()=>setConfirmed(false),1600);
     return ()=>clearTimeout(timer);
   },[confirmation]);
   return <article className={`service-card${pending?' is-pending':''}${confirmed?' is-sale-confirmed':''}`}>

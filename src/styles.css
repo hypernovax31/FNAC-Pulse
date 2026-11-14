@@ -1876,3 +1876,16 @@ p,h1,h2,h3 { margin:0; }
 [data-theme='dark'] .service-card.is-sale-confirmed .service-add-indicator { background:#2e5338; color:#c2edcc; }
 [data-theme='dark'] .service-card.is-sale-confirmed .service-add-label { color:#b3e3be; }
 @media (prefers-reduced-motion:reduce) { .service-card.is-sale-confirmed,.service-card.is-sale-confirmed .service-add-indicator,.service-card.is-sale-confirmed .service-add-indicator svg { animation:none; } }
+
+/* Confirmation lisible en clair/sombre, y compris après un appui tactile. */
+.service-card.is-sale-confirmed .service-add .service-add-label,
+.service-card.is-sale-confirmed .service-add:is(:hover,:active) .service-add-label {
+  background:#23683a;
+  color:#fff;
+  border-color:#174c29;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 3px 0 #174c29;
+  font-size:13px;
+  font-weight:850;
+  letter-spacing:.1px;
+}
+.service-card.is-sale-confirmed .service-add-label svg { width:16px; height:16px; flex-shrink:0; }
