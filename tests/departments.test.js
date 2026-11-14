@@ -70,3 +70,17 @@ test('Récapitulatif : présences multipliées par les poids 6/5/4 et totaux inc
  const a=summaryGoals(twice,services,dept,'2026-11-07').store.byService.s1;
  assert(a.day>6,'un second vendeur prévu le samedi renforce son poids');assert.equal(a.month,total);
 });
+
+test('Récapitulatif : après reset, absence de cibles et préservation des autres départements',()=>{
+ const date='2026-11-02';
+ const people=[{id:1,name:'A',active:true,departmentId:'tech',goals:{s1:{day:1}},workdays:[1,2,3,4,5]},{id:2,name:'B',active:true,departmentId:'editorial',goals:{s1:{day:2}},workdays:[1,2,3,4,5]}];
+ const cleared=people.map(p=>({...p,goals:{}}));
+ const empty=summaryGoals(cleared,services,departments,date);
+ for(const period of ['day','week','month']) {
+  assert.equal(empty.store.byService.s1[period],null);
+  assert.equal(empty.departments.tech.byService.s1[period],null);
+ }
+ const partial=summaryGoals([{...people[0],goals:{}},people[1]],services,departments,date);
+ assert.equal(partial.departments.tech.byService.s1.month,null);
+ assert(partial.store.byService.s1.month>0,'un autre département conserve ses objectifs au niveau magasin');
+});

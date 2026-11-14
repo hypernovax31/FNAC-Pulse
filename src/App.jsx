@@ -736,11 +736,20 @@ function AppContent() {
       return {ok:false,message};
     }
   },[summaryKey,cloudDay]);
-  const queueSummary=useCallback(()=>{clearTimeout(summaryTimer.current);summaryTimer.current=setTimeout(loadSummaryGoals,200);},[loadSummaryGoals]);
+  const queueSummary=useCallback((invalidate=true)=>{
+    clearTimeout(summaryTimer.current);
+    // Une réponse démarrée avant le changement ne doit pas restaurer une ancienne cible.
+    summaryRequest.current++;
+    if(invalidate&&summaryKey) {
+      setSummaryState({key:summaryKey,data:null,loading:true,error:''});
+      try{localStorage.removeItem(SUMMARY_CACHE_KEY);}catch{}
+    }
+    summaryTimer.current=setTimeout(loadSummaryGoals,200);
+  },[loadSummaryGoals,summaryKey]);
   useEffect(()=>{
     summaryRequest.current++;clearTimeout(summaryTimer.current);
     if(!summaryKey){setSummaryState({key:'',data:null,loading:false,error:''});return;}
-    setSummaryState({key:summaryKey,data:getCachedSummary(summaryKey),loading:true,error:''});queueSummary();
+    setSummaryState({key:summaryKey,data:getCachedSummary(summaryKey),loading:true,error:''});queueSummary(false);
     return ()=>{summaryRequest.current++;clearTimeout(summaryTimer.current);};
   },[summaryKey,queueSummary]);
   useEffect(()=>{
@@ -779,7 +788,7 @@ function AppContent() {
       setConnection('offline');
       if(error?.code==='permission-denied'){sellerLogout().catch(()=>{});setSession(null);setData(d=>d?{...d,stats:null}:d);localStorage.removeItem(SESSION_KEY);localStorage.removeItem(CACHE_KEY);localStorage.removeItem(GOALS_CACHE_KEY);localStorage.removeItem(SUMMARY_CACHE_KEY);flash('Votre accès a changé. Reconnectez-vous avec votre code PIN.',{tone:'warning'});}
       else flash('Connexion interrompue. Les données seront actualisées au retour du réseau.',{tone:'warning'});
-    },()=>loadGoals(),queueSummary);
+    },()=>{void loadGoals();queueSummary();},()=>queueSummary());
   },[session,authReady,cloudDay,flash,announceSale,loadGoals,queueSummary]);
   useEffect(()=>{
     if(CLOUD)return;
@@ -801,9 +810,9 @@ function AppContent() {
   useEffect(()=>{
     const syncDay=()=>setCloudDay(parisToday());
     const onOnline=()=>{syncDay();refresh();loadGoals();queueSummary();};
-    const onVisible=()=>{if(document.visibilityState==='visible'){syncDay();if(!CLOUD)refresh();}};
+    const onVisible=()=>{if(document.visibilityState==='visible'){syncDay();if(!CLOUD)refresh();void loadGoals();queueSummary(false);}};
     window.addEventListener('online',onOnline);document.addEventListener('visibilitychange',onVisible);
-    const timer=setInterval(()=>{syncDay();if(!CLOUD&&document.visibilityState==='visible')refresh();},60000);
+    const timer=setInterval(()=>{syncDay();if(document.visibilityState==='visible'){if(!CLOUD)refresh();queueSummary(false);}},60000);
     return ()=>{window.removeEventListener('online',onOnline);document.removeEventListener('visibilitychange',onVisible);clearInterval(timer);};
   },[refresh,loadGoals,queueSummary]);
   useEffect(()=>{
@@ -982,7 +991,7 @@ function AppContent() {
       const result=await api('/api/goals',{method:'POST',keepalive:true,body:{...body,storeId:session.storeId,sellerId:session.sellerId}});
       if(ownerRef.current!==targetOwner)throw new Error('Votre profil a changé. Sélectionnez-le à nouveau.');
       goalRequest.current++;setGoalState({owner:targetOwner,...goalData(result),loading:false,error:''});cacheGoals(targetOwner,result);
-      void loadGoals();
+      void loadGoals();queueSummary();
       return result;
     } catch(e){if(e.status===409||!e.status||e.status>=500)await loadGoals();throw e;}
   }
@@ -1162,7 +1171,7 @@ function AppContent() {
   const profileContent=data?<SessionForm key={deviceProfile?`${deviceProfile.storeId}:${deviceProfile.sellerId}`:'startup-new'} data={data} initialProfile={deviceProfile} startupLocation={startupLocation} modal startup onUserEdit={()=>setStartupEdited(true)} onSubmit={selectSession} onForgetProfile={forgetDeviceProfile} onRefreshProfile={refresh}/>:loadFailed?<><VisibleFeedback message="Profil indisponible. Vérifiez votre connexion." tone="error" actionLabel="Réessayer" onAction={refresh}/><div className="startup-profile-status" role="alert">Profil indisponible. Vérifiez votre connexion. <button type="button" className="text-button" onClick={refresh}>Réessayer</button></div></>:<p className="startup-profile-status" role="status">Chargement des magasins et des profils…</p>;
   // L'administration reçoit toujours le vrai catalogue : un catalogue vide
   // temporaire effacerait à tort le magasin d'administration mémorisé.
-  const adminDialog=adminModal&&data&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={refresh}/>;
+  const adminDialog=adminModal&&data&&<Admin onClose={()=>setAdminModal(false)} data={data} session={session} onChanged={()=>{void refresh();void loadGoals();queueSummary();}}/>;
   const sessionDialog=sessionModal&&data&&<Modal title={CLOUD?'Mon profil':'Changer d’espace'} subtitle={CLOUD?'Votre espace sur cet appareil.':'Sélectionnez votre magasin, votre département et votre profil vendeur.'} onClose={()=>setSessionModal(false)}>
     {CLOUD?<><div className="account-profile"><Avatar name={seller?.name} id={seller?.id}/><div><strong>{seller?.name||'Votre profil'}</strong><span>{store?.name||'Votre magasin'}{department?` · ${department.name}`:''}</span></div></div><p className="account-help">Votre session reste ouverte lorsque vous fermez l’application. Après déconnexion, votre PIN sera demandé pour revenir.</p><button type="button" className="outline-button account-logout" onClick={()=>logoutSeller()}>Se déconnecter</button></>:<SessionForm data={data} initialSession={session} modal onSubmit={selectSession}/>}
   </Modal>;

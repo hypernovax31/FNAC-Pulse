@@ -62,7 +62,7 @@ function environment({geoPermission='prompt',geoResult='success',notificationPer
   e.dispatchDocument=(name,event)=>{for(const fn of documentEvents.get(name)||[])fn(event);};
   const mock={
     observe(fn){e.auth=fn;if(auth!=='manual')queueMicrotask(()=>fn(auth));return ()=>{if(e.auth===fn)e.auth=null;};},
-    listen(_session,_day,_client,onChange,onSale,onError){e.listenCalls++;e.onSale=onSale;e.onChange=onChange;e.onError=onError;return ()=>{if(e.onSale===onSale){e.onSale=null;e.onChange=null;e.onError=null;}};},
+    listen(_session,_day,_client,onChange,onSale,onError,onGoalsChanged,onSummaryChanged){e.onGoalsChanged=onGoalsChanged;e.onSummaryChanged=onSummaryChanged;e.listenCalls++;e.onSale=onSale;e.onChange=onChange;e.onError=onError;return ()=>{if(e.onSale===onSale){e.onSale=null;e.onChange=null;e.onError=null;}};},
     async api(path,options={}){e.requests.push({path,method:options.method||'GET',body:options.body});if(path.startsWith('/api/bootstrap')){if(e.failBootstrap)throw Error('Connexion indisponible');return e.addedSeller?{...data,sellers:[...data.sellers,e.addedSeller]}:data;}if(path==='/api/auth/status')return e.pinStatus||{needsPin:false,pinLength:4,pinSalt:'sel-fictif'};if(path==='/api/auth/admin-account-status')return {passwordChangeRequired:false};if(path==='/api/admin/all')return {sellers:[],services:[],serviceOrders:{},serviceRemovalsByStore:{},departmentsByStore:{}};if(path==='/api/goals')return {goals:{}};if(path.startsWith('/api/summary-goals'))return {};return {};},
     async sellerLogout(){e.logoutCount++;},async adminLogin(email,password){e.adminLogins.push({email,password});if(e.adminFail)throw Error('Identifiants incorrects');return 'admin';},async adminLogout(){},
     async sellerLogin(_api,selection,pin,pinSalt){e.sellerCalls.push({mode:'login',selection,pin,pinSalt});if(e.sellerLoginFails)throw Object.assign(Error('Code PIN incorrect.'),{status:401});return {...selection,uid:'fictif',accessVersion:'v1'};},
@@ -1052,4 +1052,38 @@ test('Validation service : coche locale après confirmation, réarmable et tempo
     await act(async()=>{await new Promise(r=>setTimeout(r,1050));});assert(!confirmed());
     assert.doesNotMatch(text(tree.toJSON()),/Enregistré/);
   } finally {if(tree)await act(async()=>tree.unmount());}
+});
+
+
+test('Récapitulatif : suppression en direct enlève les cibles et rejette une ancienne réponse',async()=>{
+  const previousServices=data.services;data.services=[{id:1,name:'DMax',active:true}];
+  const e=environment({auth:session});let tree,target=1,lateResolve,hold=false;
+  const day=parisToday(),catalog={...data,serviceOrders:{}},original=e.mock.api;
+  const payload=value=>({date:day,store:{byService:{s1:{day:value,week:value,month:value,configured:value===null?0:1}}},departments:{tech:{byService:{s1:{day:value,week:value,month:value}}}}});
+  e.mock.api=(path,options)=>{
+    if(path.startsWith('/api/summary-goals')){
+      if(hold){hold=false;return new Promise(resolve=>{lateResolve=resolve;});}
+      return Promise.resolve(payload(target));
+    }
+    return original(path,options);
+  };
+  const settle=async()=>act(async()=>{await new Promise(r=>setTimeout(r,260));await tick();});
+  const targetText=()=>text(tree.root.findByProps({id:'summary'}).findByProps({className:'summary-target'}));
+  try {
+    tree=await mount();
+    await act(async()=>{e.onChange({...data,today:day,stats:summarize(catalog,[],1,day,'near')},true);await tick();});
+    await settle();assert.match(targetText(),/1/);
+    hold=true;
+    await act(async()=>{tree.root.findByType(module.exports.Summary).props.onRetry();await tick();});
+    assert.equal(typeof lateResolve,'function');
+    target=null;
+    await act(async()=>{e.onSummaryChanged();await tick();});
+    assert.match(targetText(),/—/,'ancienne cible retirée dès le signal de modification');
+    await act(async()=>{lateResolve(payload(1));await tick();});
+    assert.match(targetText(),/—/,'une réponse antérieure ne restaure pas le 0/1');
+    await settle();assert.match(targetText(),/—/);
+    assert.equal(JSON.parse(e.values.get('fnac-pulse-summary-goals-v1')).data.store.byService.s1.day,null);
+    target=2;await act(async()=>{e.onSummaryChanged();await tick();});await settle();assert.match(targetText(),/2/);
+    target=null;await act(async()=>{e.onGoalsChanged();await tick();});await settle();assert.match(targetText(),/—/,'la révision personnelle resynchronise aussi le récap');
+  } finally {data.services=previousServices;await finish(tree,e);}
 });
